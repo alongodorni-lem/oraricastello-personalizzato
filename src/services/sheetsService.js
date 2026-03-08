@@ -52,12 +52,14 @@ async function appendPreferenceRow(payload, plan, emailStatus) {
   if (!sheetId) throw new Error("GOOGLE_SHEET_ID mancante");
 
   const sa = getServiceAccount();
-  const auth = new google.auth.JWT(
-    sa.client_email,
-    null,
-    sa.private_key,
-    ["https://www.googleapis.com/auth/spreadsheets"]
-  );
+  if (!hasNonEmpty(sa.private_key)) {
+    throw new Error("private_key vuota dopo parsing variabili ambiente");
+  }
+  const auth = new google.auth.JWT({
+    email: sa.client_email,
+    key: sa.private_key,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
   await auth.authorize();
 
   const sheets = google.sheets({ version: "v4", auth });
