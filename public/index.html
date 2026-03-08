@@ -19,6 +19,16 @@
     .muted { color:#556080; font-size:0.92rem; }
     .step { border-left:4px solid #7d3cc7; padding-left:10px; margin:8px 0; }
     .status { margin-top:10px; font-size:0.9rem; color:#2d3b64; }
+    @media (max-width: 768px) {
+      .chips {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .chip {
+        width: 100%;
+        border-radius: 10px;
+      }
+    }
   </style>
 </head>
 <body>

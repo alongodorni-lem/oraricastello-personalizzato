@@ -19,6 +19,26 @@ function toMinutes(time) {
   return h * 60 + m;
 }
 
+function notifyParentHeight() {
+  if (window.parent === window) return;
+  const body = document.body;
+  const html = document.documentElement;
+  const height = Math.max(
+    body ? body.scrollHeight : 0,
+    body ? body.offsetHeight : 0,
+    html ? html.clientHeight : 0,
+    html ? html.scrollHeight : 0,
+    html ? html.offsetHeight : 0
+  );
+  window.parent.postMessage(
+    {
+      type: "resize-iframe",
+      height: Math.max(900, height + 24),
+    },
+    "*"
+  );
+}
+
 function refreshStayDurationOptions() {
   const arrivalInput = document.getElementById("arrivalTime");
   const select = document.getElementById("stayDuration");
@@ -183,6 +203,7 @@ function renderPlan(plan, multiPlan) {
   const container = document.getElementById("result");
   if (!multiPlan) {
     container.innerHTML = renderPlanBlock(plan, "");
+    notifyParentHeight();
     return;
   }
   const focusedHtml = (multiPlan.focusedPlans || [])
@@ -200,6 +221,7 @@ function renderPlan(plan, multiPlan) {
     <hr style="border:0;border-top:1px solid #1a2452;margin:18px 0;">
     ${focusedHtml}
   `;
+  notifyParentHeight();
 }
 
 function renderPdfButton() {
@@ -218,6 +240,7 @@ function renderPdfButton() {
   const btn = document.getElementById("downloadPdfBtn");
   if (btn) {
     btn.addEventListener("click", () => downloadPdf(latestPdfBase64));
+    notifyParentHeight();
     return;
   }
 }
@@ -281,7 +304,7 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
     latestPdfBase64 = data.pdfBase64 || "";
     renderPlan(data.plan, data.multiPlan);
     renderPdfButton();
-    status.textContent = `Completato. Premi "Scarica PDF" per il download. Sheets: ${data.sheetsStatus}.`;
+    status.textContent = `Completato. Premi "Scarica PDF" per il download.`;
   } catch (err) {
     status.textContent = `Errore: ${err.message}`;
   } finally {
@@ -293,3 +316,5 @@ document.getElementById("arrivalTime").addEventListener("change", refreshStayDur
 document.getElementById("hasChildren").addEventListener("change", syncChildrenAgesRequirement);
 syncChildrenAgesRequirement();
 refreshStayDurationOptions();
+window.addEventListener("load", notifyParentHeight);
+window.addEventListener("resize", notifyParentHeight);
