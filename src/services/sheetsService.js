@@ -5,27 +5,40 @@ function hasNonEmpty(value) {
   return Boolean(value);
 }
 
+function validateServiceAccount(sa, sourceLabel) {
+  const hasEmail = hasNonEmpty(sa?.client_email);
+  const hasKey = hasNonEmpty(sa?.private_key);
+  if (!hasEmail || !hasKey) {
+    throw new Error(
+      `Service account non valido da ${sourceLabel} [has_client_email=${hasEmail}; has_private_key=${hasKey}]`
+    );
+  }
+  return {
+    ...sa,
+    client_email: String(sa.client_email).trim(),
+    private_key: String(sa.private_key).replace(/\\n/g, "\n"),
+  };
+}
+
 function getServiceAccount() {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed.private_key) parsed.private_key = String(parsed.private_key).replace(/\\n/g, "\n");
-      return parsed;
+      return validateServiceAccount(parsed, "GOOGLE_SERVICE_ACCOUNT_JSON(raw)");
     } catch (_) {
       const decoded = Buffer.from(raw, "base64").toString("utf8");
       const parsed = JSON.parse(decoded);
-      if (parsed.private_key) parsed.private_key = String(parsed.private_key).replace(/\\n/g, "\n");
-      return parsed;
+      return validateServiceAccount(parsed, "GOOGLE_SERVICE_ACCOUNT_JSON(base64)");
     }
   }
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   if (clientEmail && privateKey) {
-    return {
+    return validateServiceAccount({
       client_email: clientEmail,
-      private_key: String(privateKey).replace(/\\n/g, "\n"),
-    };
+      private_key: privateKey,
+    }, "GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY");
   }
   throw new Error(
     `GOOGLE_SERVICE_ACCOUNT_JSON mancante (oppure imposta GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) [has_json=${hasNonEmpty(
