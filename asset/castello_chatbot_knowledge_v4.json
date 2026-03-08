@@ -1,0 +1,640 @@
+{
+  "version": "2026-03-08",
+  "source": "Programma aggiornato incollato dall'organizzazione",
+  "event": {
+    "event_name": "Castello delle Sorprese 2026",
+    "timezone": "Europe/Rome",
+    "opening": {
+      "entry_and_ticket_office": {
+        "start": "09:30",
+        "end": "15:00",
+        "note": "Ultimo ingresso alle 15:00"
+      },
+      "activities_end": "17:00",
+      "park_castle_close": "17:30"
+    },
+    "general_services": [
+      {
+        "name": "Pic-nic nel Parco",
+        "availability": "per tutta la giornata"
+      },
+      {
+        "name": "Punti ristoro",
+        "availability": "per tutta la giornata"
+      }
+    ],
+    "signature_path": {
+      "title": "Sentiero Incantato del Castello",
+      "opening": [
+        {
+          "start": "09:30",
+          "end": "17:00"
+        }
+      ],
+      "duration_minutes_min": 60,
+      "claim": "Bestiario d'arte e incantesimi sonori",
+      "description": "Percorso di circa 1 km con creature colorate e strumenti interattivi da suonare, immerso nel verde tra sentieri e stagno.",
+      "directions": "Scendere nella parte inferiore del Parco (cancello sulla destra guardando il Castello) e proseguire oltre l’Area Spettacoli.",
+      "tags": [
+        "per_tutti",
+        "interattivo",
+        "natura",
+        "arte",
+        "suono",
+        "passeggiata"
+      ]
+    }
+  },
+  "areas": [
+    {
+      "id": "kpop_show",
+      "name": "Spettacolo K-POP",
+      "location": "Area Spettacoli",
+      "type": "show",
+      "sessions": [
+        {
+          "start": "11:30",
+          "duration_min": 40
+        },
+        {
+          "start": "16:00",
+          "duration_min": 40
+        }
+      ],
+      "audience": [
+        "per_tutti"
+      ],
+      "directions": "Per raggiungere l'Area Spettacoli scendere per circa 200 m nella parte inferiore del Parco (cancello sulla destra guardando il Castello).",
+      "rules_tags": [
+        "kpop"
+      ]
+    },
+    {
+      "id": "bee_dance",
+      "name": "BEE-Dance con Ape Maia",
+      "location": "Area Spettacoli",
+      "type": "drop_in",
+      "open_windows": [
+        {
+          "start": "14:00",
+          "end": "15:00"
+        }
+      ],
+      "audience": [
+        "bambini",
+        "famiglie"
+      ],
+      "notes": [
+        "Attività continuativa: puoi unirti quando vuoi e ballare con le musiche del Musical ufficiale per i 50 anni dell’Ape Maia."
+      ],
+      "rules_tags": [
+        "ape_maia"
+      ]
+    },
+    {
+      "id": "princess_garden",
+      "name": "Giardino delle Principesse",
+      "location": "Cortile degli Stemmi",
+      "type": "meet_greet",
+      "open_windows": [
+        {
+          "start": "10:00",
+          "end": "13:30"
+        },
+        {
+          "start": "15:00",
+          "end": "17:00"
+        }
+      ],
+      "audience": [
+        "famiglie",
+        "bambini",
+        "per_tutti"
+      ],
+      "notes": [
+        "Foto libere e incontro con le principesse; consigliato vestirsi a tema."
+      ],
+      "rules_tags": [
+        "principesse"
+      ]
+    },
+    {
+      "id": "magic_school",
+      "name": "Scuola di Magia",
+      "location": "Terrazza Panoramica (esterno, a destra guardando il Castello, oltre punto ristoro e bagni)",
+      "type": "interactive_area",
+      "open_windows": [
+        {
+          "start": "10:00",
+          "end": "17:00"
+        }
+      ],
+      "specials": [
+        {
+          "name": "Lezione Pozioni",
+          "start": "11:00",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Pozioni",
+          "start": "12:00",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Pozioni",
+          "start": "14:30",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Pozioni",
+          "start": "15:30",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Difesa delle Arti Oscure",
+          "start": "10:30",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Difesa delle Arti Oscure",
+          "start": "11:30",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Difesa delle Arti Oscure",
+          "start": "14:00",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Difesa delle Arti Oscure",
+          "start": "15:00",
+          "duration_min": 15
+        },
+        {
+          "name": "Lezione Difesa delle Arti Oscure",
+          "start": "16:15",
+          "duration_min": 15
+        }
+      ],
+      "audience": [
+        "per_tutti",
+        "famiglie"
+      ],
+      "notes": [
+        "Maghi e maghette possono vestirsi a tema."
+      ],
+      "rules_tags": [
+        "maghi",
+        "magia"
+      ]
+    },
+    {
+      "id": "secret_room",
+      "name": "Stanza dei Segreti del Mago",
+      "location": "Interno Castello – Sala Armature",
+      "type": "interactive_area",
+      "open_windows": [
+        {
+          "start": "10:00",
+          "end": "11:45"
+        },
+        {
+          "start": "13:15",
+          "end": "17:00"
+        }
+      ],
+      "specials": [
+        {
+          "name": "Mini Torneo",
+          "start": "10:30",
+          "duration_min": 20
+        },
+        {
+          "name": "Mini Torneo",
+          "start": "11:00",
+          "duration_min": 20
+        },
+        {
+          "name": "Mini Torneo",
+          "start": "14:00",
+          "duration_min": 20
+        },
+        {
+          "name": "Mini Torneo",
+          "start": "15:00",
+          "duration_min": 20
+        },
+        {
+          "name": "Mini Torneo",
+          "start": "16:00",
+          "duration_min": 20
+        }
+      ],
+      "audience": [
+        "famiglie",
+        "bambini",
+        "per_tutti"
+      ],
+      "notes": [
+        "Maghi e maghette possono vestirsi a tema."
+      ],
+      "rules_tags": [
+        "maghi",
+        "stanza_dei_segreti"
+      ]
+    },
+    {
+      "id": "castle_ball",
+      "name": "Ballo nel Castello",
+      "location": "Interno Castello – Salone delle Feste",
+      "type": "kids_activity",
+      "open_windows": [
+        {
+          "start": "10:30",
+          "end": "12:00"
+        },
+        {
+          "start": "13:30",
+          "end": "15:00"
+        },
+        {
+          "start": "16:00",
+          "end": "17:00"
+        }
+      ],
+      "notes": [
+        "Con la maestra di danza Principessa Belle; consigliato vestirsi a tema."
+      ],
+      "audience": [
+        "bambini",
+        "famiglie"
+      ],
+      "rules_tags": [
+        "principesse",
+        "ballo"
+      ]
+    },
+    {
+      "id": "snoezelen",
+      "name": "Stanza Snoezelen (bimbi 0–7)",
+      "location": "Interno Castello – Stanza del Camino",
+      "type": "kids_sessions",
+      "sessions": [
+        {
+          "start": "10:00",
+          "duration_min": 20
+        },
+        {
+          "start": "10:30",
+          "duration_min": 20
+        },
+        {
+          "start": "11:00",
+          "duration_min": 20
+        },
+        {
+          "start": "11:30",
+          "duration_min": 20
+        },
+        {
+          "start": "12:00",
+          "duration_min": 20
+        },
+        {
+          "start": "14:00",
+          "duration_min": 20
+        },
+        {
+          "start": "14:30",
+          "duration_min": 20
+        },
+        {
+          "start": "15:00",
+          "duration_min": 20
+        },
+        {
+          "start": "16:00",
+          "duration_min": 20
+        },
+        {
+          "start": "16:30",
+          "duration_min": 20
+        }
+      ],
+      "audience": [
+        "bambini_0_7",
+        "famiglie"
+      ],
+      "notes": [
+        "Accesso riservato a bimbi fino a 7 anni. Fino a 4 anni con un genitore accompagnatore."
+      ],
+      "rules_tags": [
+        "bimbi_0_7",
+        "snoezelen"
+      ]
+    },
+    {
+      "id": "merlin_house",
+      "name": "Casa di Mago Merlino",
+      "location": "Parco (oltre Area Spettacoli, lungo il Sentiero Incantato)",
+      "type": "kids_activity",
+      "open_windows": [
+        {
+          "start": "10:30",
+          "end": "12:00"
+        },
+        {
+          "start": "13:30",
+          "end": "16:15"
+        }
+      ],
+      "directions": "Scendere nella parte inferiore del Parco (cancello a destra guardando il Castello), oltre Area Spettacoli, lungo il Sentiero Incantato (circa 1 km).",
+      "audience": [
+        "bambini",
+        "famiglie"
+      ],
+      "rules_tags": [
+        "maghi",
+        "merlino"
+      ]
+    },
+    {
+      "id": "yin_yoga",
+      "name": "Area Benessere – Yin Yoga",
+      "location": "Parco",
+      "type": "adult_wellness",
+      "sessions": [
+        {
+          "start": "10:30",
+          "end": "11:00"
+        },
+        {
+          "start": "12:10",
+          "end": "12:40"
+        },
+        {
+          "start": "13:50",
+          "end": "14:20"
+        },
+        {
+          "start": "15:30",
+          "end": "16:00"
+        }
+      ],
+      "audience": [
+        "adulti",
+        "per_tutti"
+      ],
+      "notes": [
+        "Area dedicata a genitori ed adulti.",
+        "1 Pass benessere per adulto incluso. Seconda attività benessere solo se disponibili posti liberi ad inizio sessione."
+      ],
+      "rules_tags": [
+        "benessere",
+        "adulti"
+      ]
+    },
+    {
+      "id": "heart_meditation",
+      "name": "Area Benessere – Meditazione del Cuore",
+      "location": "Parco",
+      "type": "adult_wellness",
+      "sessions": [
+        {
+          "start": "11:20",
+          "end": "11:50"
+        },
+        {
+          "start": "13:00",
+          "end": "13:30"
+        },
+        {
+          "start": "14:40",
+          "end": "15:10"
+        },
+        {
+          "start": "16:20",
+          "end": "16:50"
+        }
+      ],
+      "audience": [
+        "adulti"
+      ],
+      "notes": [
+        "Area dedicata a genitori ed adulti.",
+        "1 Pass benessere per adulto incluso. Seconda attività benessere solo se disponibili posti liberi ad inizio sessione."
+      ],
+      "rules_tags": [
+        "benessere",
+        "adulti"
+      ]
+    }
+  ],
+  "recommendation_rules": {
+    "always_include": [
+      {
+        "condition": "children_present AND children_age_max>=7",
+        "include": [
+          "kpop_show"
+        ],
+        "reason": "Con bimbi dai 7 anni in su, proporre sempre K-POP (almeno una replica)."
+      },
+      {
+        "condition": "children_present AND children_age_max<=8",
+        "include": [
+          "bee_dance"
+        ],
+        "reason": "Con bimbi fino a 8 anni, proporre sempre Ape Maia (14:00–15:00)."
+      },
+      {
+        "condition": "adults_present",
+        "include": [
+          "yin_yoga",
+          "heart_meditation"
+        ],
+        "reason": "Per gli adulti inserire sempre attività benessere (almeno 1 sessione Yin o Meditazione)."
+      },
+      {
+        "condition": "children_present AND children_age_max<=7",
+        "include": [
+          "snoezelen"
+        ],
+        "reason": "Con bimbi 0–7 anni, inserire sempre Snoezelen (scegliere un turno)."
+      },
+      {
+        "condition": "any_user",
+        "include": [
+          "signature_path"
+        ],
+        "reason": "Inserire sempre Sentiero Incantato (durata minima 60 minuti, senza sovrapposizioni)."
+      }
+    ],
+    "preference_requirements": [
+      {
+        "preference": "maghi",
+        "must_include": [
+          "magic_school",
+          "secret_room",
+          "merlin_house"
+        ],
+        "maximize": [
+          "magic_school.specials",
+          "secret_room.specials"
+        ],
+        "reason": "Chi preferisce i maghi deve avere quante più lezioni/tornei possibili + incontro con Mago Merlino."
+      },
+      {
+        "preference": "principesse",
+        "must_include": [
+          "princess_garden",
+          "castle_ball"
+        ],
+        "reason": "Chi preferisce principesse deve includere Giardino delle Principesse + Ballo nel Castello in orari compatibili."
+      }
+    ],
+    "time_constraints": [
+      {
+        "name": "sentiero_block",
+        "duration_min": 60,
+        "no_overlap": true
+      },
+      {
+        "name": "buffer_for_fixed_start",
+        "minutes": 10,
+        "note": "Consigliare arrivare 5–10 min prima di lezioni/tornei/sessioni."
+      }
+    ]
+  },
+  "faq_ready": [
+    {
+      "q": "A che ora apre l’evento?",
+      "a": "Ingressi e biglietteria dalle 09:30 alle 15:00 (ultimo ingresso 15:00). Le attività iniziano dalle 10:00, terminano alle 17:00. Parco e Castello chiudono alle 17:30.",
+      "tags": [
+        "orari",
+        "generale"
+      ]
+    },
+    {
+      "q": "A che ora è lo spettacolo K-POP?",
+      "a": "K-POP: inizio alle 11:30 e alle 16:00 (durata circa 40 minuti) in Area Spettacoli. Per arrivare scendi nella parte bassa del Parco (circa 200 m), cancello sulla destra guardando il Castello.",
+      "tags": [
+        "kpop",
+        "spettacoli"
+      ]
+    },
+    {
+      "q": "A che ora c’è la BEE-Dance con Ape Maia?",
+      "a": "BEE-Dance con Ape Maia: dalle 14:00 alle 15:00 in Area Spettacoli. È continuativa: puoi unirti quando vuoi e ballare con le musiche ufficiali del musical.",
+      "tags": [
+        "ape_maia",
+        "bambini",
+        "spettacoli"
+      ]
+    },
+    {
+      "q": "Quando è aperto il Giardino delle Principesse?",
+      "a": "Giardino delle Principesse: dalle 10:00 alle 13:30 e dalle 15:00 alle 17:00 (Cortile degli Stemmi).",
+      "tags": [
+        "principesse",
+        "orari"
+      ]
+    },
+    {
+      "q": "Quando sono le lezioni della Scuola di Magia?",
+      "a": "Scuola di Magia aperta 10:00–17:00. Pozioni: 11:00, 12:00, 14:30, 15:30 (≈15’). Difesa Arti Oscure: 10:30, 11:30, 14:00, 15:00, 16:15 (≈15’).",
+      "tags": [
+        "magia",
+        "maghi"
+      ]
+    },
+    {
+      "q": "Quando è aperta la Stanza dei Segreti del Mago e a che ora sono i mini tornei?",
+      "a": "Stanza dei Segreti: 10:00–11:45 e 13:15–17:00 (Sala Armature). Mini Torneo: 10:30, 11:00, 14:00, 15:00, 16:00 (≈20’).",
+      "tags": [
+        "maghi",
+        "tornei"
+      ]
+    },
+    {
+      "q": "Quando è aperto il Ballo nel Castello?",
+      "a": "Ballo nel Castello: 10:30–12:00, 13:30–15:00 e 16:00–17:00 (Salone delle Feste).",
+      "tags": [
+        "ballo",
+        "principesse",
+        "bambini"
+      ]
+    },
+    {
+      "q": "Snoezelen: chi può entrare e quali sono gli orari?",
+      "a": "Snoezelen è per bimbi fino a 7 anni (fino a 4 anni con un genitore). Turni: 10:00, 10:30, 11:00, 11:30, 12:00, 14:00, 14:30, 15:00, 16:00, 16:30 (durata ≈20’).",
+      "tags": [
+        "snoezelen",
+        "bimbi_0_7"
+      ]
+    },
+    {
+      "q": "Quando è aperta la Casa di Mago Merlino?",
+      "a": "Casa di Mago Merlino: 10:30–12:00 e 13:30–16:15. Si raggiunge scendendo nella parte bassa del Parco, oltre l’Area Spettacoli, lungo il Sentiero Incantato.",
+      "tags": [
+        "merlino",
+        "maghi"
+      ]
+    },
+    {
+      "q": "Quali sono gli orari delle attività benessere?",
+      "a": "Yin Yoga: 10:30–11:00, 12:10–12:40, 13:50–14:20, 15:30–16:00. Meditazione del Cuore: 11:20–11:50, 13:00–13:30, 14:40–15:10, 16:20–16:50. 1 pass benessere per adulto incluso; seconda attività solo se posti liberi.",
+      "tags": [
+        "benessere",
+        "adulti"
+      ]
+    },
+    {
+      "q": "Cos’è il Sentiero Incantato del Castello e quanto dura?",
+      "a": "È un percorso di circa 1 km tra sentieri e stagno con creature colorate e strumenti sonori interattivi da suonare. È aperto 09:30–17:00. Consigliamo di dedicarci almeno 60 minuti.",
+      "tags": [
+        "sentiero",
+        "parco"
+      ]
+    },
+    {
+      "q": "Quando è meglio arrivare?",
+      "a": "Se vuoi fare più cose, l’ideale è arrivare entro le 11:30. Se arrivi nel pomeriggio, punta su Sentiero Incantato (1h), Magia, Stanza dei Segreti, Principesse (dalle 15:00) e K-POP alle 16:00.",
+      "tags": [
+        "consigli",
+        "ingressi"
+      ]
+    },
+    {
+      "q": "Cosa c’è a una certa ora?",
+      "a": "Scrivimi l’orario (es. 14:00) e dimmi se sei con bambini (età): ti dico cosa è aperto in quel momento e i prossimi appuntamenti consigliati.",
+      "tags": [
+        "cosa_ora"
+      ]
+    }
+  ],
+  "planner_spec": {
+    "inputs": {
+      "arrival_time": "HH:MM",
+      "departure_time": "HH:MM (opzionale, default 17:00)",
+      "children_present": "boolean",
+      "children_ages": "array[int] (opzionale)",
+      "adults_present": "boolean",
+      "preferences": "array[str] tra: ['maghi','principesse','kpop','ape_maia','benessere','sentiero','tornei','ballo','snoezelen']"
+    },
+    "required_defaults": {
+      "if_children_present_and_ages_missing": "chiedere l'età del più piccolo e del più grande",
+      "if_adults_present_missing": "assumere true se non specificato"
+    },
+    "output_format": {
+      "itinerary_item": {
+        "start": "HH:MM",
+        "end": "HH:MM",
+        "title": "string",
+        "location": "string",
+        "notes": "string"
+      },
+      "max_items": 10
+    },
+    "mandatory_inclusions_logic": "Vedi recommendation_rules (always_include + preference_requirements) e vincolo Sentiero 60'."
+  }
+}

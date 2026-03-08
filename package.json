@@ -1,0 +1,26 @@
+{
+  "name": "oraricastello-personalizzato",
+  "version": "1.0.0",
+  "description": "Versione personalizzata con IA per Orari Castello",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [],
+  "author": "Orari Castello",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "googleapis": "^171.4.0",
+    "nodemailer": "^8.0.1",
+    "pdfkit": "^0.17.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

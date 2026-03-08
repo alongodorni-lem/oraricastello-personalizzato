@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orari Castello personalizzato</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background:#f4f7ff; color:#1a2452; }
+    main { max-width: 1000px; margin: 0 auto; padding: 20px; }
+    .card { background:#fff; border:1px solid #d7dff1; border-radius:14px; padding:16px; margin-bottom:14px; }
+    h1 { margin: 0 0 8px; color:#1b4da1; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+    label { font-weight:600; display:block; margin-bottom:4px; }
+    input, select, textarea { width:100%; padding:8px; border:1px solid #c6d2ee; border-radius:8px; font:inherit; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; }
+    .chip { display:flex; gap:6px; align-items:center; border:1px solid #d5dcf3; border-radius:999px; padding:6px 10px; background:#f9fbff; }
+    button { background:#1b4da1; color:#fff; border:0; border-radius:10px; padding:10px 14px; font-weight:700; cursor:pointer; }
+    button[disabled] { opacity:0.6; cursor:wait; }
+    .muted { color:#556080; font-size:0.92rem; }
+    .step { border-left:4px solid #7d3cc7; padding-left:10px; margin:8px 0; }
+    .status { margin-top:10px; font-size:0.9rem; color:#2d3b64; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>Orari Castello personalizzato</h1>
+      <p class="muted">Compila i dati, guarda le attività previste e scarica subito il tuo orario personalizzato.</p>
+    </section>
+
+    <section class="card">
+      <form id="planner-form">
+        <div class="grid">
+          <div>
+            <label for="email">Email</label>
+            <input id="email" type="email" required placeholder="nome@email.it">
+          </div>
+          <div>
+            <label for="visitDate">Data</label>
+            <select id="visitDate" required>
+              <option value="2026-04-19">19 aprile</option>
+              <option value="2026-04-25">25 aprile</option>
+              <option value="2026-04-26">26 aprile</option>
+              <option value="2026-05-01">1 maggio</option>
+            </select>
+          </div>
+          <div>
+            <label for="arrivalTime">Orario previsto di arrivo</label>
+            <select id="arrivalTime" required>
+              <option value="09:30">09:30</option>
+              <option value="10:00">10:00</option>
+              <option value="10:30">10:30</option>
+              <option value="11:00">11:00</option>
+              <option value="11:30">11:30</option>
+              <option value="12:00">12:00</option>
+              <option value="12:30">12:30</option>
+              <option value="13:00">13:00</option>
+              <option value="13:30">13:30</option>
+              <option value="14:00">14:00</option>
+              <option value="14:30">14:30</option>
+              <option value="15:00">15:00</option>
+            </select>
+          </div>
+          <div>
+            <label for="stayDuration">Quanto tempo vuoi fermarti?</label>
+            <select id="stayDuration" required>
+              <option value="at_least_2_5h">2,5 ore</option>
+              <option value="between_2_5h_4h">Da 2,5 a 4 ore</option>
+              <option value="over_4h">Oltre 4 ore</option>
+            </select>
+            <p class="muted" style="margin:6px 0 0;">La scelta si adatta agli orari limite: ultimo ingresso 15:00, chiusura 17:30.</p>
+          </div>
+          <div>
+            <label for="hasChildren">Ci sono bambini?</label>
+            <select id="hasChildren">
+              <option value="yes">Si</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+          <div>
+            <label for="childrenAges">Eta bambini (es. 4,7)</label>
+            <input id="childrenAges" type="text" placeholder="obbligatorio se ci sono bambini">
+          </div>
+        </div>
+
+        <div style="margin-top:12px;">
+          <label>Interessi principali</label>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" value="Principesse">Principesse</label>
+            <label class="chip"><input type="checkbox" value="Maghi">Maghi</label>
+            <label class="chip"><input type="checkbox" value="Huntrix">Huntrix</label>
+            <label class="chip"><input type="checkbox" value="Benessere">Benessere</label>
+            <label class="chip"><input type="checkbox" value="Pic-nic">Pic-nic</label>
+            <label class="chip"><input type="checkbox" value="Punti ristoro">Punti ristoro</label>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;">
+          <label for="freeText">Cosa vi piace di piu? (testo libero)</label>
+          <textarea id="freeText" rows="3"></textarea>
+        </div>
+
+        <div style="margin-top:12px;">
+          <button id="submitBtn" type="submit">Genera orario personalizzato</button>
+        </div>
+      </form>
+      <p class="status" id="status"></p>
+    </section>
+
+    <section class="card">
+      <h2>Risultato</h2>
+      <div id="result" class="muted">Nessun itinerario generato.</div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
