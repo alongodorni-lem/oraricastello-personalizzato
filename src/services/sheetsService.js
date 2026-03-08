@@ -1,5 +1,10 @@
 const { google } = require("googleapis");
 
+function hasNonEmpty(value) {
+  if (typeof value === "string") return value.trim().length > 0;
+  return Boolean(value);
+}
+
 function getServiceAccount() {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (raw) {
@@ -22,7 +27,11 @@ function getServiceAccount() {
       private_key: String(privateKey).replace(/\\n/g, "\n"),
     };
   }
-  throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON mancante (oppure imposta GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY)");
+  throw new Error(
+    `GOOGLE_SERVICE_ACCOUNT_JSON mancante (oppure imposta GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) [has_json=${hasNonEmpty(
+      raw
+    )}; has_email=${hasNonEmpty(clientEmail)}; has_private=${hasNonEmpty(privateKey)}]`
+  );
 }
 
 async function appendPreferenceRow(payload, plan, emailStatus) {
