@@ -6,12 +6,33 @@ function parseChildrenAges(input) {
     .filter((v) => !Number.isNaN(v));
 }
 
+function validateChildrenAgesInput(rawInput) {
+  const raw = String(rawInput || "").trim();
+  if (!raw) return null;
+  const invalidMsg = "Separa l'età di ciascun bambino con la virgola";
+
+  // Esempio non valido richiesto: "4 6 8"
+  const hasComma = raw.includes(",");
+  const spaceParts = raw.split(/\s+/).filter(Boolean);
+  if (!hasComma && spaceParts.length > 1 && spaceParts.every((p) => /^\d+$/.test(p))) {
+    return invalidMsg;
+  }
+
+  // Se presente un numero a due cifre superiore a 18, mostra stesso errore.
+  const numericTokens = raw.match(/\d+/g) || [];
+  if (numericTokens.some((n) => n.length >= 2 && Number(n) > 18)) {
+    return invalidMsg;
+  }
+
+  return null;
+}
+
 const LAST_ENTRY = "15:00";
 const PARK_CLOSE = "17:30";
 const DEFAULT_INTRO_NOTE =
-  "Questi sono semplici suggerimenti automatici basati sul programma: gestisci in autonomia le tue scelte nel corso della giornata in base alle tue esigenze e all'eventuale affollamento di alcune aree.";
+  "Gestisci in autonomia le tue scelte nel corso della giornata in base alle tue esigenze e all'eventuale affollamento di alcune aree.";
 const DEFAULT_FINAL_NOTE =
-  "Durante la giornata non perderti la Passeggiata in natura nel Sentiero Incantato del Parco.\nDurante la giornata puoi ritirare presso la postazione del fotografo - all'interno del Castello - una copia stampata della tua foto di famiglia in omaggio (servizio offerto dal fotografo)";
+  "Durante la giornata puoi ritirare presso la postazione del fotografo - all'interno del Castello - una copia stampata della tua foto di famiglia in omaggio (servizio offerto dal fotografo)";
 let latestPdfBase64 = "";
 
 function toMinutes(time) {
@@ -82,6 +103,7 @@ function syncChildrenAgesRequirement() {
 function renderPlanBlock(plan, title) {
   const introNote = plan.introNote || DEFAULT_INTRO_NOTE;
   const finalNote = (plan.finalNote || DEFAULT_FINAL_NOTE).replace(/\n/g, "<br>");
+  const summary = (plan.summary || "").trim();
   const shortStayWarning =
     plan.metadata?.stayDuration === "at_least_2_5h"
       ? "Se ti fermi 2,5 ore potresti non riuscire a partecipare a tutte le attività"
@@ -193,7 +215,7 @@ function renderPlanBlock(plan, title) {
     ${title ? `<p><strong>${title}</strong></p>` : ""}
     ${shortStayWarning ? `<p style="color:#b91c1c">${shortStayWarning}</p>` : ""}
     <p><em>${introNote}</em></p>
-    <p>${plan.summary}</p>
+    ${summary ? `<p>${summary}</p>` : ""}
     ${rows}
     <p><strong>${finalNote}</strong></p>
   `;
@@ -234,6 +256,9 @@ function renderPdfButton() {
         <button id="downloadPdfBtn" type="button" style="background:#b91c1c;color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;">
           Scarica PDF
         </button>
+        <div style="margin-top:8px;font-size:12px;color:#6b7280;">
+          &copy; Sistema gestione orari sviluppato in esclusiva da Lem s.r.l. - Per info lemcomunicazione@gmail.com
+        </div>
       </div>
     `
   );
@@ -260,6 +285,7 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
   e.preventDefault();
   const submitBtn = document.getElementById("submitBtn");
   const status = document.getElementById("status");
+  const rawChildrenAges = document.getElementById("childrenAges").value;
   submitBtn.disabled = true;
   status.textContent = "Generazione in corso...";
 
@@ -269,7 +295,7 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
     arrivalTime: document.getElementById("arrivalTime").value,
     stayDuration: document.getElementById("stayDuration").value,
     hasChildren: document.getElementById("hasChildren").value === "yes",
-    childrenAges: parseChildrenAges(document.getElementById("childrenAges").value),
+    childrenAges: parseChildrenAges(rawChildrenAges),
     interests: selectedInterests(),
     freeText: document.getElementById("freeText").value.trim(),
   };
@@ -284,6 +310,12 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
   if (payload.stayDuration === "over_4h" && maxAvailable <= 240) {
     submitBtn.disabled = false;
     status.textContent = "Errore: con questo orario di arrivo non puoi selezionare oltre 4 ore.";
+    return;
+  }
+  const childrenAgesValidationError = payload.hasChildren ? validateChildrenAgesInput(rawChildrenAges) : null;
+  if (childrenAgesValidationError) {
+    submitBtn.disabled = false;
+    status.textContent = `Errore: ${childrenAgesValidationError}.`;
     return;
   }
   if (payload.hasChildren && payload.childrenAges.length === 0) {

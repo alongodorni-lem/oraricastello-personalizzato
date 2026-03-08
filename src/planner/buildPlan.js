@@ -1,10 +1,8 @@
 const { programData } = require("../data/program");
 const INTRO_ITALIC_NOTE =
-  "Questi sono semplici suggerimenti automatici basati sul programma: gestisci in autonomia le tue scelte nel corso della giornata in base alle tue esigenze e all'eventuale affollamento di alcune aree.";
+  "Gestisci in autonomia le tue scelte nel corso della giornata in base alle tue esigenze e all'eventuale affollamento di alcune aree.";
 const WELLNESS_ADULT_NOTE =
   "Area dedicata a genitori ed adulti. 1 Pass benessere per adulto incluso. Seconda attività benessere solo se disponibili posti liberi ad inizio sessione.";
-const FINAL_SENTIERO_NOTE =
-  "Durante la giornata non perderti la Passeggiata in natura nel Sentiero Incantato del Parco.";
 const FINAL_BOLD_NOTE =
   "Durante la giornata puoi ritirare presso la postazione del fotografo - all'interno del Castello - una copia stampata della tua foto di famiglia in omaggio (servizio offerto dal fotografo)";
 const slotUsage = new Map();
@@ -1495,17 +1493,24 @@ function buildPersonalPlan(payload) {
   addSection(itinerary, "In questi orari puoi scegliere tra le seguenti attività", "default");
   addSeparator(itinerary);
 
-  addSection(itinerary, "SPETTACOLI", "red");
+  addSection(
+    itinerary,
+    "SPETTACOLI",
+    "red",
+    "Per raggiungere l'Area Spettacoli scendere per circa 200 mt. nella parte inferiore del Parco, cancello sulla destra osservando il Castello."
+  );
   addItem(itinerary, {
     activity: kpop?.name || "Spettacolo K-POP",
     location: kpop?.location || "",
-    note: formatTimesLabel(getStartsInWindow(kpop, arrivalMins, endLimit)),
+    note: `${formatTimesLabel(getStartsInWindow(kpop, arrivalMins, endLimit))}. Durata circa 40 minuti`,
     colorKey: "red",
   });
   addItem(itinerary, {
     activity: bee?.name || "BEE-Dance con Ape Maia",
     location: bee?.location || "",
-    note: formatRangesLabel(getRangesInWindow(bee, arrivalMins, endLimit)),
+    note: `${formatRangesLabel(
+      getRangesInWindow(bee, arrivalMins, endLimit)
+    )}. L'attività dura un'ora, puoi unirti quando vuoi e ballare con le musiche del Musical ufficiale per i 50 anni dell'Ape Maia.`,
     colorKey: "black",
   });
 
@@ -1625,7 +1630,7 @@ function buildPersonalPlan(payload) {
     colorKey: "brown",
   });
 
-  const summary = "In questi orari puoi scegliere tra le seguenti attività";
+  const summary = "";
   return {
     event: programData.eventName,
     introNote: INTRO_ITALIC_NOTE,
@@ -1639,7 +1644,7 @@ function buildPersonalPlan(payload) {
     },
     summary,
     itinerary,
-    finalNote: `${FINAL_SENTIERO_NOTE}\n${FINAL_BOLD_NOTE}`,
+    finalNote: FINAL_BOLD_NOTE,
   };
 }
 
