@@ -62,6 +62,7 @@ app.post("/api/personalize", async (req, res) => {
       await appendPreferenceRow(payload, plan, emailStatus);
     } catch (err) {
       sheetsStatus = `SHEETS_ERROR: ${err.message}`;
+      console.error("[SHEETS_APPEND_ERROR]", err.message);
     }
 
     return res.json({
