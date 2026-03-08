@@ -27,6 +27,24 @@ function validateChildrenAgesInput(rawInput) {
   return null;
 }
 
+function clearFieldErrors() {
+  document.querySelectorAll(".field-error").forEach((el) => el.classList.remove("field-error"));
+  document.querySelectorAll(".field-error-text").forEach((el) => el.remove());
+}
+
+function setFieldError(fieldId, message) {
+  const field = document.getElementById(fieldId);
+  if (!field) return;
+  field.classList.add("field-error");
+  const existing = document.getElementById(`err-${fieldId}`);
+  if (existing) existing.remove();
+  const msg = document.createElement("div");
+  msg.id = `err-${fieldId}`;
+  msg.className = "field-error-text";
+  msg.textContent = message;
+  field.insertAdjacentElement("afterend", msg);
+}
+
 const LAST_ENTRY = "15:00";
 const PARK_CLOSE = "17:30";
 const DEFAULT_INTRO_NOTE =
@@ -286,6 +304,7 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
   const submitBtn = document.getElementById("submitBtn");
   const status = document.getElementById("status");
   const rawChildrenAges = document.getElementById("childrenAges").value;
+  clearFieldErrors();
   submitBtn.disabled = true;
   status.textContent = "Generazione in corso...";
 
@@ -301,25 +320,53 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
   };
 
   const arrivalMins = toMinutes(payload.arrivalTime);
+  if (!payload.email) {
+    submitBtn.disabled = false;
+    setFieldError("email", "Campo obbligatorio");
+    status.textContent = "Errore: inserisci l'email.";
+    return;
+  }
+  if (!payload.visitDate) {
+    submitBtn.disabled = false;
+    setFieldError("visitDate", "Campo obbligatorio");
+    status.textContent = "Errore: seleziona una data.";
+    return;
+  }
+  if (!payload.arrivalTime) {
+    submitBtn.disabled = false;
+    setFieldError("arrivalTime", "Campo obbligatorio");
+    status.textContent = "Errore: seleziona un orario di arrivo.";
+    return;
+  }
+  if (!payload.stayDuration) {
+    submitBtn.disabled = false;
+    setFieldError("stayDuration", "Campo obbligatorio");
+    status.textContent = "Errore: seleziona la durata di permanenza.";
+    return;
+  }
   if (arrivalMins > toMinutes(LAST_ENTRY)) {
     submitBtn.disabled = false;
+    setFieldError("arrivalTime", "Orario non valido");
     status.textContent = "Errore: ultimo ingresso alle 15:00.";
     return;
   }
   const maxAvailable = toMinutes(PARK_CLOSE) - arrivalMins;
   if (payload.stayDuration === "over_4h" && maxAvailable <= 240) {
     submitBtn.disabled = false;
+    setFieldError("stayDuration", "Durata non compatibile");
     status.textContent = "Errore: con questo orario di arrivo non puoi selezionare oltre 4 ore.";
     return;
   }
   const childrenAgesValidationError = payload.hasChildren ? validateChildrenAgesInput(rawChildrenAges) : null;
   if (childrenAgesValidationError) {
     submitBtn.disabled = false;
+    setFieldError("childrenAges", childrenAgesValidationError);
     status.textContent = `Errore: ${childrenAgesValidationError}.`;
     return;
   }
   if (payload.hasChildren && payload.childrenAges.length === 0) {
     submitBtn.disabled = false;
+    setFieldError("childrenAges", "Campo obbligatorio");
     status.textContent = "Errore: con bambini presenti devi indicare almeno una eta.";
     return;
   }
@@ -338,6 +385,12 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
     renderPdfButton();
     status.textContent = `Completato. Premi "Scarica PDF" per il download.`;
   } catch (err) {
+    const errMsg = String(err.message || "");
+    if (/Email/i.test(errMsg)) setFieldError("email", "Controlla il valore inserito");
+    if (/data/i.test(errMsg)) setFieldError("visitDate", "Controlla il valore inserito");
+    if (/orario/i.test(errMsg)) setFieldError("arrivalTime", "Controlla il valore inserito");
+    if (/durata/i.test(errMsg)) setFieldError("stayDuration", "Controlla il valore inserito");
+    if (/eta|età/i.test(errMsg)) setFieldError("childrenAges", "Controlla il valore inserito");
     status.textContent = `Errore: ${err.message}`;
   } finally {
     submitBtn.disabled = false;
