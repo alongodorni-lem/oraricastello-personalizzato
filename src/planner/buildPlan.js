@@ -1451,6 +1451,7 @@ function formatRangesLabel(ranges = []) {
 }
 
 function pickLunchSuggestion(arrivalMins, endLimit) {
+  if (arrivalMins >= toMinutes("13:30")) return null;
   const preferred = { start: toMinutes("11:30"), end: toMinutes("12:30") };
   const alt = { start: toMinutes("13:30"), end: toMinutes("14:30") };
   const canUse = (slot) => slot.start >= arrivalMins && slot.end <= endLimit;
