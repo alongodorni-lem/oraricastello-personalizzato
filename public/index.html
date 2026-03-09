@@ -19,6 +19,36 @@
     .muted { color:#556080; font-size:0.92rem; }
     .step { border-left:4px solid #7d3cc7; padding-left:10px; margin:8px 0; }
     .status { margin-top:10px; font-size:0.9rem; color:#2d3b64; }
+    .scroll-nav {
+      position: fixed;
+      right: 12px;
+      bottom: 14px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .scroll-nav button {
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      border-radius: 999px;
+      border: 1px solid #b9c8ec;
+      background: rgba(255,255,255,0.95);
+      color: #1b4da1;
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 3px 10px rgba(17, 24, 39, 0.15);
+      cursor: pointer;
+    }
+    .scroll-nav button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
     .field-error {
       border-color: #b91c1c !important;
       box-shadow: 0 0 0 1px rgba(185, 28, 28, 0.15);
@@ -51,6 +81,15 @@
         width: 18px;
         height: 18px;
         flex: 0 0 18px;
+      }
+      #submitBtn {
+        width: 100%;
+        padding: 14px 18px;
+        font-size: 1.05rem;
+      }
+      .scroll-nav button {
+        width: 46px;
+        height: 46px;
       }
     }
   </style>
@@ -145,6 +184,11 @@
       <div id="result" class="muted">Nessun itinerario generato.</div>
     </section>
   </main>
+
+  <div class="scroll-nav" aria-label="Scorri pagina">
+    <button id="scrollUpBtn" type="button" aria-label="Vai su">↑</button>
+    <button id="scrollDownBtn" type="button" aria-label="Vai giù">↓</button>
+  </div>
 
   <script src="./app.js"></script>
 </body>

@@ -78,6 +78,22 @@ function notifyParentHeight() {
   );
 }
 
+function scrollToResultBottom() {
+  const target = document.getElementById("downloadPdfBtn") || document.getElementById("result");
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function updateScrollButtonsState() {
+  const upBtn = document.getElementById("scrollUpBtn");
+  const downBtn = document.getElementById("scrollDownBtn");
+  if (!upBtn || !downBtn) return;
+  const top = window.scrollY || document.documentElement.scrollTop || 0;
+  const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  upBtn.disabled = top <= 8;
+  downBtn.disabled = top >= max - 8;
+}
+
 function refreshStayDurationOptions() {
   const arrivalInput = document.getElementById("arrivalTime");
   const select = document.getElementById("stayDuration");
@@ -283,6 +299,7 @@ function renderPdfButton() {
   const btn = document.getElementById("downloadPdfBtn");
   if (btn) {
     btn.addEventListener("click", () => downloadPdf(latestPdfBase64));
+    scrollToResultBottom();
     notifyParentHeight();
     return;
   }
@@ -383,6 +400,8 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
     latestPdfBase64 = data.pdfBase64 || "";
     renderPlan(data.plan, data.multiPlan);
     renderPdfButton();
+    // Dopo la generazione, porta subito l'utente alla sezione risultato.
+    setTimeout(scrollToResultBottom, 120);
     status.textContent = `Completato. Premi "Scarica PDF" per il download.`;
   } catch (err) {
     const errMsg = String(err.message || "");
@@ -399,7 +418,15 @@ document.getElementById("planner-form").addEventListener("submit", async (e) => 
 
 document.getElementById("arrivalTime").addEventListener("change", refreshStayDurationOptions);
 document.getElementById("hasChildren").addEventListener("change", syncChildrenAgesRequirement);
+document.getElementById("scrollUpBtn").addEventListener("click", () => {
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+document.getElementById("scrollDownBtn").addEventListener("click", () => {
+  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+});
 syncChildrenAgesRequirement();
 refreshStayDurationOptions();
 window.addEventListener("load", notifyParentHeight);
 window.addEventListener("resize", notifyParentHeight);
+window.addEventListener("scroll", updateScrollButtonsState, { passive: true });
+window.addEventListener("load", updateScrollButtonsState);
