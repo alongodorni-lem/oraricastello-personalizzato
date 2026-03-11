@@ -1,0 +1,20 @@
+{
+  "name": "newsletter-planyo-sms",
+  "version": "1.0.0",
+  "description": "Integrazione Mailchimp newsletter + Planyo prenotazioni + SMS Smshosting",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "run": "node index.js",
+    "job": "node index.js",
+    "ui": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "express": "^4.22.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

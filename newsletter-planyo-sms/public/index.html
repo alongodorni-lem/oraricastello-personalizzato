@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Newsletter SMS - Invio Campagne</title>
+  <style>
+    :root {
+      --bg: #f5f6fa;
+      --card: #fff;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --success: #059669;
+      --danger: #dc2626;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    .container {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .card h2::before {
+      content: '';
+      width: 4px;
+      height: 1rem;
+      background: var(--primary);
+      border-radius: 2px;
+    }
+    .form-group {
+      margin-bottom: 1rem;
+    }
+    .form-group:last-child { margin-bottom: 0; }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 0.35rem;
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+    select, input[type="text"], input[type="number"], textarea {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      background: var(--card);
+    }
+    select:focus, input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+    .row {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .row .form-group { flex: 1; min-width: 140px; }
+    .checkboxes {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      font-weight: 400;
+    }
+    .checkbox-label input { width: auto; }
+    .campaign-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.75rem;
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .campaign-list .checkbox-label {
+      padding: 0.4rem 0;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      padding: 0.6rem 1.25rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-secondary {
+      background: var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover:not(:disabled) { background: #cbd5e1; }
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .btn-danger:hover:not(:disabled) { background: #b91c1c; }
+    .actions { margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; }
+    .output {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: #f8fafc;
+      border-radius: 8px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.85rem;
+      max-height: 280px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .output:empty { display: none; }
+    .output .log { color: var(--text); }
+    .output .error { color: var(--danger); }
+    .output .warn { color: #b45309; }
+    .spinner {
+      display: inline-block;
+      width: 1rem;
+      height: 1rem;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .result-ok { color: var(--success); font-weight: 500; }
+    .result-err { color: var(--danger); font-weight: 500; }
+    .char-count {
+      font-weight: 400;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 4rem;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Newsletter SMS</h1>
+    <p class="subtitle">Invio SMS promozionali da campagne Mailchimp (segmentate per prenotazioni Planyo)</p>
+
+    <!-- Invio campagna -->
+    <div class="card">
+      <h2>Invio campagna</h2>
+      <p class="hint" style="margin-bottom: 1rem;">Invia SMS ai contatti che hanno aperto/cliccato la newsletter, segmentati per prenotazioni.</p>
+      <div class="form-group">
+        <label>Campagne (seleziona fino a 5, predefinite: ultime 2 inviate)</label>
+        <div id="campaignList" class="campaign-list">
+          <span class="hint">Caricamento...</span>
+        </div>
+        <p class="hint" id="campaignHint">Seleziona una o più campagne (max 5)</p>
+      </div>
+      <div class="form-group">
+        <label>Lista A – Evento target (risorsa Planyo)</label>
+        <div class="row" style="align-items: flex-end;">
+          <div style="flex: 1; min-width: 120px;">
+            <input type="text" id="targetResourceId" value="236955" placeholder="236955" maxlength="10" readonly style="background: #f1f5f9;">
+          </div>
+          <div>
+            <button type="button" class="btn btn-secondary" id="btnEditTarget">Modifica</button>
+          </div>
+        </div>
+        <p class="hint">Predefinito: Castello delle Sorprese 2026 (id 236955)</p>
+      </div>
+      <div class="form-group">
+        <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
+        <textarea id="smsText" rows="3" maxlength="160" placeholder="Lascia vuoto per usare il testo predefinito della lista"></textarea>
+        <p class="hint">Massimo 160 caratteri. Se vuoto, viene usato il testo predefinito.</p>
+      </div>
+      <div class="form-group">
+        <label>Liste da inviare</label>
+        <div class="checkboxes">
+          <label class="checkbox-label"><input type="checkbox" name="seg" value="A"> Lista A (prenotati evento target)</label>
+          <label class="checkbox-label"><input type="checkbox" name="seg" value="B" checked> Lista B (clienti con prenotazioni ultimi 18 mesi)</label>
+          <label class="checkbox-label"><input type="checkbox" name="seg" value="C"> Lista C (altri contatti)</label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="dryRun">
+          Solo simulazione (nessun SMS inviato)
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btnRun">
+          Avvia invio
+        </button>
+      </div>
+      <div class="output" id="runOutput"></div>
+    </div>
+
+    <!-- Test SMS -->
+    <div class="card">
+      <h2>Invio prova</h2>
+      <p class="hint" style="margin-bottom: 1rem;">Invia un SMS di test al tuo numero per verificare che tutto funzioni.</p>
+      <div class="form-group">
+        <label>Numero telefono</label>
+        <input type="text" id="testPhone" placeholder="+39 333 1234567" maxlength="20">
+      </div>
+      <div class="actions">
+        <button class="btn btn-secondary" id="btnTest">Invia SMS di prova</button>
+      </div>
+      <div class="output" id="testOutput"></div>
+    </div>
+
+    <!-- Verifica numero -->
+    <div class="card">
+      <h2>Verifica numero</h2>
+      <p class="hint" style="margin-bottom: 1rem;">Controlla se un numero era incluso in una lista (A, B o C) per l'ultima campagna.</p>
+      <div class="form-group">
+        <label>Numero da cercare</label>
+        <input type="text" id="checkPhone" placeholder="+39 333 1234567" maxlength="20">
+      </div>
+      <div class="actions">
+        <button class="btn btn-secondary" id="btnCheck">Verifica</button>
+      </div>
+      <div class="output" id="checkOutput"></div>
+    </div>
+  </div>
+
+  <script>
+    // Base path per API (funziona sia standalone che montato es. /newsletter-sms)
+    const API = (() => {
+      const segs = window.location.pathname.split('/').filter(Boolean);
+      return segs.length ? '/' + segs[0] : '';
+    })();
+
+    async function loadCampaigns() {
+      const list = document.getElementById('campaignList');
+      const hint = document.getElementById('campaignHint');
+      try {
+        const r = await fetch(API + '/api/campaigns?last=5');
+        const d = await r.json();
+        list.innerHTML = '';
+        if (d.campaigns && d.campaigns.length) {
+          d.campaigns.forEach((c, i) => {
+            const lab = document.createElement('label');
+            lab.className = 'checkbox-label';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.name = 'campaign';
+            cb.value = c.id;
+            cb.dataset.subject = (c.subject || c.id).slice(0, 60);
+            if (i < 2) cb.checked = true;
+            cb.onchange = () => {
+              const checked = list.querySelectorAll('input[name="campaign"]:checked');
+              if (checked.length > 5) cb.checked = false;
+              hint.textContent = checked.length >= 5 ? 'Massimo 5 campagne selezionate' : 'Seleziona una o più campagne (max 5)';
+            };
+            lab.appendChild(cb);
+            lab.appendChild(document.createTextNode(` ${(c.subject || c.id).slice(0, 55)}${(c.subject || c.id).length > 55 ? '…' : ''} (${c.send_time ? new Date(c.send_time).toLocaleDateString('it') : ''})`));
+            list.appendChild(lab);
+          });
+          hint.textContent = 'Predefinite: ultime 2. Seleziona fino a 5 campagne.';
+        } else {
+          list.innerHTML = '<span class="hint">Nessuna campagna disponibile</span>';
+        }
+      } catch (e) {
+        list.innerHTML = '<span class="hint" style="color:var(--danger)">Errore caricamento</span>';
+      }
+    }
+
+    function showOutput(el, logs, extra) {
+      let html = '';
+      if (logs && logs.length) {
+        logs.forEach(l => {
+          const cls = l.type === 'error' ? 'error' : (l.type === 'warn' ? 'warn' : 'log');
+          html += `<div class="${cls}">${escapeHtml(l.msg)}</div>`;
+        });
+      }
+      if (extra) html += `<div class="log">${escapeHtml(extra)}</div>`;
+      el.innerHTML = html || '';
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    document.getElementById('btnRun').onclick = async () => {
+      const btn = document.getElementById('btnRun');
+      const out = document.getElementById('runOutput');
+      const dryRun = document.getElementById('dryRun').checked;
+      const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
+      const campaignIds = Array.from(document.querySelectorAll('input[name="campaign"]:checked')).map(c => c.value);
+
+        if (!segs.length) {
+        out.innerHTML = '<div class="error">Seleziona almeno una lista (A, B o C).</div>';
+        return;
+      }
+      if (!campaignIds.length) {
+        out.innerHTML = '<div class="error">Seleziona almeno una campagna.</div>';
+        return;
+      }
+      if (!dryRun && !confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> In corso...';
+      out.innerHTML = '<div class="log">Avvio in corso...</div>';
+
+      try {
+        const r = await fetch(API + '/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            campaignIds,
+            segments: segs.length ? segs : ['A', 'B', 'C'],
+            dryRun,
+            targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
+            smsText: document.getElementById('smsText').value.trim() || undefined
+          })
+        });
+        const d = await r.json();
+        showOutput(out, d.logs);
+        if (d.result) {
+          const { inserted, notInserted, duplicates } = d.result;
+          const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
+          out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Non inseriti ${notInserted}${dup}</div>`;
+        }
+        if (d.error) out.innerHTML += `<div class="error">Errore: ${escapeHtml(d.error)}</div>`;
+      } catch (e) {
+        out.innerHTML += `<div class="error">Errore: ${escapeHtml(e.message)}</div>`;
+      }
+      btn.disabled = false;
+      btn.textContent = 'Avvia invio';
+    };
+
+    document.getElementById('btnTest').onclick = async () => {
+      const phone = document.getElementById('testPhone').value.trim();
+      const out = document.getElementById('testOutput');
+      if (!phone) {
+        out.innerHTML = '<div class="error">Inserisci un numero di telefono.</div>';
+        return;
+      }
+      const btn = document.getElementById('btnTest');
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Invio in corso...</div>';
+      try {
+        const r = await fetch(API + '/api/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone })
+        });
+        const d = await r.json();
+        out.innerHTML = d.success
+          ? '<div class="log result-ok">SMS inviato con successo.</div>'
+          : `<div class="error">${escapeHtml(d.error || d.message || 'Invio fallito')}</div>`;
+      } catch (e) {
+        out.innerHTML = `<div class="error">${escapeHtml(e.message)}</div>`;
+      }
+      btn.disabled = false;
+    };
+
+    document.getElementById('btnCheck').onclick = async () => {
+      const phone = document.getElementById('checkPhone').value.trim();
+      const out = document.getElementById('checkOutput');
+      if (!phone) {
+        out.innerHTML = '<div class="error">Inserisci un numero da cercare.</div>';
+        return;
+      }
+      const btn = document.getElementById('btnCheck');
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Verifica in corso...</div>';
+      try {
+        const r = await fetch(API + '/api/check-phone', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phone,
+            targetResourceId: document.getElementById('targetResourceId')?.value?.trim() || undefined
+          })
+        });
+        const d = await r.json();
+        out.innerHTML = d.found
+          ? `<div class="log result-ok">Trovato in Lista ${d.segment} | ${escapeHtml(d.email)}</div>`
+          : '<div class="log">Numero non trovato in nessuna lista.</div>';
+        if (d.error) out.innerHTML = `<div class="error">${escapeHtml(d.error)}</div>`;
+      } catch (e) {
+        out.innerHTML = `<div class="error">${escapeHtml(e.message)}</div>`;
+      }
+      btn.disabled = false;
+    };
+
+    async function loadConfig() {
+      try {
+        const r = await fetch(API + '/api/config');
+        const d = await r.json();
+        if (d.targetResourceId) {
+          document.getElementById('targetResourceId').value = d.targetResourceId;
+        }
+      } catch (e) { /* use default */ }
+    }
+
+    document.getElementById('btnEditTarget').onclick = async () => {
+      const input = document.getElementById('targetResourceId');
+      const btn = document.getElementById('btnEditTarget');
+      if (input.readOnly) {
+        input.readOnly = false;
+        input.style.background = 'var(--card)';
+        btn.textContent = 'Salva';
+      } else {
+        const id = input.value.trim();
+        const num = parseInt(id, 10);
+        if (!id || isNaN(num) || num < 1) {
+          alert('Inserisci un ID risorsa Planyo valido (numero positivo).');
+          return;
+        }
+        btn.disabled = true;
+        try {
+          const r = await fetch(API + '/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targetResourceId: num })
+          });
+          const d = await r.json();
+          if (d.success) {
+            input.value = d.targetResourceId;
+            input.readOnly = true;
+            input.style.background = '#f1f5f9';
+            btn.textContent = 'Modifica';
+          } else {
+            alert(d.error || 'Errore salvataggio');
+          }
+        } catch (e) {
+          alert('Errore: ' + e.message);
+        }
+        btn.disabled = false;
+      }
+    };
+
+    document.getElementById('smsText').oninput = function() {
+      document.getElementById('smsCharCount').textContent = this.value.length + '/160';
+    };
+
+    loadCampaigns();
+    loadConfig();
+  </script>
+</body>
+</html>

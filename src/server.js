@@ -76,6 +76,9 @@ app.post("/api/personalize", async (req, res) => {
   }
 });
 
+// Newsletter Planyo SMS - interfaccia invio campagne
+app.use("/newsletter-sms", require("../newsletter-planyo-sms/router"));
+
 app.use((_req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
