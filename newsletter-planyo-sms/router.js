@@ -151,12 +151,12 @@ router.post('/api/run', async (req, res) => {
 });
 
 router.post('/api/test', async (req, res) => {
-  const { phone } = req.body || {};
+  const { phone, smsText: customText } = req.body || {};
   if (!phone || !String(phone).replace(/\D/g, '').length) {
     return res.status(400).json({ success: false, error: 'Numero telefono richiesto' });
   }
   try {
-    const baseText = config.smsTexts.listB;
+    const baseText = (typeof customText === 'string' && customText.trim()) ? customText.trim().slice(0, 160) : config.smsTexts.listB;
     const suffix = ' [' + Date.now().toString(36).slice(-6) + ']';
     const text = baseText.length + suffix.length <= 160 ? baseText + suffix : baseText.slice(0, 160 - suffix.length) + suffix;
     const result = await smshosting.sendSms(phone, text, { from: '' });

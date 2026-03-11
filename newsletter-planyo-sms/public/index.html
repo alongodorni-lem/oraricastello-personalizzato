@@ -263,7 +263,7 @@
     <!-- Test SMS -->
     <div class="card">
       <h2>Invio prova</h2>
-      <p class="hint" style="margin-bottom: 1rem;">Invia un SMS di test al tuo numero per verificare che tutto funzioni.</p>
+      <p class="hint" style="margin-bottom: 1rem;">Invia un SMS di test al tuo numero. Usa il testo scritto nel campo sopra (se presente), altrimenti il predefinito Lista B.</p>
       <div class="form-group">
         <label>Numero telefono</label>
         <input type="text" id="testPhone" placeholder="+39 333 1234567" maxlength="20">
@@ -414,7 +414,10 @@
         const r = await fetch(API + '/api/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone })
+          body: JSON.stringify({
+            phone,
+            smsText: document.getElementById('smsText')?.value?.trim() || undefined
+          })
         });
         const d = await r.json();
         out.innerHTML = d.success
