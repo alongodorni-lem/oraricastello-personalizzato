@@ -42,7 +42,7 @@ function markAsSent(campaignId, email, segment) {
  * @param {{ dryRun?: boolean }} options
  */
 async function runNewsletterSmsJob(campaignId, options = {}) {
-  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, smsText: customSmsText } = options;
+  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, smsText: customSmsText, abortCheck } = options;
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
   const targetResourceId = overrideTargetId != null ? Number(overrideTargetId) : configTargetId;
 
@@ -136,6 +136,11 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         continue;
       }
 
+      if (typeof abortCheck === 'function' && abortCheck()) {
+        console.log('[Job] Annullato dall\'utente');
+        break;
+      }
+
       if (dryRun) {
         inserted++;
         continue;
@@ -155,6 +160,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
 
       await new Promise((r) => setTimeout(r, 500));
     }
+    if (typeof abortCheck === 'function' && abortCheck()) break;
   }
 
   const dupInfo = duplicates > 0 ? ` (${duplicates} duplicati)` : '';

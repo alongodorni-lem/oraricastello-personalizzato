@@ -256,6 +256,9 @@
         <button class="btn btn-primary" id="btnRun">
           Avvia invio
         </button>
+        <button class="btn btn-secondary" id="btnAbort" style="display:none;">
+          Annulla
+        </button>
       </div>
       <div class="output" id="runOutput"></div>
     </div>
@@ -352,12 +355,13 @@
 
     document.getElementById('btnRun').onclick = async () => {
       const btn = document.getElementById('btnRun');
+      const btnAbort = document.getElementById('btnAbort');
       const out = document.getElementById('runOutput');
       const dryRun = document.getElementById('dryRun').checked;
       const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
       const campaignIds = Array.from(document.querySelectorAll('input[name="campaign"]:checked')).map(c => c.value);
 
-        if (!segs.length) {
+      if (!segs.length) {
         out.innerHTML = '<div class="error">Seleziona almeno una lista (A, B o C).</div>';
         return;
       }
@@ -371,7 +375,16 @@
 
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> In corso...';
+      btnAbort.style.display = 'inline-flex';
+      btnAbort.disabled = false;
       out.innerHTML = '<div class="log">Avvio in corso...</div>';
+
+      const controller = new AbortController();
+      btnAbort.onclick = () => {
+        btnAbort.disabled = true;
+        fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
+        controller.abort();
+      };
 
       try {
         const r = await fetch(API + '/api/run', {
@@ -383,7 +396,8 @@
             dryRun,
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
             smsText: document.getElementById('smsText').value.trim() || undefined
-          })
+          }),
+          signal: controller.signal
         });
         const d = await r.json();
         showOutput(out, d.logs);
@@ -391,13 +405,20 @@
           const { inserted, notInserted, duplicates } = d.result;
           const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
           out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Non inseriti ${notInserted}${dup}</div>`;
+          if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata dall\'utente.</div>';
         }
         if (d.error) out.innerHTML += `<div class="error">Errore: ${escapeHtml(d.error)}</div>`;
       } catch (e) {
-        out.innerHTML += `<div class="error">Errore: ${escapeHtml(e.message)}</div>`;
+        if (e.name === 'AbortError') {
+          out.innerHTML += '<div class="log warn">Operazione annullata. Gli SMS inviati fino a questo momento sono stati registrati.</div>';
+        } else {
+          out.innerHTML += `<div class="error">Errore: ${escapeHtml(e.message)}</div>`;
+        }
       }
       btn.disabled = false;
       btn.textContent = 'Avvia invio';
+      btnAbort.style.display = 'none';
+      btnAbort.onclick = null;
     };
 
     document.getElementById('btnTest').onclick = async () => {

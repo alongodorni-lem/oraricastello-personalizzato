@@ -19,6 +19,8 @@ const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
 
 router.use(express.json());
 
+let runAbortRequested = false;
+
 function loadUiConfig() {
   try {
     const data = fs.readFileSync(UI_CONFIG_FILE, 'utf8');
@@ -134,9 +136,12 @@ router.post('/api/run', async (req, res) => {
 
     const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
     const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
+    runAbortRequested = false;
+    const abortCheck = () => runAbortRequested;
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, smsText: customSmsText });
+      if (abortCheck()) break;
+      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, smsText: customSmsText, abortCheck });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
@@ -147,7 +152,12 @@ router.post('/api/run', async (req, res) => {
   });
 
   const out = await cap.run();
-  res.json(out);
+  res.json({ ...out, aborted: runAbortRequested });
+});
+
+router.post('/api/run/abort', (_req, res) => {
+  runAbortRequested = true;
+  res.json({ ok: true, message: 'Annullamento richiesto' });
 });
 
 router.post('/api/test', async (req, res) => {
