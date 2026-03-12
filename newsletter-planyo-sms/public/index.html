@@ -471,7 +471,10 @@
     // Base path per API (funziona sia standalone che montato es. /newsletter-sms)
     const API = (() => {
       const segs = window.location.pathname.split('/').filter(Boolean);
-      return segs.length ? '/' + segs[0] : '';
+      if (!segs.length) return '';
+      let base = segs[0];
+      if (/newsletter[\s\-]*sms/i.test(base)) base = 'newsletter-sms';
+      return '/' + base;
     })();
 
     async function loadCampaigns() {
@@ -787,7 +790,7 @@
         btnRun.disabled = true;
         return;
       }
-      status.textContent = 'Calcolo in corso...';
+      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso...';
       btnRun.disabled = true;
       try {
         const params = new URLSearchParams({
@@ -822,7 +825,7 @@
         btnExport.disabled = btnSend.disabled = true;
         return;
       }
-      status.textContent = 'Calcolo in corso...';
+      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso...';
       btnExport.disabled = btnSend.disabled = true;
       try {
         const params = new URLSearchParams({
