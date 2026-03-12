@@ -13,7 +13,7 @@ const STATUS_OPTIONS = ['riservato', 'confermato', 'cancellato'];
 const COL_ALIASES = {
   nome: ['first name', 'firstname', 'nome', 'name', 'prenome'],
   cognome: ['last name', 'lastname', 'cognome', 'surname', 'sobrenome'],
-  email: ['email', 'e-mail', 'mail'],
+  email: ['email', 'e-mail', 'mail', 'e-mail address', 'email address', 'client email', 'user email', 'contact email', 'posta', 'correo'],
   telefono: ['phone', 'telefono', 'tel', 'mobile', 'cellulare'],
   evento: ['resource', 'risorsa', 'resource name', 'evento', 'nome evento'],
   resourceId: ['resource id', 'resource_id', 'id risorsa', 'id evento'],
@@ -96,11 +96,12 @@ async function fetchAndParseCsv(csvUrl) {
     throw new Error(`Errore fetch CSV: HTTP ${res.status}. Verifica che l\'URL e il token shsec siano validi.`);
   }
 
-  const text = typeof res.data === 'string' ? res.data : String(res.data);
+  let text = typeof res.data === 'string' ? res.data : String(res.data);
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
   const rows = parseCsv(text);
   if (rows.length < 2) return [];
 
-  const headers = rows[0];
+  const headers = rows[0].map((h) => String(h || '').replace(/^\uFEFF/, '').trim());
   const idxNome = findColumnIndex(headers, COL_ALIASES.nome);
   const idxCognome = findColumnIndex(headers, COL_ALIASES.cognome);
   const idxEmail = findColumnIndex(headers, COL_ALIASES.email);
@@ -110,7 +111,8 @@ async function fetchAndParseCsv(csvUrl) {
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
 
   if (idxEmail < 0) {
-    throw new Error('Colonna email non trovata nel CSV. Verifica il formato del report.');
+    const headerList = headers.length ? headers.join(', ') : '(nessuna intestazione)';
+    throw new Error(`Colonna email non trovata nel CSV. Intestazioni trovate: ${headerList}. Verifica il formato del report Planyo.`);
   }
 
   const result = [];
