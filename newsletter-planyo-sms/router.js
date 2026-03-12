@@ -11,7 +11,9 @@ const router = express.Router();
 
 const mailchimp = require('./services/mailchimp');
 const smshosting = require('./services/smshosting');
+const emailService = require('./services/emailService');
 const { runNewsletterSmsJob, checkPhoneInLists } = require('./jobs/newsletter-sms-job');
+const { buildEmailListData, filterByEvent, takeBlock } = require('./jobs/newsletter-email-job');
 const config = require('./config/segments');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
@@ -227,6 +229,155 @@ router.post('/api/check-phone', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// --- Newsletter EMAIL API ---
+
+function escapeCsv(val) {
+  const s = String(val ?? '');
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+router.get('/api/email/export', async (req, res) => {
+  try {
+    const campaignId = req.query.campaignId;
+    const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
+    const eventFilter = (req.query.eventFilter || '').trim();
+
+    if (!campaignId) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto' });
+    }
+
+    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    data = filterByEvent(data, eventFilter);
+
+    const header = 'nome,cognome,email,telefono,evento,segment';
+    const rows = data.map((r) =>
+      [escapeCsv(r.nome), escapeCsv(r.cognome), escapeCsv(r.email), escapeCsv(r.telefono), escapeCsv(r.eventoPrenotato), escapeCsv(r.segment)].join(',')
+    );
+    const csv = '\uFEFF' + header + '\n' + rows.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="newsletter-email-export.csv"');
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/api/email/preview', async (req, res) => {
+  try {
+    const campaignId = req.query.campaignId;
+    const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
+    const eventFilter = (req.query.eventFilter || '').trim();
+    const limit = parseInt(req.query.limit || '100', 10);
+
+    if (!campaignId) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto' });
+    }
+
+    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    data = filterByEvent(data, eventFilter);
+    const total = data.length;
+    const block = takeBlock(data, limit);
+    const preview = block.slice(0, 10);
+
+    const limitInfo = emailService.checkDailyLimit();
+
+    res.json({
+      success: true,
+      total,
+      limit: block.length,
+      preview,
+      dailyLimit: { sent: limitInfo.today, remaining: limitInfo.remaining, max: emailService.DAILY_LIMIT }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/api/email/test', async (req, res) => {
+  const { email, subject, body } = req.body || {};
+  if (!email || !String(email).trim().includes('@')) {
+    return res.status(400).json({ success: false, error: 'Indirizzo email richiesto' });
+  }
+  if (!subject || !body) {
+    return res.status(400).json({ success: false, error: 'Oggetto e messaggio richiesti' });
+  }
+  try {
+    await emailService.sendTestEmail({
+      to: email.trim(),
+      subject: subject.trim(),
+      body: body.trim()
+    });
+    res.json({ success: true, message: 'Email di prova inviata con successo' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+let emailAbortRequested = false;
+
+router.post('/api/email/send', async (req, res) => {
+  res.setTimeout(60 * 60 * 1000);
+  const { campaignId, targetResourceId, eventFilter, limit = 100, subject, body } = req.body || {};
+
+  if (!campaignId || !subject || !body) {
+    return res.status(400).json({ success: false, error: 'campaignId, subject e body richiesti' });
+  }
+
+  const limitNum = Math.min(Math.max(parseInt(String(limit), 10) || 100, 100), 500);
+  const limitInfo = emailService.checkDailyLimit();
+  if (limitInfo.remaining < limitNum) {
+    return res.status(400).json({
+      success: false,
+      error: `Limite giornaliero raggiunto. Inviati oggi: ${limitInfo.today}, rimanenti: ${limitInfo.remaining}. Max 500/giorno.`
+    });
+  }
+
+  const cap = captureLogs(async () => {
+    const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+    let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    data = filterByEvent(data, (eventFilter || '').trim());
+    const toSend = takeBlock(data, limitNum);
+
+    emailAbortRequested = false;
+    let sent = 0;
+    let failed = 0;
+
+    for (const row of toSend) {
+      if (emailAbortRequested) break;
+      try {
+        await emailService.sendPersonalizedEmail({
+          to: row.email,
+          subject,
+          body,
+          data: row
+        });
+        sent++;
+        if (sent % 50 === 0) console.log('[Email] Inviati:', sent);
+      } catch (err) {
+        failed++;
+        console.error('[Email] Errore per', row.email, err.message);
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    return { sent, failed, total: toSend.length };
+  });
+
+  const out = await cap.run();
+  res.json({ ...out, aborted: emailAbortRequested });
+});
+
+router.post('/api/email/abort', (_req, res) => {
+  emailAbortRequested = true;
+  res.json({ ok: true, message: 'Annullamento richiesto' });
 });
 
 module.exports = router;

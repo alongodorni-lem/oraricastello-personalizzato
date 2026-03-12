@@ -108,15 +108,17 @@ async function loadReservationsByEmail(monthsLookback = 18) {
       const resourceId = res.resource_id || res.resource?.id;
 
       if (!byEmail.has(email)) {
-        byEmail.set(email, { reservations: [], phone: '' });
+        byEmail.set(email, { reservations: [], phone: '', firstName: '', lastName: '' });
       }
       const entry = byEmail.get(email);
       entry.reservations.push({
         resource_id: resourceId,
         start_time: res.start_time,
-        resource_name: res.resource_name || res.resource?.name
+        resource_name: res.resource_name || res.resource?.name || res.name
       });
       if (phone && !entry.phone) entry.phone = phone;
+      if (res.first_name && typeof res.first_name === 'string') entry.firstName = res.first_name.trim();
+      if (res.last_name && typeof res.last_name === 'string') entry.lastName = res.last_name.trim();
     }
 
     hasMore = reservations.length >= PAGE_SIZE;
@@ -132,14 +134,16 @@ async function loadReservationsByEmail(monthsLookback = 18) {
  * @param {Map} reservationsByEmail - output di loadReservationsByEmail
  * @param {string} email
  * @param {number} targetResourceId
- * @returns {{ segment: 'A'|'B'|'C', phone: string, lastResource?: string }}
+ * @returns {{ segment: 'A'|'B'|'C', phone: string, lastResource?: string, firstName?: string, lastName?: string }}
  */
 function segmentEmail(reservationsByEmail, email, targetResourceId) {
   const entry = reservationsByEmail.get(email.toLowerCase().trim());
   const phone = entry?.phone || '';
+  const firstName = entry?.firstName || '';
+  const lastName = entry?.lastName || '';
 
   if (!entry || !entry.reservations.length) {
-    return { segment: 'C', phone };
+    return { segment: 'C', phone, firstName, lastName };
   }
 
   const resourceIds = entry.reservations.map((r) => r.resource_id).filter(Boolean);
@@ -147,9 +151,9 @@ function segmentEmail(reservationsByEmail, email, targetResourceId) {
   const lastRes = entry.reservations[entry.reservations.length - 1];
 
   if (hasTarget) {
-    return { segment: 'A', phone, lastResource: lastRes?.resource_name };
+    return { segment: 'A', phone, lastResource: lastRes?.resource_name, firstName, lastName };
   }
-  return { segment: 'B', phone, lastResource: lastRes?.resource_name };
+  return { segment: 'B', phone, lastResource: lastRes?.resource_name, firstName, lastName };
 }
 
 module.exports = {

@@ -256,6 +256,53 @@ async function getPhonesForEmails(listId, emailsSet) {
   return phoneMap;
 }
 
+/**
+ * Estrae nome e cognome da merge_fields (FNAME, LNAME o MERGE1, MERGE3)
+ */
+function extractNameFromMergeFields(mergeFields) {
+  if (!mergeFields || typeof mergeFields !== 'object') return { firstName: '', lastName: '' };
+  const firstName = (mergeFields.FNAME || mergeFields.MERGE1 || mergeFields.FIRSTNAME || '').toString().trim();
+  const lastName = (mergeFields.LNAME || mergeFields.MERGE3 || mergeFields.LASTNAME || '').toString().trim();
+  return { firstName, lastName };
+}
+
+/**
+ * Recupera dettagli membri (nome, cognome, telefono) per le email coinvolte
+ * @param {string} listId
+ * @param {Set<string>} emailsSet - email da cercare
+ * @returns {Promise<Map<string, { firstName: string, lastName: string, phone: string }>>}
+ */
+async function getMemberDetailsForEmails(listId, emailsSet) {
+  const apiKey = process.env.MAILCHIMP_API_KEY;
+  if (!apiKey || !listId) return new Map();
+
+  const baseUrl = getBaseUrl(apiKey);
+  const detailsMap = new Map();
+  let offset = 0;
+  const count = 500;
+  const maxPages = 100;
+
+  for (let page = 0; page < maxPages; page++) {
+    const res = await axios.get(`${baseUrl}/lists/${listId}/members`, {
+      params: { count, offset },
+      auth: { username: 'anystring', password: apiKey },
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+    const members = res.data.members || [];
+    for (const m of members) {
+      const email = (typeof m.email_address === 'string' ? m.email_address : m.email_address?.email || '').toLowerCase().trim();
+      if (!email || !emailsSet.has(email)) continue;
+      const { firstName, lastName } = extractNameFromMergeFields(m.merge_fields);
+      const phone = extractPhoneFromMergeFields(m.merge_fields);
+      detailsMap.set(email, { firstName, lastName, phone });
+    }
+    if (members.length < count) break;
+    offset += count;
+  }
+  return detailsMap;
+}
+
 module.exports = {
   getCampaignOpenEmails,
   getCampaignClickEmails,
@@ -263,6 +310,7 @@ module.exports = {
   getLastSentCampaigns,
   getCampaignListId,
   getPhonesForEmails,
+  getMemberDetailsForEmails,
   getBaseUrl,
   getDatacenter
 };

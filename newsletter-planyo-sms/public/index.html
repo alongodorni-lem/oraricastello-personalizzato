@@ -203,13 +203,47 @@
       background: #e0f2fe;
       color: #0369a1;
     }
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .tab-btn {
+      padding: 0.6rem 1.25rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: color .15s, border-color .15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .block-btns { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .block-btns .btn { min-width: 5rem; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Newsletter SMS</h1>
-    <p class="subtitle">Invio SMS promozionali da campagne Mailchimp (segmentate per prenotazioni Planyo)</p>
+    <h1>Newsletter</h1>
+    <p class="subtitle">Invio SMS e email da campagne Mailchimp (segmentate per prenotazioni Planyo)</p>
 
+    <div class="tab-bar">
+      <button type="button" class="tab-btn active" data-tab="sms">Newsletter SMS</button>
+      <button type="button" class="tab-btn" data-tab="email">NEWSLETTER EMAIL</button>
+    </div>
+
+    <!-- Tab SMS -->
+    <div id="tabSms" class="tab-panel active">
     <!-- Invio campagna -->
     <div class="card">
       <h2>Invio campagna</h2>
@@ -289,6 +323,76 @@
         <button class="btn btn-secondary" id="btnCheck">Verifica</button>
       </div>
       <div class="output" id="checkOutput"></div>
+    </div>
+    </div>
+
+    <!-- Tab EMAIL -->
+    <div id="tabEmail" class="tab-panel">
+      <div class="card">
+        <h2>Newsletter EMAIL</h2>
+        <p class="hint" style="margin-bottom: 1rem;">Esporta CSV, filtra per evento, invia email personalizzate via Gmail (max 500/giorno). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}}</p>
+        <div class="form-group">
+          <label>Campagna</label>
+          <select id="emailCampaignId">
+            <option value="">Caricamento...</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Risorsa Planyo (evento target)</label>
+          <p class="hint">Usa il valore dalla tab Newsletter SMS (stesso ID risorsa)</p>
+        </div>
+        <div class="form-group">
+          <label>Filtro per nome evento (opzionale)</label>
+          <input type="text" id="emailEventFilter" placeholder="es. Castello delle Sorprese">
+          <p class="hint">Lascia vuoto per includere tutti. Filtra i destinatari per evento prenotato.</p>
+        </div>
+        <div class="form-group">
+          <label>Scarica CSV</label>
+          <div class="actions">
+            <button type="button" class="btn btn-secondary" id="btnExportCsv">Scarica CSV completo</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Blocco destinatari (max 500/giorno)</label>
+          <div class="block-btns">
+            <button type="button" class="btn btn-secondary" data-limit="100">100</button>
+            <button type="button" class="btn btn-secondary" data-limit="200">200</button>
+            <button type="button" class="btn btn-secondary" data-limit="300">300</button>
+            <button type="button" class="btn btn-secondary" data-limit="400">400</button>
+            <button type="button" class="btn btn-secondary" data-limit="500">500</button>
+          </div>
+          <p class="hint" id="emailLimitHint">Selezionato: 100 destinatari</p>
+        </div>
+        <div class="form-group">
+          <label>Oggetto email</label>
+          <input type="text" id="emailSubject" placeholder="Oggetto (usa {{nome}} {{cognome}} se vuoi)">
+        </div>
+        <div class="form-group">
+          <label>Messaggio email</label>
+          <textarea id="emailBody" rows="6" placeholder="Ciao {{nome}},\n\n..."></textarea>
+          <p class="hint">Placeholder: {{nome}} {{cognome}} {{email}} {{evento}}</p>
+        </div>
+        <div class="form-group">
+          <label>Invio prova</label>
+          <p class="hint" style="margin-bottom: 0.5rem;">Invia un'email di test per verificare oggetto e messaggio prima dell'invio massivo.</p>
+          <div class="row" style="align-items: flex-end;">
+            <div class="form-group" style="flex: 1; min-width: 200px; margin-bottom: 0;">
+              <label>Indirizzo email</label>
+              <input type="email" id="emailTestAddress" placeholder="tua@email.com">
+            </div>
+            <div>
+              <button type="button" class="btn btn-secondary" id="btnTestEmail">Invia email di prova</button>
+            </div>
+          </div>
+          <div class="output" id="emailTestOutput" style="margin-top: 0.5rem;"></div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="btnSendEmail">Invia email</button>
+          <button type="button" class="btn btn-danger" id="btnEmailAbort" style="display:none;">Interrompi invio</button>
+        </div>
+        <p class="hint" id="emailAbortHint" style="display:none; margin-top: 0.5rem;">Durante l'invio puoi cliccare "Interrompi invio" per fermare il processo.</p>
+        <div class="output" id="emailOutput"></div>
+      </div>
     </div>
   </div>
 
@@ -531,8 +635,184 @@
       document.getElementById('smsCharCount').textContent = this.value.length + '/160';
     };
 
+    // Tab switching
+    let selectedEmailLimit = 100;
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.onclick = () => {
+        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+        btn.classList.add('active');
+        const tab = btn.dataset.tab;
+        document.getElementById(tab === 'sms' ? 'tabSms' : 'tabEmail').classList.add('active');
+      };
+    });
+
+    // Populate email campaign dropdown
+    async function loadEmailCampaigns() {
+      const sel = document.getElementById('emailCampaignId');
+      try {
+        const r = await fetch(API + '/api/campaigns?last=5');
+        const d = await r.json();
+        sel.innerHTML = '';
+        if (d.campaigns && d.campaigns.length) {
+          d.campaigns.forEach((c, i) => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = (c.subject || c.id).slice(0, 60) + (c.send_time ? ' (' + new Date(c.send_time).toLocaleDateString('it') + ')' : '');
+            if (i === 0) opt.selected = true;
+            sel.appendChild(opt);
+          });
+        } else {
+          sel.innerHTML = '<option value="">Nessuna campagna</option>';
+        }
+      } catch (e) {
+        sel.innerHTML = '<option value="">Errore caricamento</option>';
+      }
+    }
+
+    // Block buttons
+    document.querySelectorAll('.block-btns [data-limit]').forEach((btn) => {
+      btn.onclick = () => {
+        selectedEmailLimit = parseInt(btn.dataset.limit, 10);
+        document.querySelectorAll('.block-btns [data-limit]').forEach((b) => b.classList.remove('btn-primary'));
+        document.querySelectorAll('.block-btns [data-limit]').forEach((b) => b.classList.add('btn-secondary'));
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+        document.getElementById('emailLimitHint').textContent = 'Selezionato: ' + selectedEmailLimit + ' destinatari';
+      };
+    });
+    document.querySelector('.block-btns [data-limit="100"]').click();
+
+    // Test email
+    document.getElementById('btnTestEmail').onclick = async () => {
+      const email = document.getElementById('emailTestAddress').value.trim();
+      const subject = document.getElementById('emailSubject').value.trim();
+      const body = document.getElementById('emailBody').value.trim();
+      const out = document.getElementById('emailTestOutput');
+      if (!email || !email.includes('@')) {
+        out.innerHTML = '<div class="error">Inserisci un indirizzo email valido.</div>';
+        return;
+      }
+      if (!subject || !body) {
+        out.innerHTML = '<div class="error">Inserisci oggetto e messaggio.</div>';
+        return;
+      }
+      const btn = document.getElementById('btnTestEmail');
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Invio in corso...</div>';
+      try {
+        const r = await fetch(API + '/api/email/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, subject, body })
+        });
+        const d = await r.json();
+        out.innerHTML = d.success
+          ? '<div class="log result-ok">Email di prova inviata con successo.</div>'
+          : '<div class="error">' + escapeHtml(d.error || 'Invio fallito') + '</div>';
+      } catch (e) {
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
+      }
+      btn.disabled = false;
+    };
+
+    // Export CSV
+    document.getElementById('btnExportCsv').onclick = async () => {
+      const campaignId = document.getElementById('emailCampaignId').value;
+      const out = document.getElementById('emailOutput');
+      if (!campaignId) {
+        out.innerHTML = '<div class="error">Seleziona una campagna.</div>';
+        return;
+      }
+      out.innerHTML = '<div class="log">Generazione CSV...</div>';
+      try {
+        const params = new URLSearchParams({
+          campaignId,
+          targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
+          eventFilter: document.getElementById('emailEventFilter').value.trim()
+        });
+        const r = await fetch(API + '/api/email/export?' + params);
+        if (!r.ok) {
+          const d = await r.json();
+          throw new Error(d.error || 'Errore export');
+        }
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'newsletter-email-export.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        out.innerHTML = '<div class="log result-ok">CSV scaricato.</div>';
+      } catch (e) {
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
+      }
+    };
+
+    // Send email
+    document.getElementById('btnSendEmail').onclick = async () => {
+      const campaignId = document.getElementById('emailCampaignId').value;
+      const subject = document.getElementById('emailSubject').value.trim();
+      const body = document.getElementById('emailBody').value.trim();
+      const out = document.getElementById('emailOutput');
+      const btn = document.getElementById('btnSendEmail');
+      const btnAbort = document.getElementById('btnEmailAbort');
+
+      if (!campaignId || !subject || !body) {
+        out.innerHTML = '<div class="error">Campagna, oggetto e messaggio richiesti.</div>';
+        return;
+      }
+      if (!confirm('Confermi l\'invio di ' + selectedEmailLimit + ' email?')) return;
+
+      btn.disabled = true;
+      btnAbort.disabled = false;
+      btnAbort.style.display = 'inline-flex';
+      document.getElementById('emailAbortHint').style.display = 'block';
+      out.innerHTML = '<div class="log">Invio in corso... Clicca "Interrompi invio" per fermare.</div>';
+
+      const controller = new AbortController();
+      btnAbort.onclick = () => {
+        btnAbort.disabled = true;
+        fetch(API + '/api/email/abort', { method: 'POST' }).catch(() => {});
+        controller.abort();
+      };
+
+      try {
+        const r = await fetch(API + '/api/email/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            campaignId,
+            targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
+            eventFilter: document.getElementById('emailEventFilter').value.trim() || undefined,
+            limit: selectedEmailLimit,
+            subject,
+            body
+          }),
+          signal: controller.signal
+        });
+        const d = await r.json();
+        showOutput(out, d.logs);
+        if (d.result) {
+          const { sent, failed } = d.result;
+          out.innerHTML += '<div class="log result-ok">Inviate: ' + sent + (failed > 0 ? ' | Fallite: ' + failed : '') + '</div>';
+          if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata.</div>';
+        }
+        if (d.error) out.innerHTML += '<div class="error">' + escapeHtml(d.error) + '</div>';
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          out.innerHTML += '<div class="log warn">Operazione annullata.</div>';
+        } else {
+          out.innerHTML += '<div class="error">' + escapeHtml(e.message) + '</div>';
+        }
+      }
+      btn.disabled = false;
+      btnAbort.style.display = 'none';
+      document.getElementById('emailAbortHint').style.display = 'none';
+    };
+
     loadCampaigns();
     loadConfig();
+    loadEmailCampaigns();
   </script>
 </body>
 </html>
