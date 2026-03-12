@@ -4,6 +4,7 @@
  */
 const mailchimp = require('../services/mailchimp');
 const planyo = require('../services/planyo');
+const planyoReportCsv = require('../services/planyoReportCsv');
 const config = require('../config/segments');
 
 /**
@@ -81,6 +82,26 @@ function filterBySegment(data, segments) {
 }
 
 /**
+ * Carica Lista D da CSV e la unisce ai dati (per segmenti che includono D)
+ * @param {Array} apiData - dati da API già filtrati per eventIds, eventFilter
+ * @param {string[]} segments
+ * @param {{ eventNameContains?: string, eventIds?: number[], statuses?: string[] }} listDFilters
+ */
+async function mergeListDFromCsv(apiData, segments, listDFilters = {}) {
+  if (!segments || !segments.map((s) => String(s).toUpperCase()).includes('D')) return apiData;
+  if (!process.env.PLANYO_LISTD_CSV_URL) return apiData;
+
+  const segSet = new Set(segments.map((s) => String(s).toUpperCase()));
+  const onlyD = segSet.size === 1 && segSet.has('D');
+  const baseData = onlyD ? [] : apiData.filter((r) => segSet.has((r.segment || '').toUpperCase()));
+
+  const listD = await planyoReportCsv.loadListDFromCsv(listDFilters);
+  const existingEmails = new Set(baseData.map((r) => r.email.toLowerCase()));
+  const fromD = listD.filter((r) => !existingEmails.has(r.email.toLowerCase()));
+  return [...baseData, ...fromD];
+}
+
+/**
  * Filtra i dati per nome evento (case-insensitive, contiene)
  * @param {Array} data - output di buildEmailListData
  * @param {string} eventFilter - stringa da cercare in eventoPrenotato (vuoto = nessun filtro)
@@ -108,5 +129,6 @@ module.exports = {
   filterByEventIds,
   filterBySegment,
   filterByEvent,
-  takeBlock
+  takeBlock,
+  mergeListDFromCsv
 };

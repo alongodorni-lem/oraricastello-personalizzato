@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const mailchimp = require('../services/mailchimp');
 const planyo = require('../services/planyo');
+const planyoReportCsv = require('../services/planyoReportCsv');
 const smshosting = require('../services/smshosting');
 const config = require('../config/segments');
 
@@ -42,12 +43,51 @@ function markAsSent(campaignId, email, segment) {
  * @param {{ dryRun?: boolean }} options
  */
 async function runNewsletterSmsJob(campaignId, options = {}) {
-  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, smsText: customSmsText, abortCheck } = options;
+  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck } = options;
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
   const targetResourceId = overrideTargetId != null ? Number(overrideTargetId) : configTargetId;
 
+  const onlyD = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'D';
+  const trackId = campaignId || 'list-d-only';
+
   console.log('[Job] Avvio newsletter-sms-job');
-  console.log('[Job] Campagna:', campaignId, '| Dry run:', dryRun);
+  console.log('[Job] Campagna:', trackId, '| Solo Lista D:', !!onlyD, '| Dry run:', dryRun);
+
+  if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
+    const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {});
+    const withPhone = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
+    console.log('[Job] Lista D da CSV:', withPhone.length, 'contatti con telefono');
+    const getText = () => customSmsText || (config.smsTexts?.listD || '');
+    let inserted = 0;
+    let notInserted = 0;
+    let duplicates = 0;
+    let skipped = 0;
+    for (const { email, telefono: phone } of withPhone) {
+      if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
+      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (dryRun) { inserted++; continue; }
+      const result = await smshosting.sendSms(phone, getText());
+      if (result.success) {
+        markAsSent(trackId, email, 'D');
+        inserted++;
+      } else {
+        notInserted++;
+        if (result.isDuplicate) duplicates++;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (!dryRun && adminPhone) {
+      try {
+        await smshosting.sendSms(adminPhone, `Newsletter SMS Lista D: ${inserted} inseriti | ${notInserted} non inseriti`);
+      } catch (_) {}
+    }
+    return { processed: withPhone.length, inserted, notInserted, duplicates, skipped };
+  }
+
+  if (onlyD) {
+    console.log('[Job] Solo Lista D richiesta ma PLANYO_LISTD_CSV_URL non impostato. Fine.');
+    return { processed: 0, inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
+  }
 
   // 1. Email da Mailchimp (open + click)
   let emails;
@@ -118,8 +158,19 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   console.log('  Lista B (altri eventi):  ', segmentSummary.B.total, '| con telefono:', segmentSummary.B.withPhone, '| senza:', segmentSummary.B.noPhone);
   console.log('  Lista C (prospect):      ', segmentSummary.C.total, '| con telefono:', segmentSummary.C.withPhone, '| senza:', segmentSummary.C.noPhone);
 
-  // 4. Invia SMS per segmento (solo quelli in segmentsFilter se specificato; D = tutti)
-  const segmentsToProcess = segmentsFilter && segmentsFilter.length ? (segmentsFilter.includes('D') ? ['A', 'B', 'C'] : segmentsFilter) : ['A', 'B', 'C'];
+  // 4. Lista D da CSV (se selezionata)
+  let listD = [];
+  if (segmentsFilter && segmentsFilter.includes('D') && process.env.PLANYO_LISTD_CSV_URL) {
+    try {
+      listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {});
+      listD = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
+      console.log('[Job] Lista D da CSV:', listD.length, 'contatti con telefono');
+    } catch (err) {
+      console.error('[Job] Lista D CSV:', err.message);
+    }
+  }
+
+  const segmentsToProcess = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D') : ['A', 'B', 'C'];
   let inserted = 0;
   let notInserted = 0;
   let duplicates = 0;
@@ -169,6 +220,25 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       await new Promise((r) => setTimeout(r, 500));
     }
     if (typeof abortCheck === 'function' && abortCheck()) break;
+  }
+
+  if (segmentsFilter && segmentsFilter.includes('D') && listD.length > 0) {
+    const text = getText('D');
+    for (const { email, telefono: phone } of listD) {
+      if (wasAlreadySent(campaignId, email, 'D')) { skipped++; continue; }
+      if (!phone || phone.length < 10 || phone.includes('@')) { skipped++; continue; }
+      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (dryRun) { inserted++; continue; }
+      const result = await smshosting.sendSms(phone, text);
+      if (result.success) {
+        markAsSent(campaignId, email, 'D');
+        inserted++;
+      } else {
+        notInserted++;
+        if (result.isDuplicate) duplicates++;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
 
   const dupInfo = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
@@ -245,16 +315,23 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
 /**
  * Calcola il numero di contatti che corrispondono ai criteri (senza inviare)
  * @param {string} campaignId
- * @param {{ targetResourceId?: number, eventIds?: number[], segments?: string[] }} options
- * @returns {Promise<{ total: number, bySegment: { A: number, B: number, C: number } }>}
+ * @param {{ targetResourceId?: number, eventIds?: number[], segments?: string[], listDFilters?: object }} options
+ * @returns {Promise<{ total: number, bySegment: { A: number, B: number, C: number, D: number } }>}
  */
 async function getSmsPreview(campaignId, options = {}) {
-  const { targetResourceId: overrideId, eventIds, segments: segmentsFilter } = options;
+  const { targetResourceId: overrideId, eventIds, segments: segmentsFilter, listDFilters } = options;
   const { targetResourceId: configId, monthsLookback } = config;
   const targetResourceId = overrideId != null ? Number(overrideId) : configId;
 
+  const onlyD = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'D';
+  if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
+    const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {});
+    const count = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@')).length;
+    return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count } };
+  }
+
   const emails = await mailchimp.getCampaignEngagedEmails(campaignId);
-  if (emails.length === 0) return { total: 0, bySegment: { A: 0, B: 0, C: 0 } };
+  if (emails.length === 0) return { total: 0, bySegment: { A: 0, B: 0, C: 0, D: 0 } };
 
   let mailchimpPhones = new Map();
   try {
@@ -284,15 +361,24 @@ async function getSmsPreview(campaignId, options = {}) {
     lists[segment].push({ email, phone });
   }
 
-  const segFilter = segmentsFilter && segmentsFilter.length && !segmentsFilter.includes('D') ? segmentsFilter : ['A', 'B', 'C'];
+  const segFilter = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D') : ['A', 'B', 'C'];
   let total = 0;
   for (const seg of segFilter) {
     total += lists[seg]?.length || 0;
   }
 
+  let listDCount = 0;
+  if (segmentsFilter && segmentsFilter.includes('D') && process.env.PLANYO_LISTD_CSV_URL) {
+    try {
+      const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {});
+      listDCount = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@')).length;
+      total += listDCount;
+    } catch (_) {}
+  }
+
   return {
     total,
-    bySegment: { A: lists.A.length, B: lists.B.length, C: lists.C.length }
+    bySegment: { A: lists.A.length, B: lists.B.length, C: lists.C.length, D: listDCount }
   };
 }
 

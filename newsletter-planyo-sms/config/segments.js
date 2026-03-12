@@ -26,6 +26,7 @@ module.exports = {
   smsTexts: {
     listA: 'Grazie! Hai già prenotato il Castello. Scopri le novità e le date 2026: https://www.planyo.com/booking.php?calendar=8895',
     listB: 'Ultime 48 ore! Promo -6 euro a persona. Castello delle Sorprese: Principesse, Maghi, K-Pop, yoga e relax per genitori. Prenota: www.castellodellesorprese.it',
-    listC: 'Scopri il Castello delle Sorprese - un\'avventura magica per tutta la famiglia. Prenota ora: https://www.planyo.com/booking.php?calendar=8895'
+    listC: 'Scopri il Castello delle Sorprese - un\'avventura magica per tutta la famiglia. Prenota ora: https://www.planyo.com/booking.php?calendar=8895',
+    listD: 'Newsletter Castello delle Sorprese 2026. Scopri le novità e le date: https://www.planyo.com/booking.php?calendar=8895'
   }
 };

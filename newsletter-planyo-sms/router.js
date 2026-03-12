@@ -13,7 +13,7 @@ const mailchimp = require('./services/mailchimp');
 const smshosting = require('./services/smshosting');
 const emailService = require('./services/emailService');
 const { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview } = require('./jobs/newsletter-sms-job');
-const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock } = require('./jobs/newsletter-email-job');
+const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock, mergeListDFromCsv } = require('./jobs/newsletter-email-job');
 const config = require('./config/segments');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
@@ -142,11 +142,19 @@ router.get('/api/campaigns', async (req, res) => {
 
 router.post('/api/run', async (req, res) => {
   res.setTimeout(30 * 60 * 1000);
-  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = req.body || {};
+  const body_ = req.body || {};
+  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = body_;
+  const listDFilters = parseListDFilters(body_);
 
   const cap = captureLogs(async () => {
+    const seg = Array.isArray(segments) ? segments : [segments];
+    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D'].includes(String(s).toUpperCase())) : null;
+    const onlyD = segFilter && segFilter.length === 1 && segFilter[0].toUpperCase() === 'D';
+
     let ids = [];
-    if (campaignIds && Array.isArray(campaignIds) && campaignIds.length > 0) {
+    if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
+      ids = ['list-d-only'];
+    } else if (campaignIds && Array.isArray(campaignIds) && campaignIds.length > 0) {
       ids = campaignIds.slice(0, 5);
     } else if (campaignId) {
       ids = [campaignId];
@@ -154,10 +162,8 @@ router.post('/api/run', async (req, res) => {
       const campaigns = await mailchimp.getLastSentCampaigns(lastN);
       ids = campaigns.map((c) => c.id);
     }
-    if (ids.length === 0) throw new Error('Nessuna campagna trovata');
+    if (ids.length === 0) throw new Error('Nessuna campagna trovata (o Lista D senza PLANYO_LISTD_CSV_URL)');
 
-    const seg = Array.isArray(segments) ? segments : [segments];
-    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D'].includes(String(s).toUpperCase())) : null;
     const evIds = parseEventIdsParam(eventIds);
 
     const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
@@ -167,7 +173,7 @@ router.post('/api/run', async (req, res) => {
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, smsText: customSmsText, abortCheck });
+      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
@@ -257,22 +263,31 @@ function parseEventIdsParam(val) {
   return ids.length > 0 ? ids : null;
 }
 
+function parseListDFilters(query) {
+  const eventNameContains = (query.listDEventNameContains || '').trim() || undefined;
+  const eventIds = parseEventIdsParam(query.listDEventIds);
+  const statuses = query.listDStatuses ? (Array.isArray(query.listDStatuses) ? query.listDStatuses : String(query.listDStatuses).split(',')).map((s) => s.trim()).filter(Boolean) : undefined;
+  return { eventNameContains, eventIds, statuses };
+}
+
 router.get('/api/sms/preview', async (req, res) => {
   try {
     const campaignId = req.query.campaignId;
     const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
+    const listDFilters = parseListDFilters(req.query);
 
-    if (!campaignId) {
-      return res.status(400).json({ success: false, error: 'campaignId richiesto' });
+    if (!campaignId && (!segments || !segments.includes('D'))) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto (tranne per Lista D sola)' });
     }
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
-    const result = await getSmsPreview(campaignId, {
+    const result = await getSmsPreview(campaignId || 'dummy', {
       targetResourceId: targetId,
       eventIds,
-      segments: segments || ['A', 'B', 'C']
+      segments: segments || ['A', 'B', 'C'],
+      listDFilters
     });
     res.json({ success: true, ...result });
   } catch (err) {
@@ -287,16 +302,19 @@ router.get('/api/email/export', async (req, res) => {
     const eventFilter = (req.query.eventFilter || '').trim();
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
+    const listDFilters = parseListDFilters(req.query);
 
-    if (!campaignId) {
-      return res.status(400).json({ success: false, error: 'campaignId richiesto' });
+    const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
+    if (!campaignId && !onlyD) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto (tranne per Lista D sola)' });
     }
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
-    let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
+    data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters);
 
     const header = 'nome,cognome,email,telefono,evento,segment';
     const rows = data.map((r) =>
@@ -319,17 +337,20 @@ router.get('/api/email/preview', async (req, res) => {
     const eventFilter = (req.query.eventFilter || '').trim();
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
+    const listDFilters = parseListDFilters(req.query);
     const limit = parseInt(req.query.limit || '100', 10);
 
-    if (!campaignId) {
-      return res.status(400).json({ success: false, error: 'campaignId richiesto' });
+    const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
+    if (!campaignId && !onlyD) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto (tranne per Lista D sola)' });
     }
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
-    let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
+    data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters);
     const total = data.length;
     const block = takeBlock(data, limit);
     const preview = block.slice(0, 10);
@@ -372,10 +393,18 @@ let emailAbortRequested = false;
 
 router.post('/api/email/send', async (req, res) => {
   res.setTimeout(60 * 60 * 1000);
-  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody } = req.body || {};
+  const body_ = req.body || {};
+  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody } = body_;
+  const listDFilters = parseListDFilters(body_);
+  const segFilter = parseSegmentsParam(segments);
+  const evIds = parseEventIdsParam(eventIds);
+  const onlyD = segFilter && segFilter.length === 1 && segFilter[0].toUpperCase() === 'D';
 
-  if (!campaignId || !subject || !emailBody) {
-    return res.status(400).json({ success: false, error: 'campaignId, subject e body richiesti' });
+  if ((!campaignId && !onlyD) || !subject || !emailBody) {
+    return res.status(400).json({ success: false, error: 'campaignId (tranne Lista D sola), subject e body richiesti' });
+  }
+  if (onlyD && !process.env.PLANYO_LISTD_CSV_URL) {
+    return res.status(400).json({ success: false, error: 'PLANYO_LISTD_CSV_URL richiesto per invio solo Lista D' });
   }
 
   const limitNum = Math.min(Math.max(parseInt(String(limit), 10) || 100, 100), 500);
@@ -387,15 +416,13 @@ router.post('/api/email/send', async (req, res) => {
     });
   }
 
-  const segFilter = parseSegmentsParam(segments);
-  const evIds = parseEventIdsParam(eventIds);
-
   const cap = captureLogs(async () => {
     const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
-    let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    let data = onlyD ? [] : await buildEmailListData(campaignId, { targetResourceId: targetId });
     data = filterByEventIds(data, evIds);
     data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
+    data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters);
     const toSend = takeBlock(data, limitNum);
 
     emailAbortRequested = false;

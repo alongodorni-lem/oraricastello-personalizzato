@@ -286,6 +286,27 @@
         <input type="text" id="smsEventIds" placeholder="236955" maxlength="80">
         <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola (es. 236955, 243693).</p>
       </div>
+      <div class="form-group" id="smsListDFilters" style="display:none;">
+        <label>Filtri Lista D (da CSV Planyo)</label>
+        <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per:</p>
+        <div class="form-group">
+          <label>Nome evento contiene</label>
+          <input type="text" id="listDEventNameContains" placeholder="es. Castello">
+        </div>
+        <div class="form-group">
+          <label>ID evento</label>
+          <input type="text" id="listDEventIds" placeholder="236955, 243693" maxlength="80">
+        </div>
+        <div class="form-group">
+          <label>Stato</label>
+          <div class="checkboxes">
+            <label class="checkbox-label"><input type="checkbox" name="listDStatus" value="riservato"> Riservato</label>
+            <label class="checkbox-label"><input type="checkbox" name="listDStatus" value="confermato"> Confermato</label>
+            <label class="checkbox-label"><input type="checkbox" name="listDStatus" value="cancellato"> Cancellato</label>
+          </div>
+          <p class="hint">Seleziona gli stati da includere. Se nessuno: tutti.</p>
+        </div>
+      </div>
       <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" id="dryRun">
@@ -370,6 +391,27 @@
           <label>ID evento Planyo (filtro prenotazioni)</label>
           <input type="text" id="emailEventIds" placeholder="236955" maxlength="80">
           <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola.</p>
+        </div>
+        <div class="form-group" id="emailListDFilters" style="display:none;">
+          <label>Filtri Lista D (da CSV Planyo)</label>
+          <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per:</p>
+          <div class="form-group">
+            <label>Nome evento contiene</label>
+            <input type="text" id="listDEventNameContainsEmail" placeholder="es. Castello">
+          </div>
+          <div class="form-group">
+            <label>ID evento</label>
+            <input type="text" id="listDEventIdsEmail" placeholder="236955, 243693" maxlength="80">
+          </div>
+          <div class="form-group">
+            <label>Stato</label>
+            <div class="checkboxes">
+              <label class="checkbox-label"><input type="checkbox" name="listDStatusEmail" value="riservato"> Riservato</label>
+              <label class="checkbox-label"><input type="checkbox" name="listDStatusEmail" value="confermato"> Confermato</label>
+              <label class="checkbox-label"><input type="checkbox" name="listDStatusEmail" value="cancellato"> Cancellato</label>
+            </div>
+            <p class="hint">Seleziona gli stati da includere. Se nessuno: tutti.</p>
+          </div>
         </div>
         <div class="form-group">
           <button type="button" class="btn btn-secondary" id="btnEmailCalc">Calcola contatti</button>
@@ -496,11 +538,12 @@
       const campaignIds = Array.from(document.querySelectorAll('input[name="campaign"]:checked')).map(c => c.value);
 
       if (!segs.length) {
-        out.innerHTML = '<div class="error">Seleziona almeno una lista (A, B o C).</div>';
+        out.innerHTML = '<div class="error">Seleziona almeno una lista (A, B, C o D).</div>';
         return;
       }
-      if (!campaignIds.length) {
-        out.innerHTML = '<div class="error">Seleziona almeno una campagna.</div>';
+      const onlyD = segs.length === 1 && segs[0] === 'D';
+      if (!campaignIds.length && !onlyD) {
+        out.innerHTML = '<div class="error">Seleziona almeno una campagna (o solo Lista D).</div>';
         return;
       }
       if (!dryRun && !confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
@@ -525,12 +568,13 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            campaignIds,
+            campaignIds: onlyD ? [] : campaignIds,
             segments: segs.length ? segs : ['A', 'B', 'C'],
             dryRun,
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
             eventIds: document.getElementById('smsEventIds').value.trim() || undefined,
-            smsText: document.getElementById('smsText').value.trim() || undefined
+            smsText: document.getElementById('smsText').value.trim() || undefined,
+            ...getListDFilters(true)
           }),
           signal: controller.signal
         });
@@ -683,8 +727,36 @@
     document.getElementById('smsEventIds').oninput = resetSmsCalc;
     document.getElementById('emailEventIds').oninput = resetEmailCalc;
     document.getElementById('emailEventFilter').oninput = resetEmailCalc;
-    document.querySelectorAll('input[name="seg"]').forEach((cb) => { cb.onchange = resetSmsCalc; });
-    document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = resetEmailCalc; });
+    ['listDEventNameContains','listDEventIds'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.oninput = resetSmsCalc;
+    });
+    ['listDEventNameContainsEmail','listDEventIdsEmail'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.oninput = resetEmailCalc;
+    });
+    document.querySelectorAll('input[name="listDStatus"], input[name="listDStatusEmail"]').forEach(cb => {
+      cb.onchange = () => { resetSmsCalc(); resetEmailCalc(); };
+    });
+    function toggleListDFilters() {
+      const dSms = document.querySelector('input[name="seg"][value="D"]')?.checked;
+      const dEmail = document.querySelector('input[name="emailSeg"][value="D"]')?.checked;
+      document.getElementById('smsListDFilters').style.display = dSms ? 'block' : 'none';
+      document.getElementById('emailListDFilters').style.display = dEmail ? 'block' : 'none';
+    }
+    function getListDFilters(smsTab) {
+      const nameEl = smsTab ? document.getElementById('listDEventNameContains') : document.getElementById('listDEventNameContainsEmail');
+      const idsEl = smsTab ? document.getElementById('listDEventIds') : document.getElementById('listDEventIdsEmail');
+      const statusName = smsTab ? 'listDStatus' : 'listDStatusEmail';
+      const statuses = Array.from(document.querySelectorAll(`input[name="${statusName}"]:checked`)).map(c => c.value);
+      const obj = {};
+      if (nameEl?.value?.trim()) obj.listDEventNameContains = nameEl.value.trim();
+      if (idsEl?.value?.trim()) obj.listDEventIds = idsEl.value.trim();
+      if (statuses.length) obj.listDStatuses = statuses.join(',');
+      return obj;
+    }
+    document.querySelectorAll('input[name="seg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
+    document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
     document.getElementById('emailCampaignId').onchange = resetEmailCalc;
 
     let smsContactCount = 0;
@@ -693,24 +765,27 @@
     document.getElementById('btnSmsCalc').onclick = async () => {
       const campaignIds = Array.from(document.querySelectorAll('input[name="campaign"]:checked')).map(c => c.value);
       const campaignId = campaignIds[0];
+      const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
+      const onlyD = segs.length === 1 && segs[0] === 'D';
       const status = document.getElementById('smsCountStatus');
       const btnRun = document.getElementById('btnRun');
-      if (!campaignId) {
-        status.textContent = 'Seleziona almeno una campagna.';
+      if (!campaignId && !onlyD) {
+        status.textContent = 'Seleziona almeno una campagna (o solo Lista D).';
         btnRun.disabled = true;
         return;
       }
       status.textContent = 'Calcolo in corso...';
       btnRun.disabled = true;
       try {
-        const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
         const params = new URLSearchParams({
-          campaignId,
+          campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           segments: (segs.length ? segs : ['A','B','C']).join(',')
         });
         const evIds = document.getElementById('smsEventIds').value.trim();
         if (evIds) params.set('eventIds', evIds);
+        const lf = getListDFilters(true);
+        Object.keys(lf).forEach(k => params.set(k, lf[k]));
         const r = await fetch(API + '/api/sms/preview?' + params);
         const d = await r.json();
         if (d.error) throw new Error(d.error);
@@ -725,20 +800,21 @@
 
     document.getElementById('btnEmailCalc').onclick = async () => {
       const campaignId = document.getElementById('emailCampaignId').value;
+      const segs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
+      const onlyD = segs.length === 1 && segs[0] === 'D';
       const status = document.getElementById('emailCountStatus');
       const btnExport = document.getElementById('btnExportCsv');
       const btnSend = document.getElementById('btnSendEmail');
-      if (!campaignId) {
-        status.textContent = 'Seleziona una campagna.';
+      if (!campaignId && !onlyD) {
+        status.textContent = 'Seleziona una campagna (o solo Lista D).';
         btnExport.disabled = btnSend.disabled = true;
         return;
       }
       status.textContent = 'Calcolo in corso...';
       btnExport.disabled = btnSend.disabled = true;
       try {
-        const segs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
         const params = new URLSearchParams({
-          campaignId,
+          campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           limit: selectedEmailLimit,
           segments: (segs.length ? segs : ['A','B','C','D']).join(',')
@@ -747,6 +823,8 @@
         const evFilter = document.getElementById('emailEventFilter').value.trim();
         if (evIds) params.set('eventIds', evIds);
         if (evFilter) params.set('eventFilter', evFilter);
+        const lf = getListDFilters(false);
+        Object.keys(lf).forEach(k => params.set(k, lf[k]));
         const r = await fetch(API + '/api/email/preview?' + params);
         const d = await r.json();
         if (d.error) throw new Error(d.error);
@@ -843,22 +921,25 @@
     // Export CSV
     document.getElementById('btnExportCsv').onclick = async () => {
       const campaignId = document.getElementById('emailCampaignId').value;
+      const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
+      const onlyD = emailSegs.length === 1 && emailSegs[0] === 'D';
       const out = document.getElementById('emailOutput');
-      if (!campaignId) {
-        out.innerHTML = '<div class="error">Seleziona una campagna.</div>';
+      if (!campaignId && !onlyD) {
+        out.innerHTML = '<div class="error">Seleziona una campagna (o solo Lista D).</div>';
         return;
       }
       out.innerHTML = '<div class="log">Generazione CSV...</div>';
       try {
-        const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
         const params = new URLSearchParams({
-          campaignId,
+          campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           eventFilter: document.getElementById('emailEventFilter').value.trim()
         });
         if (emailSegs.length) params.set('segments', emailSegs.join(','));
         const evIds = document.getElementById('emailEventIds').value.trim();
         if (evIds) params.set('eventIds', evIds);
+        const lf = getListDFilters(false);
+        Object.keys(lf).forEach(k => params.set(k, lf[k]));
         const r = await fetch(API + '/api/email/export?' + params);
         if (!r.ok) {
           const d = await r.json();
@@ -885,11 +966,12 @@
       const btn = document.getElementById('btnSendEmail');
       const btnAbort = document.getElementById('btnEmailAbort');
 
-      if (!campaignId || !subject || !body) {
-        out.innerHTML = '<div class="error">Campagna, oggetto e messaggio richiesti.</div>';
+      const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
+      const onlyD = emailSegs.length === 1 && emailSegs[0] === 'D';
+      if ((!campaignId && !onlyD) || !subject || !body) {
+        out.innerHTML = '<div class="error">Campagna (o solo Lista D), oggetto e messaggio richiesti.</div>';
         return;
       }
-      const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
       if (!confirm('Confermi l\'invio di ' + selectedEmailLimit + ' email?' + (emailSegs.length ? ' Liste: ' + emailSegs.join(', ') : ' (tutte le liste)'))) return;
 
       btn.disabled = true;
@@ -910,14 +992,15 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            campaignId,
+            campaignId: campaignId || (onlyD ? 'dummy' : undefined),
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
             eventFilter: document.getElementById('emailEventFilter').value.trim() || undefined,
             eventIds: document.getElementById('emailEventIds').value.trim() || undefined,
             segments: emailSegs.length ? emailSegs : undefined,
             limit: selectedEmailLimit,
             subject,
-            body
+            body,
+            ...getListDFilters(false)
           }),
           signal: controller.signal
         });
@@ -941,6 +1024,7 @@
       document.getElementById('emailAbortHint').style.display = 'none';
     };
 
+    toggleListDFilters();
     loadCampaigns();
     loadConfig();
     loadEmailCampaigns();
