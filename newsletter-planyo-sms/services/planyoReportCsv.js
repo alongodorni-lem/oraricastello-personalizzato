@@ -13,26 +13,36 @@ const STATUS_OPTIONS = ['riservato', 'confermato', 'cancellato'];
  */
 const PLANYO_STATUS_TO_FILTER = {
   // riservato
-  'aggiunto alla lista d\'attesa': 'riservato',
+  'aggiunto alla lista d\'attesa': 'riservato', 'added to waiting list': 'riservato',
   'non compiuto/a': 'riservato', 'non compiuto': 'riservato', 'non compiuta': 'riservato',
-  'riservato': 'riservato',
+  'not completed': 'riservato',
+  'riservato': 'riservato', 'reserved': 'riservato',
   // cancellato
   'aggiunto alla lista d\'attesa + cancellato dall\'amministratore': 'cancellato',
-  'cancellato automaticamente': 'cancellato',
-  'cancellato dall\'utente': 'cancellato',
-  'cancellato dall\'amministratore': 'cancellato',
+  'added to waiting list + cancelled by admin': 'cancellato',
+  'cancellato automaticamente': 'cancellato', 'automatically cancelled': 'cancellato',
+  'cancellato dall\'utente': 'cancellato', 'cancelled by client': 'cancellato',
+  'cancellato dall\'amministratore': 'cancellato', 'cancelled by admin': 'cancellato',
+  'cancelled': 'cancellato', 'canceled': 'cancellato',
   // confermato
-  'check out effettuato': 'confermato',
-  'checked-in': 'confermato',
-  'checked-in (conflitto!)': 'confermato',
-  'confermato': 'confermato',
-  'riservato + indirizzo email verificato + confermato': 'confermato'
+  'check out effettuato': 'confermato', 'checked out': 'confermato',
+  'checked-in': 'confermato', 'checked in': 'confermato',
+  'checked-in (conflitto!)': 'confermato', 'checked in (conflict!)': 'confermato',
+  'confermato': 'confermato', 'confirmed': 'confermato', 'completed': 'confermato',
+  'riservato + indirizzo email verificato + confermato': 'confermato',
+  'reserved + email address verified + confirmed': 'confermato'
 };
 
 function normalizeStatusToFilter(rawStatus) {
   if (!rawStatus || typeof rawStatus !== 'string') return null;
   const key = String(rawStatus).toLowerCase().trim();
-  return PLANYO_STATUS_TO_FILTER[key] || PLANYO_STATUS_TO_FILTER[rawStatus.trim()] || null;
+  if (PLANYO_STATUS_TO_FILTER[key]) return PLANYO_STATUS_TO_FILTER[key];
+  if (PLANYO_STATUS_TO_FILTER[rawStatus.trim()]) return PLANYO_STATUS_TO_FILTER[rawStatus.trim()];
+  // Fallback: match per contenuto (es. "Reserved + ... + confirmed" o varianti)
+  if (key.includes('cancellato') || key.includes('cancelled') || key.includes('canceled')) return 'cancellato';
+  if (key.includes('confermato') || key.includes('confirmed') || key.includes('checked in') || key.includes('checked-in') || key.includes('check out') || key.includes('checked out')) return 'confermato';
+  if (key.includes('riservato') || key.includes('reserved') || key.includes('lista d\'attesa') || key.includes('waiting list') || key.includes('non compiuto') || key.includes('not completed')) return 'riservato';
+  return null;
 }
 
 /**
@@ -193,7 +203,11 @@ function filterListDData(data, filters = {}) {
   if (filters.eventNameContains && typeof filters.eventNameContains === 'string') {
     const q = filters.eventNameContains.trim().toLowerCase();
     if (q) {
-      out = out.filter((r) => (r.eventoPrenotato || '').toLowerCase().includes(q));
+      const synonyms = q === 'grotta' ? ['grotta', 'grotto'] : q === 'grotto' ? ['grotto', 'grotta'] : [q];
+      out = out.filter((r) => {
+        const ev = (r.eventoPrenotato || '').toLowerCase();
+        return synonyms.some((s) => ev.includes(s));
+      });
     }
   }
 
@@ -254,9 +268,39 @@ async function loadListDFromCsv(filters = {}) {
     cognome: r.cognome,
     email: r.email,
     telefono: planyo.normalizePhone(r.telefono) || r.telefono,
-    eventoPrenotato: '',
+    eventoPrenotato: r.eventoPrenotato || '',
     segment: 'D'
   }));
+}
+
+/**
+ * Debug: restituisce statistiche e campioni per diagnosi
+ * @param {{ eventNameContains?: string, statuses?: string[] }} filters
+ */
+async function debugListD(filters = {}) {
+  const csvUrl = process.env.PLANYO_LISTD_CSV_URL;
+  if (!csvUrl) return { error: 'PLANYO_LISTD_CSV_URL non configurato' };
+  const raw = await fetchAndParseCsv(csvUrl);
+  const afterEvent = filters.eventNameContains
+    ? raw.filter((r) => (r.eventoPrenotato || '').toLowerCase().includes((filters.eventNameContains || '').toLowerCase()))
+    : raw;
+  const afterStatus = filters.statuses?.length
+    ? afterEvent.filter((r) => {
+        const mapped = normalizeStatusToFilter(r.stato);
+        return mapped && new Set(filters.statuses.map((s) => String(s).toLowerCase())).has(mapped);
+      })
+    : afterEvent;
+  const statiUnici = [...new Set(raw.map((r) => r.stato || '(vuoto)'))];
+  const risorseUniche = [...new Set(raw.map((r) => (r.eventoPrenotato || '').slice(0, 50)))].slice(0, 15);
+  return {
+    rawCount: raw.length,
+    afterEventFilter: afterEvent.length,
+    afterStatusFilter: afterStatus.length,
+    statiUnici,
+    risorseUniche,
+    sampleRaw: raw.slice(0, 5).map((r) => ({ evento: r.eventoPrenotato, stato: r.stato, email: r.email?.slice(0, 3) + '...' })),
+    filters: { eventNameContains: filters.eventNameContains, statuses: filters.statuses }
+  };
 }
 
 module.exports = {
@@ -265,5 +309,6 @@ module.exports = {
   dedupeByEmail,
   dedupeByPhone,
   loadListDFromCsv,
+  debugListD,
   STATUS_OPTIONS
 };

@@ -1,12 +1,15 @@
 /**
  * Servizio invio email Newsletter via Gmail (Nodemailer)
  * Placeholder: {{nome}}, {{cognome}}, {{email}}, {{evento}}
+ * Batch: traccia email già inviate per soggetto+filtri (max 500/giorno, invii progressivi)
  */
 const nodemailer = require('nodemailer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-sent.json');
+const BATCH_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-batches.json');
 const DAILY_LIMIT = 500;
 
 function createTransporter() {
@@ -96,6 +99,60 @@ async function sendPersonalizedEmail({ to, subject, body, data }) {
 }
 
 /**
+ * Genera ID batch da parametri (stesso batch = stesso oggetto + stessi filtri)
+ * @param {{ subject: string, campaignId?: string, segments: string[], listDEventNameContains?: string, listDStatuses?: string }} params
+ */
+function getBatchId(params) {
+  const str = [
+    (params.subject || '').trim(),
+    (params.campaignId || '').trim(),
+    (params.segments || []).sort().join(','),
+    params.listDEventNameContains || '',
+    params.listDStatuses || ''
+  ].join('|');
+  return crypto.createHash('sha256').update(str).digest('hex').slice(0, 24);
+}
+
+function loadBatches() {
+  try {
+    const data = fs.readFileSync(BATCH_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch {
+    return {};
+  }
+}
+
+function saveBatches(batches) {
+  const dir = path.dirname(BATCH_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(BATCH_FILE, JSON.stringify(batches, null, 2), 'utf8');
+}
+
+/**
+ * Restituisce Set di email già inviate per questo batch
+ */
+function getSentForBatch(batchId) {
+  const batches = loadBatches();
+  const batch = batches[batchId];
+  return new Set(batch?.sent || []);
+}
+
+/**
+ * Aggiunge email inviate al batch
+ */
+function addSentToBatch(batchId, emails, subject = '') {
+  const batches = loadBatches();
+  if (!batches[batchId]) {
+    batches[batchId] = { sent: [], subject: subject.slice(0, 80), created: new Date().toISOString() };
+  }
+  const existing = new Set(batches[batchId].sent);
+  emails.forEach((e) => existing.add(e.toLowerCase()));
+  batches[batchId].sent = [...existing];
+  batches[batchId].updated = new Date().toISOString();
+  saveBatches(batches);
+}
+
+/**
  * Invia email di prova (non conta nel limite giornaliero)
  * @param {{ to: string, subject: string, body: string }} opts
  */
@@ -121,5 +178,8 @@ module.exports = {
   applyTemplate,
   checkDailyLimit,
   getTodaySentCount,
+  getBatchId,
+  getSentForBatch,
+  addSentToBatch,
   DAILY_LIMIT
 };

@@ -425,6 +425,7 @@
             <button type="button" class="btn btn-secondary" data-limit="500">500</button>
           </div>
           <p class="hint" id="emailLimitHint">Selezionato: 100 destinatari</p>
+          <p class="hint" id="emailBatchHint" style="margin-top: 0.25rem; color: #64748b;"></p>
         </div>
         <div class="form-group">
           <label>Oggetto email</label>
@@ -767,6 +768,7 @@
     document.querySelectorAll('input[name="seg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
     document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
     document.getElementById('emailCampaignId').onchange = resetEmailCalc;
+    document.getElementById('emailSubject').oninput = () => { if (emailContactCount > 0) updateEmailBatchHint(); };
 
     let smsContactCount = 0;
     let emailContactCount = 0;
@@ -874,11 +876,39 @@
         emailContactCount = d.total || 0;
         status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
         btnExport.disabled = btnSend.disabled = emailContactCount === 0;
+        updateEmailBatchHint();
       } catch (e) {
         status.textContent = 'Errore: ' + e.message;
         btnExport.disabled = btnSend.disabled = true;
+        document.getElementById('emailBatchHint').textContent = '';
       }
     };
+
+    async function updateEmailBatchHint() {
+      const hint = document.getElementById('emailBatchHint');
+      if (emailContactCount === 0) { hint.textContent = ''; return; }
+      try {
+        const params = new URLSearchParams({
+          subject: document.getElementById('emailSubject').value.trim(),
+          campaignId: document.getElementById('emailCampaignId').value || '',
+          segments: Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value).join(',')
+        });
+        const lf = getListDFilters(false);
+        Object.keys(lf).forEach(k => params.set(k, lf[k]));
+        const r = await fetch(API + '/api/email/batch-status?' + params);
+        const d = await r.json();
+        const batchSent = d.batchSent || 0;
+        const remaining = d.dailyRemaining ?? 500;
+        const totalRemaining = Math.max(0, emailContactCount - batchSent);
+        if (batchSent > 0) {
+          hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. Oggi puoi inviarne altri ' + Math.min(selectedEmailLimit, remaining, totalRemaining) + ' (max 500/giorno).';
+        } else {
+          hint.textContent = 'Limite 500 email/giorno. Per liste lunghe, invia 500 oggi e domani altre 500 (i già inviati vengono esclusi automaticamente).';
+        }
+      } catch (_) {
+        hint.textContent = '';
+      }
+    }
 
     // Tab switching
     let selectedEmailLimit = 100;
@@ -924,6 +954,7 @@
         btn.classList.remove('btn-secondary');
         btn.classList.add('btn-primary');
         document.getElementById('emailLimitHint').textContent = 'Selezionato: ' + selectedEmailLimit + ' destinatari';
+        if (emailContactCount > 0) updateEmailBatchHint();
       };
     });
     document.querySelector('.block-btns [data-limit="100"]').click();
@@ -971,33 +1002,48 @@
         out.innerHTML = '<div class="error">Seleziona una campagna (o solo Lista D).</div>';
         return;
       }
+      const btn = document.getElementById('btnExportCsv');
+      btn.disabled = true;
       out.innerHTML = '<div class="log">Generazione CSV...</div>';
       try {
         const params = new URLSearchParams({
           campaignId: campaignId || 'dummy',
-          targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
-          eventFilter: document.getElementById('emailEventFilter').value.trim()
+          targetResourceId: (document.getElementById('targetResourceId')?.value || '236955').trim(),
+          eventFilter: (document.getElementById('emailEventFilter')?.value || '').trim()
         });
         if (emailSegs.length) params.set('segments', emailSegs.join(','));
-        const evIds = document.getElementById('emailEventIds').value.trim();
+        const evIds = (document.getElementById('emailEventIds')?.value || '').trim();
         if (evIds) params.set('eventIds', evIds);
         const lf = getListDFilters(false);
         Object.keys(lf).forEach(k => params.set(k, lf[k]));
         const r = await fetch(API + '/api/email/export?' + params);
         if (!r.ok) {
-          const d = await r.json();
-          throw new Error(d.error || 'Errore export');
+          let msg = 'Errore export';
+          try {
+            const d = await r.json();
+            msg = d.error || msg;
+          } catch (_) {
+            msg = 'Errore ' + r.status + ': ' + (await r.text()).slice(0, 100);
+          }
+          throw new Error(msg);
         }
         const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
+        a.href = url;
         a.download = 'newsletter-email-export.csv';
+        a.style.display = 'none';
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(a.href);
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
         out.innerHTML = '<div class="log result-ok">CSV scaricato.</div>';
       } catch (e) {
         out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
       }
+      btn.disabled = emailContactCount === 0;
     };
 
     // Send email
@@ -1015,7 +1061,8 @@
         out.innerHTML = '<div class="error">Campagna (o solo Lista D), oggetto e messaggio richiesti.</div>';
         return;
       }
-      if (!confirm('Confermi l\'invio di ' + selectedEmailLimit + ' email?' + (emailSegs.length ? ' Liste: ' + emailSegs.join(', ') : ' (tutte le liste)'))) return;
+      const limitCap = Math.min(selectedEmailLimit, 500);
+      if (!confirm('Confermi l\'invio? Verranno inviate fino a ' + limitCap + ' email (limite giornaliero 500). I destinatari già inviati in questo batch verranno esclusi automaticamente.' + (emailSegs.length ? ' Liste: ' + emailSegs.join(', ') : ''))) return;
 
       btn.disabled = true;
       btnAbort.disabled = false;
@@ -1050,9 +1097,13 @@
         const d = await r.json();
         showOutput(out, d.logs);
         if (d.result) {
-          const { sent, failed } = d.result;
+          const { sent, failed, batchSent, batchRemaining } = d.result;
           out.innerHTML += '<div class="log result-ok">Inviate: ' + sent + (failed > 0 ? ' | Fallite: ' + failed : '') + '</div>';
+          if (batchSent != null && batchRemaining != null) {
+            out.innerHTML += '<div class="log">Totale batch: ' + batchSent + ' inviati. Rimanenti: ' + batchRemaining + '. Domani puoi inviarne altri 500.</div>';
+          }
           if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata.</div>';
+          if (emailContactCount > 0) updateEmailBatchHint();
         }
         if (d.error) out.innerHTML += '<div class="error">' + escapeHtml(d.error) + '</div>';
       } catch (e) {

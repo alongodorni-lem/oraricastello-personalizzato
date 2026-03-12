@@ -14,6 +14,7 @@ const smshosting = require('./services/smshosting');
 const emailService = require('./services/emailService');
 const { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview } = require('./jobs/newsletter-sms-job');
 const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock, mergeListDFromCsv } = require('./jobs/newsletter-email-job');
+const planyoReportCsv = require('./services/planyoReportCsv');
 const config = require('./config/segments');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
@@ -508,6 +509,42 @@ router.get('/api/email/preview', async (req, res) => {
   }
 });
 
+router.get('/api/listd/debug', async (req, res) => {
+  try {
+    const listDFilters = parseListDFilters(req.query);
+    const debug = await planyoReportCsv.debugListD(listDFilters);
+    res.json(debug);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/api/email/batch-status', (req, res) => {
+  try {
+    const subject = (req.query.subject || '').trim();
+    const campaignId = (req.query.campaignId || '').trim();
+    const segments = parseSegmentsParam(req.query.segments);
+    const listDFilters = parseListDFilters(req.query);
+    const batchId = emailService.getBatchId({
+      subject,
+      campaignId,
+      segments,
+      listDEventNameContains: listDFilters.eventNameContains,
+      listDStatuses: listDFilters.statuses?.join(',')
+    });
+    const sentCount = emailService.getSentForBatch(batchId).size;
+    const limitInfo = emailService.checkDailyLimit();
+    res.json({
+      batchId,
+      batchSent: sentCount,
+      dailyRemaining: limitInfo.remaining,
+      dailyLimit: emailService.DAILY_LIMIT
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/api/email/test', async (req, res) => {
   const { email, subject, body } = req.body || {};
   if (!email || !String(email).trim().includes('@')) {
@@ -548,12 +585,22 @@ router.post('/api/email/send', async (req, res) => {
 
   const limitNum = Math.min(Math.max(parseInt(String(limit), 10) || 100, 100), 500);
   const limitInfo = emailService.checkDailyLimit();
-  if (limitInfo.remaining < limitNum) {
+  if (limitInfo.remaining <= 0) {
     return res.status(400).json({
       success: false,
-      error: `Limite giornaliero raggiunto. Inviati oggi: ${limitInfo.today}, rimanenti: ${limitInfo.remaining}. Max 500/giorno.`
+      error: `Limite giornaliero raggiunto (500/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
     });
   }
+
+  const batchId = emailService.getBatchId({
+    subject,
+    campaignId: campaignId || '',
+    segments: segFilter,
+    listDEventNameContains: listDFilters.eventNameContains,
+    listDStatuses: listDFilters.statuses?.join(',')
+  });
+  const sentSet = emailService.getSentForBatch(batchId);
+  const maxToSend = Math.min(limitNum, limitInfo.remaining);
 
   const cap = captureLogs(async () => {
     const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
@@ -562,11 +609,13 @@ router.post('/api/email/send', async (req, res) => {
     data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
     data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters);
-    const toSend = takeBlock(data, limitNum);
+    data = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()));
+    const toSend = takeBlock(data, maxToSend);
 
     emailAbortRequested = false;
     let sent = 0;
     let failed = 0;
+    const successfullySent = [];
 
     for (const row of toSend) {
       if (emailAbortRequested) break;
@@ -578,6 +627,7 @@ router.post('/api/email/send', async (req, res) => {
           data: row
         });
         sent++;
+        successfullySent.push(row.email);
         if (sent % 50 === 0) console.log('[Email] Inviati:', sent);
       } catch (err) {
         failed++;
@@ -586,7 +636,17 @@ router.post('/api/email/send', async (req, res) => {
       await new Promise((r) => setTimeout(r, 200));
     }
 
-    return { sent, failed, total: toSend.length };
+    if (successfullySent.length > 0) {
+      emailService.addSentToBatch(batchId, successfullySent, subject);
+    }
+
+    return {
+      sent,
+      failed,
+      total: toSend.length,
+      batchSent: sentSet.size + successfullySent.length,
+      batchRemaining: data.length - successfullySent.length
+    };
   });
 
   const out = await cap.run();
