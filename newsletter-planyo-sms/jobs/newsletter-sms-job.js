@@ -42,7 +42,7 @@ function markAsSent(campaignId, email, segment) {
  * @param {{ dryRun?: boolean }} options
  */
 async function runNewsletterSmsJob(campaignId, options = {}) {
-  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, smsText: customSmsText, abortCheck } = options;
+  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, smsText: customSmsText, abortCheck } = options;
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
   const targetResourceId = overrideTargetId != null ? Number(overrideTargetId) : configTargetId;
 
@@ -90,9 +90,17 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     throw err;
   }
 
+  const evIds = options.eventIds && Array.isArray(options.eventIds) ? options.eventIds.map(Number).filter((n) => !isNaN(n)) : null;
+  const hasEventFilter = evIds && evIds.length > 0;
+
   // 3. Segmenta (phone: Planyo prima, poi Mailchimp; normalizza per SMS)
   const lists = { A: [], B: [], C: [] };
   for (const email of emails) {
+    const entry = reservationsByEmail.get(email.toLowerCase().trim());
+    const resourceIds = (entry?.reservations || []).map((r) => r.resource_id).filter((id) => id != null).map(Number);
+    if (hasEventFilter && resourceIds.length > 0 && !resourceIds.some((id) => evIds.includes(id))) continue;
+    if (hasEventFilter && resourceIds.length === 0) continue;
+
     const { segment, phone: planyoPhone } = planyo.segmentEmail(reservationsByEmail, email, targetResourceId);
     let raw = planyoPhone || mailchimpPhones.get(email.toLowerCase()) || '';
     const phone = planyo.normalizePhone(raw) || (raw && !raw.includes('@') && raw.replace(/\D/g, '').length >= 9 ? raw : '');
@@ -110,8 +118,8 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   console.log('  Lista B (altri eventi):  ', segmentSummary.B.total, '| con telefono:', segmentSummary.B.withPhone, '| senza:', segmentSummary.B.noPhone);
   console.log('  Lista C (prospect):      ', segmentSummary.C.total, '| con telefono:', segmentSummary.C.withPhone, '| senza:', segmentSummary.C.noPhone);
 
-  // 4. Invia SMS per segmento (solo quelli in segmentsFilter se specificato)
-  const segmentsToProcess = segmentsFilter && segmentsFilter.length ? segmentsFilter : ['A', 'B', 'C'];
+  // 4. Invia SMS per segmento (solo quelli in segmentsFilter se specificato; D = tutti)
+  const segmentsToProcess = segmentsFilter && segmentsFilter.length ? (segmentsFilter.includes('D') ? ['A', 'B', 'C'] : segmentsFilter) : ['A', 'B', 'C'];
   let inserted = 0;
   let notInserted = 0;
   let duplicates = 0;
@@ -234,4 +242,58 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
   return { found: false };
 }
 
-module.exports = { runNewsletterSmsJob, checkPhoneInLists };
+/**
+ * Calcola il numero di contatti che corrispondono ai criteri (senza inviare)
+ * @param {string} campaignId
+ * @param {{ targetResourceId?: number, eventIds?: number[], segments?: string[] }} options
+ * @returns {Promise<{ total: number, bySegment: { A: number, B: number, C: number } }>}
+ */
+async function getSmsPreview(campaignId, options = {}) {
+  const { targetResourceId: overrideId, eventIds, segments: segmentsFilter } = options;
+  const { targetResourceId: configId, monthsLookback } = config;
+  const targetResourceId = overrideId != null ? Number(overrideId) : configId;
+
+  const emails = await mailchimp.getCampaignEngagedEmails(campaignId);
+  if (emails.length === 0) return { total: 0, bySegment: { A: 0, B: 0, C: 0 } };
+
+  let mailchimpPhones = new Map();
+  try {
+    const listId = await mailchimp.getCampaignListId(campaignId);
+    if (listId) {
+      mailchimpPhones = await mailchimp.getPhonesForEmails(listId, new Set(emails.map((e) => e.toLowerCase())));
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
+  const eventIdsNum = eventIds && Array.isArray(eventIds) ? eventIds.map(Number).filter((n) => !isNaN(n)) : null;
+  const hasEventFilter = eventIdsNum && eventIdsNum.length > 0;
+
+  const lists = { A: [], B: [], C: [] };
+  for (const email of emails) {
+    const entry = reservationsByEmail.get(email.toLowerCase().trim());
+    const resourceIds = (entry?.reservations || []).map((r) => r.resource_id).filter((id) => id != null).map(Number);
+    if (hasEventFilter && resourceIds.length > 0 && !resourceIds.some((id) => eventIdsNum.includes(id))) continue;
+    if (hasEventFilter && resourceIds.length === 0) continue;
+
+    const { segment, phone: planyoPhone } = planyo.segmentEmail(reservationsByEmail, email, targetResourceId);
+    let raw = planyoPhone || mailchimpPhones.get(email.toLowerCase()) || '';
+    const phone = planyo.normalizePhone(raw) || (raw && !raw.includes('@') && raw.replace(/\D/g, '').length >= 9 ? raw : '');
+    if (!phone || phone.length < 10 || phone.includes('@')) continue;
+    lists[segment].push({ email, phone });
+  }
+
+  const segFilter = segmentsFilter && segmentsFilter.length && !segmentsFilter.includes('D') ? segmentsFilter : ['A', 'B', 'C'];
+  let total = 0;
+  for (const seg of segFilter) {
+    total += lists[seg]?.length || 0;
+  }
+
+  return {
+    total,
+    bySegment: { A: lists.A.length, B: lists.B.length, C: lists.C.length }
+  };
+}
+
+module.exports = { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview };

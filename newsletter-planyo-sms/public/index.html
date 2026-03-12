@@ -278,7 +278,13 @@
           <label class="checkbox-label"><input type="checkbox" name="seg" value="A"> Lista A (prenotati evento target)</label>
           <label class="checkbox-label"><input type="checkbox" name="seg" value="B" checked> Lista B (clienti con prenotazioni ultimi 18 mesi)</label>
           <label class="checkbox-label"><input type="checkbox" name="seg" value="C"> Lista C (altri contatti)</label>
+          <label class="checkbox-label"><input type="checkbox" name="seg" value="D"> Lista D (tutti i clienti)</label>
         </div>
+      </div>
+      <div class="form-group">
+        <label>ID evento Planyo (filtro prenotazioni)</label>
+        <input type="text" id="smsEventIds" placeholder="236955" maxlength="80">
+        <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola (es. 236955, 243693).</p>
       </div>
       <div class="form-group">
         <label class="checkbox-label">
@@ -286,8 +292,12 @@
           Solo simulazione (nessun SMS inviato)
         </label>
       </div>
+      <div class="form-group">
+        <button type="button" class="btn btn-secondary" id="btnSmsCalc">Calcola contatti</button>
+        <p class="hint" id="smsCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare i contatti che corrispondono ai criteri.</p>
+      </div>
       <div class="actions">
-        <button class="btn btn-primary" id="btnRun">
+        <button class="btn btn-primary" id="btnRun" disabled>
           Avvia invio
         </button>
         <button class="btn btn-secondary" id="btnAbort" style="display:none;">
@@ -347,10 +357,29 @@
           <p class="hint">Lascia vuoto per includere tutti. Filtra i destinatari per evento prenotato.</p>
         </div>
         <div class="form-group">
-          <label>Scarica CSV</label>
-          <div class="actions">
-            <button type="button" class="btn btn-secondary" id="btnExportCsv">Scarica CSV completo</button>
+          <label>Liste da inviare</label>
+          <div class="checkboxes">
+            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="A"> Lista A (prenotati evento target)</label>
+            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="B" checked> Lista B (clienti con prenotazioni ultimi 18 mesi)</label>
+            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="C"> Lista C (altri contatti)</label>
+            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="D"> Lista D (tutti i clienti)</label>
           </div>
+          <p class="hint">Seleziona almeno una lista. Se nessuna selezionata, vengono incluse tutte.</p>
+        </div>
+        <div class="form-group">
+          <label>ID evento Planyo (filtro prenotazioni)</label>
+          <input type="text" id="emailEventIds" placeholder="236955" maxlength="80">
+          <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola.</p>
+        </div>
+        <div class="form-group">
+          <button type="button" class="btn btn-secondary" id="btnEmailCalc">Calcola contatti</button>
+          <p class="hint" id="emailCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare i contatti che corrispondono ai criteri.</p>
+        </div>
+        <div class="form-group">
+          <label>Scarica CSV</label>
+        <div class="actions">
+          <button type="button" class="btn btn-secondary" id="btnExportCsv" disabled>Scarica CSV completo</button>
+        </div>
         </div>
         <div class="form-group">
           <label>Blocco destinatari (max 500/giorno)</label>
@@ -387,7 +416,7 @@
           <div class="output" id="emailTestOutput" style="margin-top: 0.5rem;"></div>
         </div>
         <div class="actions">
-          <button type="button" class="btn btn-primary" id="btnSendEmail">Invia email</button>
+          <button type="button" class="btn btn-primary" id="btnSendEmail" disabled>Invia email</button>
           <button type="button" class="btn btn-danger" id="btnEmailAbort" style="display:none;">Interrompi invio</button>
         </div>
         <p class="hint" id="emailAbortHint" style="display:none; margin-top: 0.5rem;">Durante l'invio puoi cliccare "Interrompi invio" per fermare il processo.</p>
@@ -424,6 +453,7 @@
               const checked = list.querySelectorAll('input[name="campaign"]:checked');
               if (checked.length > 5) cb.checked = false;
               hint.textContent = checked.length >= 5 ? 'Massimo 5 campagne selezionate' : 'Seleziona una o più campagne (max 5)';
+              if (typeof resetSmsCalc === 'function') resetSmsCalc();
             };
             lab.appendChild(cb);
             lab.appendChild(document.createTextNode(` ${(c.subject || c.id).slice(0, 55)}${(c.subject || c.id).length > 55 ? '…' : ''} (${c.send_time ? new Date(c.send_time).toLocaleDateString('it') : ''})`));
@@ -499,6 +529,7 @@
             segments: segs.length ? segs : ['A', 'B', 'C'],
             dryRun,
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
+            eventIds: document.getElementById('smsEventIds').value.trim() || undefined,
             smsText: document.getElementById('smsText').value.trim() || undefined
           }),
           signal: controller.signal
@@ -588,9 +619,12 @@
       try {
         const r = await fetch(API + '/api/config');
         const d = await r.json();
-        if (d.targetResourceId) {
-          document.getElementById('targetResourceId').value = d.targetResourceId;
-        }
+        const tid = String(d.targetResourceId || document.getElementById('targetResourceId').value || '236955');
+        document.getElementById('targetResourceId').value = tid;
+        const smsEv = document.getElementById('smsEventIds');
+        const emailEv = document.getElementById('emailEventIds');
+        if (!smsEv.value.trim()) smsEv.value = tid;
+        if (!emailEv.value.trim()) emailEv.value = tid;
       } catch (e) { /* use default */ }
     }
 
@@ -621,6 +655,9 @@
             input.readOnly = true;
             input.style.background = '#f1f5f9';
             btn.textContent = 'Modifica';
+            const tid = String(d.targetResourceId);
+            if (!document.getElementById('smsEventIds').value.trim()) document.getElementById('smsEventIds').value = tid;
+            if (!document.getElementById('emailEventIds').value.trim()) document.getElementById('emailEventIds').value = tid;
           } else {
             alert(d.error || 'Errore salvataggio');
           }
@@ -633,6 +670,93 @@
 
     document.getElementById('smsText').oninput = function() {
       document.getElementById('smsCharCount').textContent = this.value.length + '/160';
+    };
+
+    function resetSmsCalc() {
+      document.getElementById('smsCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti.';
+      document.getElementById('btnRun').disabled = true;
+    }
+    function resetEmailCalc() {
+      document.getElementById('emailCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti.';
+      document.getElementById('btnExportCsv').disabled = document.getElementById('btnSendEmail').disabled = true;
+    }
+    document.getElementById('smsEventIds').oninput = resetSmsCalc;
+    document.getElementById('emailEventIds').oninput = resetEmailCalc;
+    document.getElementById('emailEventFilter').oninput = resetEmailCalc;
+    document.querySelectorAll('input[name="seg"]').forEach((cb) => { cb.onchange = resetSmsCalc; });
+    document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = resetEmailCalc; });
+    document.getElementById('emailCampaignId').onchange = resetEmailCalc;
+
+    let smsContactCount = 0;
+    let emailContactCount = 0;
+
+    document.getElementById('btnSmsCalc').onclick = async () => {
+      const campaignIds = Array.from(document.querySelectorAll('input[name="campaign"]:checked')).map(c => c.value);
+      const campaignId = campaignIds[0];
+      const status = document.getElementById('smsCountStatus');
+      const btnRun = document.getElementById('btnRun');
+      if (!campaignId) {
+        status.textContent = 'Seleziona almeno una campagna.';
+        btnRun.disabled = true;
+        return;
+      }
+      status.textContent = 'Calcolo in corso...';
+      btnRun.disabled = true;
+      try {
+        const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
+        const params = new URLSearchParams({
+          campaignId,
+          targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
+          segments: (segs.length ? segs : ['A','B','C']).join(',')
+        });
+        const evIds = document.getElementById('smsEventIds').value.trim();
+        if (evIds) params.set('eventIds', evIds);
+        const r = await fetch(API + '/api/sms/preview?' + params);
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        smsContactCount = d.total || 0;
+        status.textContent = smsContactCount + ' contatti corrispondono al criterio. Puoi procedere con l\'invio.';
+        btnRun.disabled = smsContactCount === 0;
+      } catch (e) {
+        status.textContent = 'Errore: ' + e.message;
+        btnRun.disabled = true;
+      }
+    };
+
+    document.getElementById('btnEmailCalc').onclick = async () => {
+      const campaignId = document.getElementById('emailCampaignId').value;
+      const status = document.getElementById('emailCountStatus');
+      const btnExport = document.getElementById('btnExportCsv');
+      const btnSend = document.getElementById('btnSendEmail');
+      if (!campaignId) {
+        status.textContent = 'Seleziona una campagna.';
+        btnExport.disabled = btnSend.disabled = true;
+        return;
+      }
+      status.textContent = 'Calcolo in corso...';
+      btnExport.disabled = btnSend.disabled = true;
+      try {
+        const segs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
+        const params = new URLSearchParams({
+          campaignId,
+          targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
+          limit: selectedEmailLimit,
+          segments: (segs.length ? segs : ['A','B','C','D']).join(',')
+        });
+        const evIds = document.getElementById('emailEventIds').value.trim();
+        const evFilter = document.getElementById('emailEventFilter').value.trim();
+        if (evIds) params.set('eventIds', evIds);
+        if (evFilter) params.set('eventFilter', evFilter);
+        const r = await fetch(API + '/api/email/preview?' + params);
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        emailContactCount = d.total || 0;
+        status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
+        btnExport.disabled = btnSend.disabled = emailContactCount === 0;
+      } catch (e) {
+        status.textContent = 'Errore: ' + e.message;
+        btnExport.disabled = btnSend.disabled = true;
+      }
     };
 
     // Tab switching
@@ -726,11 +850,15 @@
       }
       out.innerHTML = '<div class="log">Generazione CSV...</div>';
       try {
+        const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
         const params = new URLSearchParams({
           campaignId,
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           eventFilter: document.getElementById('emailEventFilter').value.trim()
         });
+        if (emailSegs.length) params.set('segments', emailSegs.join(','));
+        const evIds = document.getElementById('emailEventIds').value.trim();
+        if (evIds) params.set('eventIds', evIds);
         const r = await fetch(API + '/api/email/export?' + params);
         if (!r.ok) {
           const d = await r.json();
@@ -761,7 +889,8 @@
         out.innerHTML = '<div class="error">Campagna, oggetto e messaggio richiesti.</div>';
         return;
       }
-      if (!confirm('Confermi l\'invio di ' + selectedEmailLimit + ' email?')) return;
+      const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
+      if (!confirm('Confermi l\'invio di ' + selectedEmailLimit + ' email?' + (emailSegs.length ? ' Liste: ' + emailSegs.join(', ') : ' (tutte le liste)'))) return;
 
       btn.disabled = true;
       btnAbort.disabled = false;
@@ -784,6 +913,8 @@
             campaignId,
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
             eventFilter: document.getElementById('emailEventFilter').value.trim() || undefined,
+            eventIds: document.getElementById('emailEventIds').value.trim() || undefined,
+            segments: emailSegs.length ? emailSegs : undefined,
             limit: selectedEmailLimit,
             subject,
             body

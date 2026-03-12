@@ -31,8 +31,11 @@ async function buildEmailListData(campaignId, options = {}) {
   const result = [];
   for (const email of emails) {
     const key = email.toLowerCase().trim();
+    const entry = reservationsByEmail.get(key);
     const { segment, phone, lastResource, firstName: planyoFirst, lastName: planyoLast } = planyo.segmentEmail(reservationsByEmail, email, targetResourceId);
     const mc = memberDetails.get(key);
+
+    const resourceIds = (entry?.reservations || []).map((r) => r.resource_id).filter((id) => id != null).map(Number);
 
     const nome = (planyoFirst || mc?.firstName || '').trim();
     const cognome = (planyoLast || mc?.lastName || '').trim();
@@ -45,11 +48,36 @@ async function buildEmailListData(campaignId, options = {}) {
       email: key,
       telefono,
       eventoPrenotato,
-      segment
+      segment,
+      resourceIds
     });
   }
 
   return result;
+}
+
+/**
+ * Filtra i dati per ID evento Planyo (vuoto = tutte le prenotazioni)
+ * @param {Array} data - output di buildEmailListData
+ * @param {number[]|null} eventIds - es. [236955] o [236955, 243693] (vuoto = nessun filtro)
+ */
+function filterByEventIds(data, eventIds) {
+  if (!eventIds || !Array.isArray(eventIds) || eventIds.length === 0) return data;
+  const ids = new Set(eventIds.map((id) => Number(id)).filter((n) => !isNaN(n)));
+  if (ids.size === 0) return data;
+  return data.filter((r) => (r.resourceIds || []).some((id) => ids.has(Number(id))));
+}
+
+/**
+ * Filtra i dati per segmento (A, B, C)
+ * @param {Array} data - output di buildEmailListData
+ * @param {string[]|null} segments - es. ['A','B'] (vuoto/null = tutti)
+ */
+function filterBySegment(data, segments) {
+  if (!segments || !Array.isArray(segments) || segments.length === 0) return data;
+  const set = new Set(segments.map((s) => String(s).toUpperCase()));
+  if (set.has('D')) return data;
+  return data.filter((r) => set.has((r.segment || '').toUpperCase()));
 }
 
 /**
@@ -77,6 +105,8 @@ function takeBlock(data, limit) {
 
 module.exports = {
   buildEmailListData,
+  filterByEventIds,
+  filterBySegment,
   filterByEvent,
   takeBlock
 };

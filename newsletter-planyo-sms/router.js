@@ -12,8 +12,8 @@ const router = express.Router();
 const mailchimp = require('./services/mailchimp');
 const smshosting = require('./services/smshosting');
 const emailService = require('./services/emailService');
-const { runNewsletterSmsJob, checkPhoneInLists } = require('./jobs/newsletter-sms-job');
-const { buildEmailListData, filterByEvent, takeBlock } = require('./jobs/newsletter-email-job');
+const { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview } = require('./jobs/newsletter-sms-job');
+const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock } = require('./jobs/newsletter-email-job');
 const config = require('./config/segments');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
@@ -142,7 +142,7 @@ router.get('/api/campaigns', async (req, res) => {
 
 router.post('/api/run', async (req, res) => {
   res.setTimeout(30 * 60 * 1000);
-  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, smsText } = req.body || {};
+  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = req.body || {};
 
   const cap = captureLogs(async () => {
     let ids = [];
@@ -157,7 +157,8 @@ router.post('/api/run', async (req, res) => {
     if (ids.length === 0) throw new Error('Nessuna campagna trovata');
 
     const seg = Array.isArray(segments) ? segments : [segments];
-    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C'].includes(String(s).toUpperCase())) : null;
+    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D'].includes(String(s).toUpperCase())) : null;
+    const evIds = parseEventIdsParam(eventIds);
 
     const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
     const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
@@ -166,7 +167,7 @@ router.post('/api/run', async (req, res) => {
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, smsText: customSmsText, abortCheck });
+      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, smsText: customSmsText, abortCheck });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
@@ -241,11 +242,51 @@ function escapeCsv(val) {
   return s;
 }
 
+function parseSegmentsParam(val) {
+  if (!val) return null;
+  const arr = Array.isArray(val) ? val : (typeof val === 'string' ? val.split(',') : []);
+  const seg = arr.map((s) => String(s).toUpperCase()).filter((s) => ['A', 'B', 'C', 'D'].includes(s));
+  return seg.length > 0 ? seg : null;
+}
+
+function parseEventIdsParam(val) {
+  if (val === undefined || val === null || val === '') return null;
+  const str = String(val).trim();
+  if (!str) return null;
+  const ids = str.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n > 0);
+  return ids.length > 0 ? ids : null;
+}
+
+router.get('/api/sms/preview', async (req, res) => {
+  try {
+    const campaignId = req.query.campaignId;
+    const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
+    const eventIds = parseEventIdsParam(req.query.eventIds);
+    const segments = parseSegmentsParam(req.query.segments);
+
+    if (!campaignId) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto' });
+    }
+
+    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    const result = await getSmsPreview(campaignId, {
+      targetResourceId: targetId,
+      eventIds,
+      segments: segments || ['A', 'B', 'C']
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/api/email/export', async (req, res) => {
   try {
     const campaignId = req.query.campaignId;
     const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
     const eventFilter = (req.query.eventFilter || '').trim();
+    const eventIds = parseEventIdsParam(req.query.eventIds);
+    const segments = parseSegmentsParam(req.query.segments);
 
     if (!campaignId) {
       return res.status(400).json({ success: false, error: 'campaignId richiesto' });
@@ -253,6 +294,8 @@ router.get('/api/email/export', async (req, res) => {
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
     let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    data = filterByEventIds(data, eventIds);
+    data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
 
     const header = 'nome,cognome,email,telefono,evento,segment';
@@ -274,6 +317,8 @@ router.get('/api/email/preview', async (req, res) => {
     const campaignId = req.query.campaignId;
     const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
     const eventFilter = (req.query.eventFilter || '').trim();
+    const eventIds = parseEventIdsParam(req.query.eventIds);
+    const segments = parseSegmentsParam(req.query.segments);
     const limit = parseInt(req.query.limit || '100', 10);
 
     if (!campaignId) {
@@ -282,6 +327,8 @@ router.get('/api/email/preview', async (req, res) => {
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
     let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    data = filterByEventIds(data, eventIds);
+    data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
     const total = data.length;
     const block = takeBlock(data, limit);
@@ -325,9 +372,9 @@ let emailAbortRequested = false;
 
 router.post('/api/email/send', async (req, res) => {
   res.setTimeout(60 * 60 * 1000);
-  const { campaignId, targetResourceId, eventFilter, limit = 100, subject, body } = req.body || {};
+  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody } = req.body || {};
 
-  if (!campaignId || !subject || !body) {
+  if (!campaignId || !subject || !emailBody) {
     return res.status(400).json({ success: false, error: 'campaignId, subject e body richiesti' });
   }
 
@@ -340,9 +387,14 @@ router.post('/api/email/send', async (req, res) => {
     });
   }
 
+  const segFilter = parseSegmentsParam(segments);
+  const evIds = parseEventIdsParam(eventIds);
+
   const cap = captureLogs(async () => {
     const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
     let data = await buildEmailListData(campaignId, { targetResourceId: targetId });
+    data = filterByEventIds(data, evIds);
+    data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
     const toSend = takeBlock(data, limitNum);
 
@@ -356,7 +408,7 @@ router.post('/api/email/send', async (req, res) => {
         await emailService.sendPersonalizedEmail({
           to: row.email,
           subject,
-          body,
+          body: emailBody,
           data: row
         });
         sent++;
