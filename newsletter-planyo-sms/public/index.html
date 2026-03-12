@@ -790,7 +790,7 @@
         btnRun.disabled = true;
         return;
       }
-      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso...';
+      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso, attendere fino a 90 secondi...';
       btnRun.disabled = true;
       try {
         const params = new URLSearchParams({
@@ -825,7 +825,7 @@
         btnExport.disabled = btnSend.disabled = true;
         return;
       }
-      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso...';
+      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso, attendere fino a 90 secondi...';
       btnExport.disabled = btnSend.disabled = true;
       try {
         const params = new URLSearchParams({

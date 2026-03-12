@@ -271,6 +271,7 @@ function parseListDFilters(query) {
 }
 
 router.get('/api/sms/preview', async (req, res) => {
+  res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
     const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
@@ -296,6 +297,7 @@ router.get('/api/sms/preview', async (req, res) => {
 });
 
 router.get('/api/email/export', async (req, res) => {
+  res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
     const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
@@ -331,6 +333,7 @@ router.get('/api/email/export', async (req, res) => {
 });
 
 router.get('/api/email/preview', async (req, res) => {
+  res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
     const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;

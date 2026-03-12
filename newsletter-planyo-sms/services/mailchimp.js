@@ -44,7 +44,7 @@ async function getCampaignOpenEmails(campaignId) {
     const res = await axios.get(url, {
       auth: { username: 'anystring', password: apiKey },
       headers: { 'Content-Type': 'application/json' },
-      timeout: 30000,
+      timeout: 60000,
       validateStatus: (s) => s < 500
     });
 
@@ -85,7 +85,7 @@ async function getCampaignClickEmails(campaignId) {
     {
       auth: { username: 'anystring', password: apiKey },
       headers: { 'Content-Type': 'application/json' },
-      timeout: 30000,
+      timeout: 60000,
       validateStatus: (s) => s < 500
     }
   );
@@ -106,7 +106,7 @@ async function getCampaignClickEmails(campaignId) {
         {
           auth: { username: 'anystring', password: apiKey },
           headers: { 'Content-Type': 'application/json' },
-          timeout: 30000
+          timeout: 60000
         }
       );
       const members = membersRes.data.members || membersRes.data?.data?.members || [];
@@ -141,7 +141,7 @@ async function getLastSentCampaigns(count = 2) {
     },
     auth: { username: 'anystring', password: apiKey },
     headers: { 'Content-Type': 'application/json' },
-    timeout: 30000
+    timeout: 60000
   });
 
   const campaigns = res.data.campaigns || [];
@@ -176,7 +176,7 @@ async function getCampaignListId(campaignId) {
   const res = await axios.get(`${baseUrl}/campaigns/${campaignId}`, {
     auth: { username: 'anystring', password: apiKey },
     headers: { 'Content-Type': 'application/json' },
-    timeout: 30000
+    timeout: 60000
   });
   return res.data.recipients?.list_id || null;
 }
@@ -241,7 +241,7 @@ async function getPhonesForEmails(listId, emailsSet) {
       params: { count, offset },
       auth: { username: 'anystring', password: apiKey },
       headers: { 'Content-Type': 'application/json' },
-      timeout: 30000
+      timeout: 60000
     });
     const members = res.data.members || [];
     for (const m of members) {
@@ -287,7 +287,7 @@ async function getMemberDetailsForEmails(listId, emailsSet) {
       params: { count, offset },
       auth: { username: 'anystring', password: apiKey },
       headers: { 'Content-Type': 'application/json' },
-      timeout: 30000
+      timeout: 60000
     });
     const members = res.data.members || [];
     for (const m of members) {
