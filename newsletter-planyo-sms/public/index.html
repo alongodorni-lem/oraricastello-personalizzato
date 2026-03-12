@@ -536,7 +536,7 @@
       const r = await fetch(url, options);
       const text = await r.text();
       if (text.trim().startsWith('<')) {
-        throw new Error('Il server ha restituito una pagina di errore invece di dati. Verifica che PLANYO_LISTD_CSV_URL sia valido e che il token shsec non sia scaduto.');
+        throw new Error('Il server ha restituito una pagina di errore invece di dati. Riprova più tardi o verifica i log su Render.');
       }
       try {
         return JSON.parse(text);
@@ -790,23 +790,36 @@
         btnRun.disabled = true;
         return;
       }
-      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso, attendere fino a 90 secondi...';
+      status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
       btnRun.disabled = true;
       try {
-        const params = new URLSearchParams({
+        const body = {
           campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           segments: (segs.length ? segs : ['A','B','C']).join(',')
-        });
+        };
         const evIds = document.getElementById('smsEventIds').value.trim();
-        if (evIds) params.set('eventIds', evIds);
-        const lf = getListDFilters(true);
-        Object.keys(lf).forEach(k => params.set(k, lf[k]));
-        const d = await fetchJson(API + '/api/sms/preview?' + params);
-        if (d.error) throw new Error(d.error);
-        smsContactCount = d.total || 0;
-        status.textContent = smsContactCount + ' contatti corrispondono al criterio. Puoi procedere con l\'invio.';
-        btnRun.disabled = smsContactCount === 0;
+        if (evIds) body.eventIds = evIds;
+        Object.assign(body, getListDFilters(true));
+        const startRes = await fetchJson(API + '/api/sms/preview/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!startRes.jobId) throw new Error(startRes.error || 'Avvio fallito');
+        const jobId = startRes.jobId;
+        const poll = async () => {
+          const d = await fetchJson(API + '/api/sms/preview/status/' + jobId);
+          if (d.status === 'done') {
+            smsContactCount = d.total || 0;
+            status.textContent = smsContactCount + ' contatti corrispondono al criterio. Puoi procedere con l\'invio.';
+            btnRun.disabled = smsContactCount === 0;
+            return;
+          }
+          if (d.status === 'error') {
+            status.textContent = 'Errore: ' + (d.error || 'Errore sconosciuto');
+            btnRun.disabled = true;
+            return;
+          }
+          setTimeout(poll, 3000);
+        };
+        await poll();
       } catch (e) {
         status.textContent = 'Errore: ' + e.message;
         btnRun.disabled = true;
@@ -825,26 +838,39 @@
         btnExport.disabled = btnSend.disabled = true;
         return;
       }
-      status.textContent = (onlyD || segs.includes('D')) ? 'Caricamento CSV in corso, attendere fino a 60 secondi...' : 'Calcolo in corso, attendere fino a 90 secondi...';
+      status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
       btnExport.disabled = btnSend.disabled = true;
       try {
-        const params = new URLSearchParams({
+        const body = {
           campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           limit: selectedEmailLimit,
           segments: (segs.length ? segs : ['A','B','C','D']).join(',')
-        });
+        };
         const evIds = document.getElementById('emailEventIds').value.trim();
         const evFilter = document.getElementById('emailEventFilter').value.trim();
-        if (evIds) params.set('eventIds', evIds);
-        if (evFilter) params.set('eventFilter', evFilter);
-        const lf = getListDFilters(false);
-        Object.keys(lf).forEach(k => params.set(k, lf[k]));
-        const d = await fetchJson(API + '/api/email/preview?' + params);
-        if (d.error) throw new Error(d.error);
-        emailContactCount = d.total || 0;
-        status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
-        btnExport.disabled = btnSend.disabled = emailContactCount === 0;
+        if (evIds) body.eventIds = evIds;
+        if (evFilter) body.eventFilter = evFilter;
+        Object.assign(body, getListDFilters(false));
+        const startRes = await fetchJson(API + '/api/email/preview/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!startRes.jobId) throw new Error(startRes.error || 'Avvio fallito');
+        const jobId = startRes.jobId;
+        const poll = async () => {
+          const d = await fetchJson(API + '/api/email/preview/status/' + jobId);
+          if (d.status === 'done') {
+            emailContactCount = d.total || 0;
+            status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
+            btnExport.disabled = btnSend.disabled = emailContactCount === 0;
+            return;
+          }
+          if (d.status === 'error') {
+            status.textContent = 'Errore: ' + (d.error || 'Errore sconosciuto');
+            btnExport.disabled = btnSend.disabled = true;
+            return;
+          }
+          setTimeout(poll, 3000);
+        };
+        await poll();
       } catch (e) {
         status.textContent = 'Errore: ' + e.message;
         btnExport.disabled = btnSend.disabled = true;

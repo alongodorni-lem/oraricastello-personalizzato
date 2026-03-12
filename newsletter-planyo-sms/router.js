@@ -270,6 +270,78 @@ function parseListDFilters(query) {
   return { eventNameContains, eventIds, statuses };
 }
 
+const previewJobs = new Map();
+const JOB_TTL_MS = 15 * 60 * 1000;
+
+function getJobId() {
+  return 'j_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+function cleanupOldJobs() {
+  const cutoff = Date.now() - JOB_TTL_MS;
+  for (const [id, job] of previewJobs) {
+    if (job.createdAt < cutoff) previewJobs.delete(id);
+  }
+}
+
+router.post('/api/sms/preview/start', (req, res) => {
+  try {
+    const q = req.body || req.query || {};
+    const campaignId = q.campaignId;
+    const targetResourceId = q.targetResourceId ? parseInt(q.targetResourceId, 10) : null;
+    const eventIds = parseEventIdsParam(q.eventIds);
+    const segments = parseSegmentsParam(q.segments);
+    const listDFilters = parseListDFilters(q);
+
+    if (!campaignId && (!segments || !segments.includes('D'))) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto (tranne per Lista D sola)' });
+    }
+
+    const jobId = getJobId();
+    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    previewJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
+    cleanupOldJobs();
+
+    setImmediate(async () => {
+      try {
+        const result = await getSmsPreview(campaignId || 'dummy', {
+          targetResourceId: targetId,
+          eventIds,
+          segments: segments || ['A', 'B', 'C'],
+          listDFilters
+        });
+        const job = previewJobs.get(jobId);
+        if (job) {
+          job.status = 'done';
+          job.result = result;
+        }
+      } catch (err) {
+        const job = previewJobs.get(jobId);
+        if (job) {
+          job.status = 'error';
+          job.error = err.message;
+        }
+      }
+    });
+
+    res.json({ success: true, jobId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/api/sms/preview/status/:jobId', (req, res) => {
+  const job = previewJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, error: 'Job non trovato o scaduto' });
+  if (job.status === 'done') {
+    res.json({ success: true, status: 'done', ...job.result });
+  } else if (job.status === 'error') {
+    res.json({ success: false, status: 'error', error: job.error });
+  } else {
+    res.json({ success: true, status: 'pending' });
+  }
+});
+
 router.get('/api/sms/preview', async (req, res) => {
   res.setTimeout(90000);
   try {
@@ -293,6 +365,70 @@ router.get('/api/sms/preview', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/api/email/preview/start', (req, res) => {
+  try {
+    const q = req.body || req.query || {};
+    const campaignId = q.campaignId;
+    const targetResourceId = q.targetResourceId ? parseInt(q.targetResourceId, 10) : null;
+    const eventFilter = (q.eventFilter || '').trim();
+    const eventIds = parseEventIdsParam(q.eventIds);
+    const segments = parseSegmentsParam(q.segments);
+    const listDFilters = parseListDFilters(q);
+    const limit = parseInt(q.limit || '100', 10);
+
+    const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
+    if (!campaignId && !onlyD) {
+      return res.status(400).json({ success: false, error: 'campaignId richiesto (tranne per Lista D sola)' });
+    }
+
+    const jobId = getJobId();
+    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    previewJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
+    cleanupOldJobs();
+
+    setImmediate(async () => {
+      try {
+        let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId });
+        data = filterByEventIds(data, eventIds);
+        data = filterBySegment(data, segments);
+        data = filterByEvent(data, eventFilter);
+        data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters);
+        const total = data.length;
+        const block = takeBlock(data, limit);
+        const preview = block.slice(0, 10);
+        const limitInfo = emailService.checkDailyLimit();
+        const job = previewJobs.get(jobId);
+        if (job) {
+          job.status = 'done';
+          job.result = { total, limit: block.length, preview, dailyLimit: { sent: limitInfo.today, remaining: limitInfo.remaining, max: emailService.DAILY_LIMIT } };
+        }
+      } catch (err) {
+        const job = previewJobs.get(jobId);
+        if (job) {
+          job.status = 'error';
+          job.error = err.message;
+        }
+      }
+    });
+
+    res.json({ success: true, jobId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/api/email/preview/status/:jobId', (req, res) => {
+  const job = previewJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, error: 'Job non trovato o scaduto' });
+  if (job.status === 'done') {
+    res.json({ success: true, status: 'done', ...job.result });
+  } else if (job.status === 'error') {
+    res.json({ success: false, status: 'error', error: job.error });
+  } else {
+    res.json({ success: true, status: 'pending' });
   }
 });
 

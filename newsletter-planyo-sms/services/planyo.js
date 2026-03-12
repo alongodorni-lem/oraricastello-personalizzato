@@ -69,12 +69,22 @@ function normalizePhone(phone) {
   return p.replace(/\D/g, '').length >= 9 ? p : '';
 }
 
+const RESERVATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
+let reservationsCache = null;
+let reservationsCacheExpiry = 0;
+
 /**
  * Carica tutte le prenotazioni negli ultimi N mesi e le indicizza per email
+ * Cache in-memory 5 min per evitare timeout su richieste ripetute
  * @param {number} monthsLookback
  * @returns {Promise<Map<string, { reservations: Array, phone: string }>>}
  */
 async function loadReservationsByEmail(monthsLookback = 18) {
+  const cacheKey = String(monthsLookback);
+  if (reservationsCache && reservationsCache.key === cacheKey && Date.now() < reservationsCacheExpiry) {
+    return reservationsCache.data;
+  }
+
   const siteId = process.env.PLANYO_SITE_ID || '8895';
   const now = new Date();
   const startDate = new Date(now);
@@ -126,6 +136,8 @@ async function loadReservationsByEmail(monthsLookback = 18) {
     if (page > 200) break;
   }
 
+  reservationsCache = { key: cacheKey, data: byEmail };
+  reservationsCacheExpiry = Date.now() + RESERVATIONS_CACHE_TTL_MS;
   return byEmail;
 }
 

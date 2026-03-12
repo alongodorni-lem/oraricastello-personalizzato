@@ -10,8 +10,8 @@ module.exports = {
   // Risorsa Planyo dell'evento target (es. Castello delle Sorprese 2026)
   targetResourceId: 236955,
 
-  // Mesi di lookback per storico prenotazioni
-  monthsLookback: 18,
+  // Mesi di lookback per storico prenotazioni (override con PLANYO_MONTHS_LOOKBACK=12 per preview più veloce)
+  monthsLookback: parseInt(process.env.PLANYO_MONTHS_LOOKBACK, 10) || 18,
 
   // Etichette risorse (per log)
   resourceLabels: {

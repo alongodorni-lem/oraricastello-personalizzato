@@ -388,17 +388,11 @@ async function getSmsPreview(campaignId, options = {}) {
   const emails = await mailchimp.getCampaignEngagedEmails(campaignId);
   if (emails.length === 0) return { total: 0, bySegment: { A: 0, B: 0, C: 0, D: 0 } };
 
-  let mailchimpPhones = new Map();
-  try {
-    const listId = await mailchimp.getCampaignListId(campaignId);
-    if (listId) {
-      mailchimpPhones = await mailchimp.getPhonesForEmails(listId, new Set(emails.map((e) => e.toLowerCase())));
-    }
-  } catch {
-    /* ignore */
-  }
-
-  const reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
+  const listId = await mailchimp.getCampaignListId(campaignId);
+  const [mailchimpPhones, reservationsByEmail] = await Promise.all([
+    listId ? mailchimp.getPhonesForEmails(listId, new Set(emails.map((e) => e.toLowerCase()))).catch(() => new Map()) : Promise.resolve(new Map()),
+    planyo.loadReservationsByEmail(monthsLookback)
+  ]);
   const eventIdsNum = eventIds && Array.isArray(eventIds) ? eventIds.map(Number).filter((n) => !isNaN(n)) : null;
   const hasEventFilter = eventIdsNum && eventIdsNum.length > 0;
 
