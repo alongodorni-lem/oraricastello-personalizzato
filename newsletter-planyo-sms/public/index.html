@@ -288,14 +288,10 @@
       </div>
       <div class="form-group" id="smsListDFilters" style="display:none;">
         <label>Filtri Lista D (da CSV Planyo)</label>
-        <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per:</p>
+        <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per Risorsa e Stato:</p>
         <div class="form-group">
-          <label>Nome evento contiene</label>
-          <input type="text" id="listDEventNameContains" placeholder="es. Castello">
-        </div>
-        <div class="form-group">
-          <label>ID evento</label>
-          <input type="text" id="listDEventIds" placeholder="236955, 243693" maxlength="80">
+          <label>Nome evento contiene (colonna Risorsa)</label>
+          <input type="text" id="listDEventNameContains" placeholder="es. Grotta">
         </div>
         <div class="form-group">
           <label>Stato</label>
@@ -394,14 +390,10 @@
         </div>
         <div class="form-group" id="emailListDFilters" style="display:none;">
           <label>Filtri Lista D (da CSV Planyo)</label>
-          <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per:</p>
+          <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per Risorsa e Stato:</p>
           <div class="form-group">
-            <label>Nome evento contiene</label>
-            <input type="text" id="listDEventNameContainsEmail" placeholder="es. Castello">
-          </div>
-          <div class="form-group">
-            <label>ID evento</label>
-            <input type="text" id="listDEventIdsEmail" placeholder="236955, 243693" maxlength="80">
+            <label>Nome evento contiene (colonna Risorsa)</label>
+            <input type="text" id="listDEventNameContainsEmail" placeholder="es. Grotta">
           </div>
           <div class="form-group">
             <label>Stato</label>
@@ -746,11 +738,11 @@
     document.getElementById('smsEventIds').oninput = resetSmsCalc;
     document.getElementById('emailEventIds').oninput = resetEmailCalc;
     document.getElementById('emailEventFilter').oninput = resetEmailCalc;
-    ['listDEventNameContains','listDEventIds'].forEach(id => {
+    ['listDEventNameContains'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.oninput = resetSmsCalc;
     });
-    ['listDEventNameContainsEmail','listDEventIdsEmail'].forEach(id => {
+    ['listDEventNameContainsEmail'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.oninput = resetEmailCalc;
     });
@@ -765,12 +757,10 @@
     }
     function getListDFilters(smsTab) {
       const nameEl = smsTab ? document.getElementById('listDEventNameContains') : document.getElementById('listDEventNameContainsEmail');
-      const idsEl = smsTab ? document.getElementById('listDEventIds') : document.getElementById('listDEventIdsEmail');
       const statusName = smsTab ? 'listDStatus' : 'listDStatusEmail';
       const statuses = Array.from(document.querySelectorAll(`input[name="${statusName}"]:checked`)).map(c => c.value);
       const obj = {};
       if (nameEl?.value?.trim()) obj.listDEventNameContains = nameEl.value.trim();
-      if (idsEl?.value?.trim()) obj.listDEventIds = idsEl.value.trim();
       if (statuses.length) obj.listDStatuses = statuses.join(',');
       return obj;
     }

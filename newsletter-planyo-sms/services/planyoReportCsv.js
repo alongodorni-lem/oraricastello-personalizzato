@@ -1,6 +1,6 @@
 /**
- * Servizio per Lista D: carica dati da report CSV Planyo invece che da API
- * Filtri: nome evento contiene, id evento, stato (riservato, confermato, cancellato)
+ * Servizio Lista D: dati da CSV Planyo.
+ * Filtri: solo Risorsa (nome evento) e Stato. Risultati: Nome, Cognome, Email, Telefono.
  */
 const axios = require('axios');
 const planyo = require('./planyo');
@@ -8,16 +8,43 @@ const planyo = require('./planyo');
 const STATUS_OPTIONS = ['riservato', 'confermato', 'cancellato'];
 
 /**
- * Mappa nomi colonne comuni del report Planyo
+ * Mappa stati Planyo (CSV) → filtri UI (riservato, confermato, cancellato)
+ * Etichette esatte dal report Planyo
+ */
+const PLANYO_STATUS_TO_FILTER = {
+  // riservato
+  'aggiunto alla lista d\'attesa': 'riservato',
+  'non compiuto/a': 'riservato', 'non compiuto': 'riservato', 'non compiuta': 'riservato',
+  'riservato': 'riservato',
+  // cancellato
+  'aggiunto alla lista d\'attesa + cancellato dall\'amministratore': 'cancellato',
+  'cancellato automaticamente': 'cancellato',
+  'cancellato dall\'utente': 'cancellato',
+  'cancellato dall\'amministratore': 'cancellato',
+  // confermato
+  'check out effettuato': 'confermato',
+  'checked-in': 'confermato',
+  'checked-in (conflitto!)': 'confermato',
+  'confermato': 'confermato',
+  'riservato + indirizzo email verificato + confermato': 'confermato'
+};
+
+function normalizeStatusToFilter(rawStatus) {
+  if (!rawStatus || typeof rawStatus !== 'string') return null;
+  const key = String(rawStatus).toLowerCase().trim();
+  return PLANYO_STATUS_TO_FILTER[key] || PLANYO_STATUS_TO_FILTER[rawStatus.trim()] || null;
+}
+
+/**
+ * Colonne usate: Nome, Cognome, Email, Telefono (risultato) + Risorsa, Stato (solo per filtri)
  */
 const COL_ALIASES = {
   nome: ['first name', 'firstname', 'nome', 'name', 'prenome'],
   cognome: ['last name', 'lastname', 'cognome', 'surname', 'sobrenome'],
   email: ['email', 'e-mail', 'mail', 'e-mail address', 'email address', 'client email', 'user email', 'contact email', 'posta', 'correo'],
   telefono: ['phone', 'telefono', 'tel', 'mobile', 'cellulare'],
-  evento: ['resource', 'risorsa', 'resource name', 'evento', 'nome evento'],
-  resourceId: ['resource id', 'resource_id', 'id risorsa', 'id evento'],
-  stato: ['status', 'stato', 'state']
+  evento: ['risorsa', 'resource name', 'nome risorsa', 'evento', 'nome evento'],
+  stato: ['status', 'stato', 'state', 'reservation status', 'stato prenotazione']
 };
 
 function findColumnIndex(headers, aliases) {
@@ -128,7 +155,6 @@ async function fetchAndParseCsv(csvUrl) {
   const idxEmail = findColumnIndex(headers, COL_ALIASES.email);
   const idxTelefono = findColumnIndex(headers, COL_ALIASES.telefono);
   const idxEvento = findColumnIndex(headers, COL_ALIASES.evento);
-  const idxResourceId = findColumnIndex(headers, COL_ALIASES.resourceId);
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
 
   if (idxEmail < 0) {
@@ -149,7 +175,6 @@ async function fetchAndParseCsv(csvUrl) {
       email: email.toLowerCase(),
       telefono: get(idxTelefono),
       eventoPrenotato: get(idxEvento),
-      resourceId: get(idxResourceId),
       stato: get(idxStato)
     });
   }
@@ -158,9 +183,9 @@ async function fetchAndParseCsv(csvUrl) {
 }
 
 /**
- * Filtra i dati CSV
+ * Filtra i dati CSV (solo Risorsa e Stato)
  * @param {Array} data
- * @param {{ eventNameContains?: string, eventIds?: number[], statuses?: string[] }} filters
+ * @param {{ eventNameContains?: string, statuses?: string[] }} filters
  */
 function filterListDData(data, filters = {}) {
   let out = data;
@@ -172,17 +197,12 @@ function filterListDData(data, filters = {}) {
     }
   }
 
-  if (filters.eventIds && Array.isArray(filters.eventIds) && filters.eventIds.length > 0) {
-    const ids = new Set(filters.eventIds.map(Number).filter((n) => !isNaN(n)));
-    out = out.filter((r) => {
-      const rid = parseInt(r.resourceId, 10);
-      return !isNaN(rid) && ids.has(rid);
-    });
-  }
-
   if (filters.statuses && Array.isArray(filters.statuses) && filters.statuses.length > 0) {
     const statusSet = new Set(filters.statuses.map((s) => String(s).toLowerCase().trim()));
-    out = out.filter((r) => statusSet.has((r.stato || '').toLowerCase().trim()));
+    out = out.filter((r) => {
+      const mapped = normalizeStatusToFilter(r.stato);
+      return mapped && statusSet.has(mapped);
+    });
   }
 
   return out;
@@ -219,8 +239,8 @@ function dedupeByPhone(data) {
 
 /**
  * Carica Lista D da CSV con filtri
- * @param {{ eventNameContains?: string, eventIds?: number[], statuses?: string[] }} filters
- * @returns {Promise<Array<{ nome, cognome, email, telefono, eventoPrenotato, segment: 'D' }>>}
+ * @param {{ eventNameContains?: string, statuses?: string[] }} filters
+ * @returns {Promise<Array<{ nome, cognome, email, telefono, segment: 'D' }>>}
  */
 async function loadListDFromCsv(filters = {}) {
   const csvUrl = process.env.PLANYO_LISTD_CSV_URL;
@@ -234,7 +254,7 @@ async function loadListDFromCsv(filters = {}) {
     cognome: r.cognome,
     email: r.email,
     telefono: planyo.normalizePhone(r.telefono) || r.telefono,
-    eventoPrenotato: r.eventoPrenotato,
+    eventoPrenotato: '',
     segment: 'D'
   }));
 }
