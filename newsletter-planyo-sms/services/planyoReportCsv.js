@@ -110,7 +110,19 @@ async function fetchAndParseCsv(csvUrl) {
   const rows = parseCsv(text);
   if (rows.length < 2) return [];
 
-  const headers = rows[0].map((h) => String(h || '').replace(/^\uFEFF/, '').trim());
+  // Planyo può avere righe di intestazione/metadati (es. "Reservations From: ... To: ...") prima delle colonne reali
+  // Cerca la prima riga che contiene una colonna email
+  let headerRowIdx = -1;
+  let headers = [];
+  for (let i = 0; i < rows.length; i++) {
+    const candidate = rows[i].map((h) => String(h || '').replace(/^\uFEFF/, '').trim());
+    if (findColumnIndex(candidate, COL_ALIASES.email) >= 0) {
+      headerRowIdx = i;
+      headers = candidate;
+      break;
+    }
+  }
+
   const idxNome = findColumnIndex(headers, COL_ALIASES.nome);
   const idxCognome = findColumnIndex(headers, COL_ALIASES.cognome);
   const idxEmail = findColumnIndex(headers, COL_ALIASES.email);
@@ -120,12 +132,12 @@ async function fetchAndParseCsv(csvUrl) {
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
 
   if (idxEmail < 0) {
-    const headerList = headers.length ? headers.join(', ') : '(nessuna intestazione)';
-    throw new Error(`Colonna email non trovata nel CSV. Intestazioni trovate: ${headerList}. Verifica il formato del report Planyo.`);
+    const firstLine = rows[0]?.slice(0, 3).join(', ') || '(nessuna intestazione)';
+    throw new Error(`Colonna email non trovata nel CSV. Prime righe: ${firstLine}... Verifica il formato del report Planyo.`);
   }
 
   const result = [];
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     const get = (idx) => (idx >= 0 && row[idx] !== undefined ? String(row[idx] || '').trim() : '');
     const email = get(idxEmail);

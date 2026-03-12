@@ -532,11 +532,14 @@
       return d.innerHTML;
     }
 
+    const isLocalhost = () => /^localhost$|^127\.|^\[::1\]$/.test(window.location.hostname);
+
     async function fetchJson(url, options) {
       const r = await fetch(url, options);
       const text = await r.text();
       if (text.trim().startsWith('<')) {
-        throw new Error('Il server ha restituito una pagina di errore invece di dati. Riprova più tardi o verifica i log su Render.');
+        const hint = isLocalhost() ? 'Verifica che il server sia avviato e che tu sia su http://localhost:3000/newsletter-sms' : 'Riprova più tardi o verifica i log su Render.';
+        throw new Error('Il server ha restituito una pagina di errore invece di dati. ' + hint + ' (HTTP ' + r.status + ')');
       }
       try {
         return JSON.parse(text);
@@ -793,33 +796,38 @@
       status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
       btnRun.disabled = true;
       try {
-        const body = {
+        const baseParams = {
           campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           segments: (segs.length ? segs : ['A','B','C']).join(',')
         };
         const evIds = document.getElementById('smsEventIds').value.trim();
-        if (evIds) body.eventIds = evIds;
-        Object.assign(body, getListDFilters(true));
-        const startRes = await fetchJson(API + '/api/sms/preview/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        if (!startRes.jobId) throw new Error(startRes.error || 'Avvio fallito');
-        const jobId = startRes.jobId;
-        const poll = async () => {
-          const d = await fetchJson(API + '/api/sms/preview/status/' + jobId);
-          if (d.status === 'done') {
-            smsContactCount = d.total || 0;
-            status.textContent = smsContactCount + ' contatti corrispondono al criterio. Puoi procedere con l\'invio.';
-            btnRun.disabled = smsContactCount === 0;
-            return;
-          }
-          if (d.status === 'error') {
-            status.textContent = 'Errore: ' + (d.error || 'Errore sconosciuto');
-            btnRun.disabled = true;
-            return;
-          }
-          setTimeout(poll, 3000);
-        };
-        await poll();
+        if (evIds) baseParams.eventIds = evIds;
+        Object.assign(baseParams, getListDFilters(true));
+        let d;
+        if (isLocalhost()) {
+          const q = new URLSearchParams(baseParams).toString();
+          d = await fetchJson(API + '/api/sms/preview?' + q);
+        } else {
+          const startRes = await fetchJson(API + '/api/sms/preview/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseParams) });
+          if (!startRes.jobId) throw new Error(startRes.error || 'Avvio fallito');
+          const jobId = startRes.jobId;
+          d = await new Promise((resolve, reject) => {
+            const poll = async () => {
+              try {
+                const r = await fetchJson(API + '/api/sms/preview/status/' + jobId);
+                if (r.status === 'done') { resolve(r); return; }
+                if (r.status === 'error') { reject(new Error(r.error)); return; }
+                setTimeout(poll, 3000);
+              } catch (e) { reject(e); }
+            };
+            poll();
+          });
+        }
+        if (d.error) throw new Error(d.error);
+        smsContactCount = d.total || 0;
+        status.textContent = smsContactCount + ' contatti corrispondono al criterio. Puoi procedere con l\'invio.';
+        btnRun.disabled = smsContactCount === 0;
       } catch (e) {
         status.textContent = 'Errore: ' + e.message;
         btnRun.disabled = true;
@@ -841,7 +849,7 @@
       status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
       btnExport.disabled = btnSend.disabled = true;
       try {
-        const body = {
+        const baseParams = {
           campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
           limit: selectedEmailLimit,
@@ -849,28 +857,33 @@
         };
         const evIds = document.getElementById('emailEventIds').value.trim();
         const evFilter = document.getElementById('emailEventFilter').value.trim();
-        if (evIds) body.eventIds = evIds;
-        if (evFilter) body.eventFilter = evFilter;
-        Object.assign(body, getListDFilters(false));
-        const startRes = await fetchJson(API + '/api/email/preview/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        if (!startRes.jobId) throw new Error(startRes.error || 'Avvio fallito');
-        const jobId = startRes.jobId;
-        const poll = async () => {
-          const d = await fetchJson(API + '/api/email/preview/status/' + jobId);
-          if (d.status === 'done') {
-            emailContactCount = d.total || 0;
-            status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
-            btnExport.disabled = btnSend.disabled = emailContactCount === 0;
-            return;
-          }
-          if (d.status === 'error') {
-            status.textContent = 'Errore: ' + (d.error || 'Errore sconosciuto');
-            btnExport.disabled = btnSend.disabled = true;
-            return;
-          }
-          setTimeout(poll, 3000);
-        };
-        await poll();
+        if (evIds) baseParams.eventIds = evIds;
+        if (evFilter) baseParams.eventFilter = evFilter;
+        Object.assign(baseParams, getListDFilters(false));
+        let d;
+        if (isLocalhost()) {
+          const q = new URLSearchParams(baseParams).toString();
+          d = await fetchJson(API + '/api/email/preview?' + q);
+        } else {
+          const startRes = await fetchJson(API + '/api/email/preview/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseParams) });
+          if (!startRes.jobId) throw new Error(startRes.error || 'Avvio fallito');
+          const jobId = startRes.jobId;
+          d = await new Promise((resolve, reject) => {
+            const poll = async () => {
+              try {
+                const r = await fetchJson(API + '/api/email/preview/status/' + jobId);
+                if (r.status === 'done') { resolve(r); return; }
+                if (r.status === 'error') { reject(new Error(r.error)); return; }
+                setTimeout(poll, 3000);
+              } catch (e) { reject(e); }
+            };
+            poll();
+          });
+        }
+        if (d.error) throw new Error(d.error);
+        emailContactCount = d.total || 0;
+        status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
+        btnExport.disabled = btnSend.disabled = emailContactCount === 0;
       } catch (e) {
         status.textContent = 'Errore: ' + e.message;
         btnExport.disabled = btnSend.disabled = true;
