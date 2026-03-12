@@ -85,12 +85,21 @@ async function fetchAndParseCsv(csvUrl) {
     throw new Error('PLANYO_LISTD_CSV_URL non configurato o non valido');
   }
 
-  const res = await axios.get(csvUrl, {
-    timeout: 60000,
-    responseType: 'text',
-    headers: { 'Accept': 'text/csv, text/plain' },
-    validateStatus: (s) => s < 500
-  });
+  let res;
+  try {
+    res = await axios.get(csvUrl, {
+      timeout: 60000,
+      responseType: 'text',
+      headers: { 'Accept': 'text/csv, text/plain' },
+      validateStatus: (s) => s < 500
+    });
+  } catch (err) {
+    const status = err.response?.status;
+    const msg = status === 500
+      ? 'Il report CSV Planyo restituisce errore (HTTP 500). Il token shsec potrebbe essere scaduto: rigenera il link dal report Planyo e aggiorna PLANYO_LISTD_CSV_URL.'
+      : (status ? `Errore fetch CSV: HTTP ${status}. Verifica che l\'URL e il token shsec siano validi.` : (err.message || 'Errore di connessione al report CSV.'));
+    throw new Error(msg);
+  }
 
   if (res.status >= 400) {
     throw new Error(`Errore fetch CSV: HTTP ${res.status}. Verifica che l\'URL e il token shsec siano validi.`);

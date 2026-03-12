@@ -529,6 +529,19 @@
       return d.innerHTML;
     }
 
+    async function fetchJson(url, options) {
+      const r = await fetch(url, options);
+      const text = await r.text();
+      if (text.trim().startsWith('<')) {
+        throw new Error('Il server ha restituito una pagina di errore invece di dati. Verifica che PLANYO_LISTD_CSV_URL sia valido e che il token shsec non sia scaduto.');
+      }
+      try {
+        return JSON.parse(text);
+      } catch (_) {
+        throw new Error('Risposta non valida dal server. Riprova.');
+      }
+    }
+
     document.getElementById('btnRun').onclick = async () => {
       const btn = document.getElementById('btnRun');
       const btnAbort = document.getElementById('btnAbort');
@@ -786,8 +799,7 @@
         if (evIds) params.set('eventIds', evIds);
         const lf = getListDFilters(true);
         Object.keys(lf).forEach(k => params.set(k, lf[k]));
-        const r = await fetch(API + '/api/sms/preview?' + params);
-        const d = await r.json();
+        const d = await fetchJson(API + '/api/sms/preview?' + params);
         if (d.error) throw new Error(d.error);
         smsContactCount = d.total || 0;
         status.textContent = smsContactCount + ' contatti corrispondono al criterio. Puoi procedere con l\'invio.';
@@ -825,8 +837,7 @@
         if (evFilter) params.set('eventFilter', evFilter);
         const lf = getListDFilters(false);
         Object.keys(lf).forEach(k => params.set(k, lf[k]));
-        const r = await fetch(API + '/api/email/preview?' + params);
-        const d = await r.json();
+        const d = await fetchJson(API + '/api/email/preview?' + params);
         if (d.error) throw new Error(d.error);
         emailContactCount = d.total || 0;
         status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
