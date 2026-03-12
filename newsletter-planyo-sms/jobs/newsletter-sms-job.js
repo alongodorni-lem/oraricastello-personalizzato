@@ -3,6 +3,7 @@
  */
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const mailchimp = require('../services/mailchimp');
 const planyo = require('../services/planyo');
 const planyoReportCsv = require('../services/planyoReportCsv');
@@ -10,6 +11,50 @@ const smshosting = require('../services/smshosting');
 const config = require('../config/segments');
 
 const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-sms-sent.json');
+const SPAM_GUARD_FILE = path.join(__dirname, '..', 'data', 'newsletter-sms-spam-guard.json');
+const SPAM_GUARD_HOURS = 24;
+
+function msgHash(text) {
+  return crypto.createHash('md5').update((text || '').trim()).digest('hex').slice(0, 16);
+}
+
+function loadSpamGuard() {
+  try {
+    const data = fs.readFileSync(SPAM_GUARD_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch {
+    return {};
+  }
+}
+
+function saveSpamGuard(registry) {
+  const dir = path.dirname(SPAM_GUARD_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(SPAM_GUARD_FILE, JSON.stringify(registry, null, 2), 'utf8');
+}
+
+function wasSameMessageSentRecently(phone, text) {
+  const norm = smshosting.normalizePhone(phone);
+  if (!norm || norm.length < 9) return false;
+  const key = `${norm}_${msgHash(text)}`;
+  const reg = loadSpamGuard();
+  const ts = reg[key];
+  if (!ts) return false;
+  const ageMs = Date.now() - new Date(ts).getTime();
+  return ageMs < SPAM_GUARD_HOURS * 60 * 60 * 1000;
+}
+
+function markMessageSentForSpamGuard(phone, text) {
+  const norm = smshosting.normalizePhone(phone);
+  if (!norm || norm.length < 9) return;
+  const reg = loadSpamGuard();
+  const cutoff = Date.now() - SPAM_GUARD_HOURS * 60 * 60 * 1000;
+  for (const k of Object.keys(reg)) {
+    if (new Date(reg[k]).getTime() < cutoff) delete reg[k];
+  }
+  reg[`${norm}_${msgHash(text)}`] = new Date().toISOString();
+  saveSpamGuard(reg);
+}
 
 function loadSentRegistry() {
   try {
@@ -62,13 +107,16 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     let notInserted = 0;
     let duplicates = 0;
     let skipped = 0;
+    const textD = getText();
     for (const { email, telefono: phone } of withPhone) {
       if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
+      if (wasSameMessageSentRecently(phone, textD)) { skipped++; continue; }
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
-      const result = await smshosting.sendSms(phone, getText());
+      const result = await smshosting.sendSms(phone, textD);
       if (result.success) {
         markAsSent(trackId, email, 'D');
+        markMessageSentForSpamGuard(phone, textD);
         inserted++;
       } else {
         notInserted++;
@@ -185,6 +233,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         skipped++;
         continue;
       }
+      if (wasSameMessageSentRecently(phone, text)) {
+        skipped++;
+        continue;
+      }
       if (!phone || phone.length < 10) {
         skipped++;
         continue;
@@ -208,6 +260,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const result = await smshosting.sendSms(phone, text);
       if (result.success) {
         markAsSent(campaignId, email, segment);
+        markMessageSentForSpamGuard(phone, text);
         inserted++;
         if (inserted % 250 === 0) {
           console.log('[Job] Avanzamento:', inserted, 'SMS inseriti');
@@ -226,12 +279,14 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const text = getText('D');
     for (const { email, telefono: phone } of listD) {
       if (wasAlreadySent(campaignId, email, 'D')) { skipped++; continue; }
+      if (wasSameMessageSentRecently(phone, text)) { skipped++; continue; }
       if (!phone || phone.length < 10 || phone.includes('@')) { skipped++; continue; }
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(phone, text);
       if (result.success) {
         markAsSent(campaignId, email, 'D');
+        markMessageSentForSpamGuard(phone, text);
         inserted++;
       } else {
         notInserted++;

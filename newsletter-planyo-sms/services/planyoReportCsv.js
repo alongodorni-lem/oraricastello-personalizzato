@@ -171,7 +171,23 @@ function filterListDData(data, filters = {}) {
 function dedupeByEmail(data) {
   const seen = new Set();
   return data.filter((r) => {
-    const key = r.email.toLowerCase();
+    const key = (r.email || '').toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Deduplica per telefono (mantiene primo record, normalizza per confronto)
+ */
+function dedupeByPhone(data) {
+  const seen = new Set();
+  return data.filter((r) => {
+    const raw = (r.telefono || '').trim();
+    if (!raw || raw.length < 9) return true;
+    const key = planyo.normalizePhone(raw);
+    if (!key) return true;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -187,7 +203,8 @@ async function loadListDFromCsv(filters = {}) {
   const csvUrl = process.env.PLANYO_LISTD_CSV_URL;
   const raw = await fetchAndParseCsv(csvUrl);
   const filtered = filterListDData(raw, filters);
-  const deduped = dedupeByEmail(filtered);
+  let deduped = dedupeByEmail(filtered);
+  deduped = dedupeByPhone(deduped);
 
   return deduped.map((r) => ({
     nome: r.nome,
@@ -202,6 +219,8 @@ async function loadListDFromCsv(filters = {}) {
 module.exports = {
   fetchAndParseCsv,
   filterListDData,
+  dedupeByEmail,
+  dedupeByPhone,
   loadListDFromCsv,
   STATUS_OPTIONS
 };
