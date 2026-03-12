@@ -56,6 +56,10 @@ Nella dashboard Render → tuo servizio → **Environment** aggiungi:
 | `PLANYO_SITE_ID` | ID sito Planyo (es. 8895) |
 | `SMSHOSTING_AUTH_KEY` | Auth key Smshosting |
 | `SMSHOSTING_AUTH_SECRET` | Auth secret Smshosting |
+| `NEWSLETTER_SMS_USER` | Username per accesso interfaccia (Basic Auth) |
+| `NEWSLETTER_SMS_PASSWORD` | Password per accesso interfaccia |
+
+**Sicurezza**: se `NEWSLETTER_SMS_USER` e `NEWSLETTER_SMS_PASSWORD` sono impostati, l'interfaccia richiede login. Se non impostati, l'accesso è aperto (sconsigliato in produzione).
 
 ## 5. Deploy
 
@@ -70,4 +74,4 @@ L'interfaccia sarà disponibile su:
 
 - **Timeout**: gli invii lunghi (1700+ SMS) possono richiedere 15+ minuti. Il piano Starter supporta richieste lunghe.
 - **File di configurazione**: `data/ui-config.json` e `data/newsletter-sms-sent.json` vengono creati automaticamente. Su Render il filesystem è effimero: i dati si perdono al redeploy. Per persistenza usa un database o servizi esterni (opzionale).
-- **Sicurezza**: valuta l'aggiunta di autenticazione (es. Basic Auth o login) se l'interfaccia è pubblica.
+- **Sicurezza**: imposta `NEWSLETTER_SMS_USER` e `NEWSLETTER_SMS_PASSWORD` per proteggere l'interfaccia con Basic Auth.

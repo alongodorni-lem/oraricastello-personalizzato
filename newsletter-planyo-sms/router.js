@@ -19,6 +19,29 @@ const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
 
 router.use(express.json());
 
+// Basic Auth: se NEWSLETTER_SMS_USER e NEWSLETTER_SMS_PASSWORD sono impostati, richiede login
+const authUser = process.env.NEWSLETTER_SMS_USER;
+const authPass = process.env.NEWSLETTER_SMS_PASSWORD;
+const authRequired = !!(authUser && authPass);
+
+function basicAuthMiddleware(req, res, next) {
+  if (!authRequired) return next();
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Newsletter SMS"');
+    return res.status(401).json({ error: 'Autenticazione richiesta' });
+  }
+  try {
+    const b64 = auth.slice(6);
+    const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
+    if (user === authUser && pass === authPass) return next();
+  } catch (_) {}
+  res.setHeader('WWW-Authenticate', 'Basic realm="Newsletter SMS"');
+  return res.status(401).json({ error: 'Credenziali non valide' });
+}
+
+router.use(basicAuthMiddleware);
+
 let runAbortRequested = false;
 
 function loadUiConfig() {
