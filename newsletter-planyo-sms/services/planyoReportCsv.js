@@ -273,7 +273,7 @@ function dedupeByPhone(data) {
 /**
  * Carica Lista D da cache (se disponibile) o da CSV URL
  * @param {{ eventNameContains?: string, statuses?: string[] }} filters
- * @param {{ emailsInA?: Set<string>, targetResourceId?: number, targetMonths?: number }} excludeListA - esclude evento target ultimi N mesi
+ * @param {{ emailsInA?: Set<string> }} excludeListA - esclude email in Lista A
  * @returns {Promise<Array<{ nome, cognome, email, telefono, segment: 'D' }>>}
  */
 async function loadListDFromCsv(filters = {}, excludeListA = {}) {

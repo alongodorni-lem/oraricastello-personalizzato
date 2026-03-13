@@ -1,9 +1,9 @@
 /**
  * Configurazione segmenti per SMS promozionali
- * Lista A: prenotati evento target ultimi 6 mesi (API Planyo)
- * Lista B: prenotazioni ultimi 18 mesi esclusi evento target ultimi 6 mesi (API Planyo)
- * Lista C: click newsletter esclusi evento target ultimi 6 mesi (Mailchimp)
- * Lista D: CSV Planyo esclusi evento target ultimi 6 mesi
+ * Lista A: tutti i prenotati evento target (start_date > oggi, hanno già prenotato - esclusi da promozione)
+ * Lista B: prenotazioni ultimi 18 mesi esclusi Lista A (API Planyo)
+ * Lista C: click newsletter esclusi Lista A (Mailchimp)
+ * Lista D: CSV Planyo esclusi Lista A
  */
 module.exports = {
   // Numero admin: riceve un SMS di conferma a ogni campagna inviata
@@ -11,8 +11,6 @@ module.exports = {
   // Risorsa Planyo dell'evento target (es. Castello delle Sorprese 2026)
   targetResourceId: 236955,
 
-  // Mesi lookback evento target (Lista A)
-  targetMonthsLookback: parseInt(process.env.PLANYO_TARGET_MONTHS, 10) || 6,
   // Mesi lookback per Lista B (prenotazioni altri eventi)
   monthsLookback: parseInt(process.env.PLANYO_MONTHS_LOOKBACK, 10) || 18,
 

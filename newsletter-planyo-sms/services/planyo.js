@@ -124,7 +124,6 @@ async function loadReservationsByEmail(monthsLookback = 18) {
       entry.reservations.push({
         resource_id: resourceId,
         start_time: res.start_time,
-        creation_time: res.creation_time,
         resource_name: res.resource_name || res.resource?.name || res.name
       });
       if (phone && !entry.phone) entry.phone = phone;
@@ -166,20 +165,28 @@ function segmentEmail(reservationsByEmail, email, targetResourceId) {
 }
 
 /**
- * Costruisce Lista A (evento target, creation_date ultimi N mesi) e Lista B (altri eventi 18 mesi, esclusi A).
- * Operazione prioritaria: creare sempre Lista A per prima.
- * Lista A: resource_id = target AND creation_time negli ultimi N mesi.
+ * Converte start_time in Unix secondi (API Planyo: secondi o millisecondi).
+ */
+function toStartTimestamp(val) {
+  if (val == null) return null;
+  if (typeof val === 'number') return val > 1e12 ? Math.floor(val / 1000) : val;
+  if (typeof val === 'string') {
+    const ms = new Date(val).getTime();
+    return isNaN(ms) ? null : Math.floor(ms / 1000);
+  }
+  return null;
+}
+
+/**
+ * Costruisce Lista A (prenotati evento target con data futura) e Lista B (altri eventi 18 mesi, esclusi A).
+ * Lista A = chi ha prenotato evento target con start_date > oggi (escludiamo da promozione: hanno già prenotato).
+ * Lista B = prenotazioni ultimi 18 mesi, esclusi chi è in Lista A.
  * @param {Map} reservationsByEmail - output loadReservationsByEmail(18)
  * @param {number} targetResourceId
- * @param {number} targetMonths - mesi per evento target (es. 6)
  * @returns {{ listA: Array<{email, phone}>, listB: Array<{email, phone}>, emailsInA: Set<string> }}
  */
-function buildListAAndB(reservationsByEmail, targetResourceId, targetMonths) {
-  const now = Date.now();
-  const cutoffDate = new Date(now);
-  cutoffDate.setMonth(cutoffDate.getMonth() - targetMonths);
-  const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000);
-
+function buildListAAndB(reservationsByEmail, targetResourceId) {
+  const nowTimestamp = Math.floor(Date.now() / 1000);
   const targetIdNum = Number(targetResourceId);
   const listA = [];
   const listB = [];
@@ -189,12 +196,13 @@ function buildListAAndB(reservationsByEmail, targetResourceId, targetMonths) {
     const phone = entry?.phone || '';
     const reservations = entry?.reservations || [];
 
-    const hasTargetInPeriod = reservations.some(
-      (r) => (Number(r.resource_id) === targetIdNum || String(r.resource_id) === String(targetResourceId)) &&
-        r.creation_time != null && r.creation_time >= cutoffTimestamp
-    );
+    const hasTargetFuture = reservations.some((r) => {
+      if (Number(r.resource_id) !== targetIdNum && String(r.resource_id) !== String(targetResourceId)) return false;
+      const startSec = toStartTimestamp(r.start_time);
+      return startSec != null && startSec > nowTimestamp;
+    });
 
-    if (hasTargetInPeriod) {
+    if (hasTargetFuture) {
       listA.push({ email, phone });
       emailsInA.add(email.toLowerCase());
     } else if (reservations.length > 0) {

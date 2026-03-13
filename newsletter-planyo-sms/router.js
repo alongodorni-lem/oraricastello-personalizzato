@@ -105,6 +105,18 @@ router.get('/', (req, res) => {
 // Static files (CSS, etc. se presenti)
 router.use(express.static(PUBLIC_PATH));
 
+// Preload Planyo (Lista A) in background - avviato al caricamento pagina per velocizzare Calcola contatti
+router.get('/api/preload-planyo', (req, res) => {
+  res.json({ success: true, message: 'Preload Lista A avviato' });
+  if (process.env.PLANYO_API_KEY) {
+    const planyo = require('./services/planyo');
+    const config = require('./config/segments');
+    planyo.loadReservationsByEmail(config.monthsLookback).catch((err) => {
+      console.warn('[Preload] Planyo:', err.message);
+    });
+  }
+});
+
 // API
 router.get('/api/config', (req, res) => {
   try {
