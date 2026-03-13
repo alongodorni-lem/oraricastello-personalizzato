@@ -18,7 +18,7 @@ async function buildEmailListData(campaignId, options = {}) {
   const targetResourceId = overrideId != null ? Number(overrideId) : config.targetResourceId;
   const months = monthsLookback ?? config.monthsLookback;
 
-  const emails = await mailchimp.getCampaignEngagedEmails(campaignId);
+  const emails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
   if (emails.length === 0) return [];
 
   const listId = await mailchimp.getCampaignListId(campaignId);
@@ -26,7 +26,7 @@ async function buildEmailListData(campaignId, options = {}) {
 
   const [reservationsByEmail, memberDetails] = await Promise.all([
     planyo.loadReservationsByEmail(months),
-    listId ? mailchimp.getMemberDetailsForEmails(listId, emailsSet) : Promise.resolve(new Map())
+    mailchimp.getMemberDetailsForEmailsWithCache(emailsSet, listId)
   ]);
 
   const result = [];

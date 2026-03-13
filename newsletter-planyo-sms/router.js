@@ -15,6 +15,7 @@ const emailService = require('./services/emailService');
 const { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview } = require('./jobs/newsletter-sms-job');
 const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock, mergeListDFromCsv } = require('./jobs/newsletter-email-job');
 const planyoReportCsv = require('./services/planyoReportCsv');
+const dataCache = require('./services/dataCache');
 const config = require('./config/segments');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
@@ -109,7 +110,9 @@ router.get('/api/config', (req, res) => {
   try {
     const cfg = loadUiConfig();
     const targetResourceId = cfg.targetResourceId ?? config.targetResourceId ?? 236955;
-    res.json({ success: true, targetResourceId });
+    const cacheStatus = dataCache.getCacheStatus();
+    const ready = dataCache.isReadyForOperations();
+    res.json({ success: true, targetResourceId, cacheStatus, ready });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -133,7 +136,7 @@ router.post('/api/config', (req, res) => {
 
 router.get('/api/campaigns', async (req, res) => {
   try {
-    const count = parseInt(req.query.last || '5', 10) || 5;
+    const count = parseInt(req.query.last || '3', 10) || 3;
     const campaigns = await mailchimp.getLastSentCampaigns(count);
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -141,10 +144,31 @@ router.get('/api/campaigns', async (req, res) => {
   }
 });
 
+router.post('/api/update-newsletter', async (req, res) => {
+  res.setTimeout(5 * 60 * 1000);
+  try {
+    const result = await dataCache.runUpdateNewsletter();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/api/update-prenotazioni', async (req, res) => {
+  res.setTimeout(5 * 60 * 1000);
+  try {
+    const result = await dataCache.runUpdatePrenotazioni();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/api/run', async (req, res) => {
+  if (!requireCacheReady(res)) return;
   res.setTimeout(30 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = body_;
+  const { campaignIds, campaignId, lastN = 3, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = body_;
   const listDFilters = parseListDFilters(body_);
 
   const cap = captureLogs(async () => {
@@ -156,7 +180,7 @@ router.post('/api/run', async (req, res) => {
     if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
       ids = ['list-d-only'];
     } else if (campaignIds && Array.isArray(campaignIds) && campaignIds.length > 0) {
-      ids = campaignIds.slice(0, 5);
+      ids = campaignIds.slice(0, 3);
     } else if (campaignId) {
       ids = [campaignId];
     } else {
@@ -214,7 +238,8 @@ router.post('/api/test', async (req, res) => {
 });
 
 router.post('/api/check-phone', async (req, res) => {
-  const { phone, campaignId, lastN = 2, targetResourceId } = req.body || {};
+  if (!requireCacheReady(res)) return;
+  const { phone, campaignId, lastN = 3, targetResourceId } = req.body || {};
   if (!phone || !String(phone).replace(/\D/g, '').length) {
     return res.status(400).json({ success: false, error: 'Numero telefono richiesto' });
   }
@@ -271,6 +296,18 @@ function parseListDFilters(query) {
   return { eventNameContains, eventIds, statuses };
 }
 
+function requireCacheReady(res) {
+  if (!dataCache.isReadyForOperations()) {
+    res.status(400).json({
+      success: false,
+      error: 'Aggiorna prima Newsletter e Prenotazioni per procedere.',
+      code: 'CACHE_NOT_READY'
+    });
+    return false;
+  }
+  return true;
+}
+
 const previewJobs = new Map();
 const JOB_TTL_MS = 15 * 60 * 1000;
 
@@ -286,6 +323,7 @@ function cleanupOldJobs() {
 }
 
 router.post('/api/sms/preview/start', (req, res) => {
+  if (!requireCacheReady(res)) return;
   try {
     const q = req.body || req.query || {};
     const campaignId = q.campaignId;
@@ -344,6 +382,7 @@ router.get('/api/sms/preview/status/:jobId', (req, res) => {
 });
 
 router.get('/api/sms/preview', async (req, res) => {
+  if (!requireCacheReady(res)) return;
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
@@ -370,6 +409,7 @@ router.get('/api/sms/preview', async (req, res) => {
 });
 
 router.post('/api/email/preview/start', (req, res) => {
+  if (!requireCacheReady(res)) return;
   try {
     const q = req.body || req.query || {};
     const campaignId = q.campaignId;
@@ -434,6 +474,7 @@ router.get('/api/email/preview/status/:jobId', (req, res) => {
 });
 
 router.get('/api/email/export', async (req, res) => {
+  if (!requireCacheReady(res)) return;
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
@@ -470,6 +511,7 @@ router.get('/api/email/export', async (req, res) => {
 });
 
 router.get('/api/email/preview', async (req, res) => {
+  if (!requireCacheReady(res)) return;
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
@@ -568,6 +610,7 @@ router.post('/api/email/test', async (req, res) => {
 let emailAbortRequested = false;
 
 router.post('/api/email/send', async (req, res) => {
+  if (!requireCacheReady(res)) return;
   res.setTimeout(60 * 60 * 1000);
   const body_ = req.body || {};
   const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody } = body_;

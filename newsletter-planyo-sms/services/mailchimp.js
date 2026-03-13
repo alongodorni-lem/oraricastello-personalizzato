@@ -303,14 +303,75 @@ async function getMemberDetailsForEmails(listId, emailsSet) {
   return detailsMap;
 }
 
+/**
+ * Ottiene email engaged per campagna: usa cache se disponibile, altrimenti API
+ * @param {string} campaignId
+ * @returns {Promise<string[]>}
+ */
+async function getCampaignEngagedEmailsWithCache(campaignId) {
+  try {
+    const dataCache = require('./dataCache');
+    const cached = dataCache.loadMailchimpCache();
+    if (cached?.campaignEngagements?.[campaignId]) {
+      return cached.campaignEngagements[campaignId];
+    }
+  } catch (_) {}
+  return getCampaignEngagedEmails(campaignId);
+}
+
+/**
+ * Ottiene mappa email -> { firstName, lastName, phone }: usa cache se disponibile, altrimenti API
+ * @param {Set<string>} emailsSet
+ * @param {string} [listId] - se cache manca, usa API con listId
+ * @returns {Promise<Map<string, { firstName: string, lastName: string, phone: string }>>}
+ */
+async function getMemberDetailsForEmailsWithCache(emailsSet, listId) {
+  try {
+    const dataCache = require('./dataCache');
+    const cached = dataCache.loadMailchimpCache();
+    if (cached?.contacts) {
+      const map = new Map();
+      for (const email of emailsSet) {
+        const key = email.toLowerCase().trim();
+        const c = cached.contacts[key];
+        if (c) {
+          map.set(key, {
+            firstName: c.nome || '',
+            lastName: c.cognome || '',
+            phone: c.cellulare || ''
+          });
+        }
+      }
+      return map;
+    }
+  } catch (_) {}
+  if (listId) return getMemberDetailsForEmails(listId, emailsSet);
+  return new Map();
+}
+
+/**
+ * Ottiene mappa email -> phone: usa cache se disponibile, altrimenti API
+ */
+async function getPhonesForEmailsWithCache(listId, emailsSet) {
+  const details = await getMemberDetailsForEmailsWithCache(emailsSet, listId);
+  const map = new Map();
+  for (const [email, d] of details) {
+    if (d.phone) map.set(email, d.phone);
+  }
+  return map;
+}
+
 module.exports = {
   getCampaignOpenEmails,
   getCampaignClickEmails,
   getCampaignEngagedEmails,
+  getCampaignEngagedEmailsWithCache,
   getLastSentCampaigns,
   getCampaignListId,
   getPhonesForEmails,
+  getPhonesForEmailsWithCache,
   getMemberDetailsForEmails,
+  getMemberDetailsForEmailsWithCache,
   getBaseUrl,
   getDatacenter
 };

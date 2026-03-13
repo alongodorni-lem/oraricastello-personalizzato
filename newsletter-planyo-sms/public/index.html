@@ -249,11 +249,24 @@
       <h2>Invio campagna</h2>
       <p class="hint" style="margin-bottom: 1rem;">Invia SMS ai contatti che hanno aperto/cliccato la newsletter, segmentati per prenotazioni.</p>
       <div class="form-group">
-        <label>Campagne (seleziona fino a 5, predefinite: ultime 2 inviate)</label>
+        <label>Campagne (seleziona fino a 3, predefinite: ultime 3 inviate)</label>
         <div id="campaignList" class="campaign-list">
           <span class="hint">Caricamento...</span>
         </div>
-        <p class="hint" id="campaignHint">Seleziona una o più campagne (max 5)</p>
+        <p class="hint" id="campaignHint">Seleziona una o più campagne (max 3)</p>
+      </div>
+      <div class="form-group">
+        <div class="row" style="gap: 1rem; flex-wrap: wrap;">
+          <div>
+            <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">AGGIORNA NEWSLETTER</button>
+            <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">Newsletter da aggiornare</p>
+          </div>
+          <div>
+            <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioni">AGGIORNA PRENOTAZIONI</button>
+            <p class="hint" id="prenotazioniStatus" style="margin-top: 0.5rem;">Prenotazioni da aggiornare</p>
+          </div>
+        </div>
+        <p class="hint" id="cacheReadyHint" style="margin-top: 0.75rem; color: var(--danger); font-weight: 500;">Aggiorna Newsletter e Prenotazioni per abilitare le altre opzioni.</p>
       </div>
       <div class="form-group">
         <label>Lista A – Evento target (risorsa Planyo)</label>
@@ -474,7 +487,7 @@
       const list = document.getElementById('campaignList');
       const hint = document.getElementById('campaignHint');
       try {
-        const r = await fetch(API + '/api/campaigns?last=5');
+        const r = await fetch(API + '/api/campaigns?last=3');
         const d = await r.json();
         list.innerHTML = '';
         if (d.campaigns && d.campaigns.length) {
@@ -489,15 +502,15 @@
             if (i < 2) cb.checked = true;
             cb.onchange = () => {
               const checked = list.querySelectorAll('input[name="campaign"]:checked');
-              if (checked.length > 5) cb.checked = false;
-              hint.textContent = checked.length >= 5 ? 'Massimo 5 campagne selezionate' : 'Seleziona una o più campagne (max 5)';
+              if (checked.length > 3) cb.checked = false;
+              hint.textContent = checked.length >= 3 ? 'Massimo 3 campagne selezionate' : 'Seleziona una o più campagne (max 3)';
               if (typeof resetSmsCalc === 'function') resetSmsCalc();
             };
             lab.appendChild(cb);
             lab.appendChild(document.createTextNode(` ${(c.subject || c.id).slice(0, 55)}${(c.subject || c.id).length > 55 ? '…' : ''} (${c.send_time ? new Date(c.send_time).toLocaleDateString('it') : ''})`));
             list.appendChild(lab);
           });
-          hint.textContent = 'Predefinite: ultime 2. Seleziona fino a 5 campagne.';
+          hint.textContent = 'Predefinite: ultime 3. Seleziona fino a 3 campagne.';
         } else {
           list.innerHTML = '<span class="hint">Nessuna campagna disponibile</span>';
         }
@@ -671,6 +684,53 @@
       btn.disabled = false;
     };
 
+    function updateCacheStatusDisplay(cacheStatus) {
+      const ns = document.getElementById('newsletterStatus');
+      const ps = document.getElementById('prenotazioniStatus');
+      const hint = document.getElementById('cacheReadyHint');
+
+      if (cacheStatus?.mailchimpUpdatedAt) {
+        ns.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(cacheStatus.mailchimpUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+        ns.style.color = 'var(--success)';
+      } else {
+        ns.textContent = 'Newsletter da aggiornare';
+        ns.style.color = 'var(--danger)';
+      }
+
+      if (cacheStatus?.planyoUpdatedAt) {
+        ps.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(cacheStatus.planyoUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+        ps.style.color = 'var(--success)';
+      } else {
+        ps.textContent = 'Prenotazioni da aggiornare';
+        ps.style.color = 'var(--danger)';
+      }
+
+      const ready = cacheStatus && cacheStatus.mailchimpUpdatedAt && cacheStatus.planyoUpdatedAt;
+      if (ready) {
+        hint.textContent = 'Dati pronti. Puoi procedere con calcolo contatti, invio SMS, invio Newsletter e scaricamento CSV.';
+        hint.style.color = 'var(--success)';
+      } else {
+        hint.textContent = 'Aggiorna Newsletter e Prenotazioni per abilitare le altre opzioni.';
+        hint.style.color = 'var(--danger)';
+      }
+      updateCacheReadyState(ready);
+    }
+
+    function updateCacheReadyState(ready) {
+      ['btnSmsCalc', 'btnEmailCalc', 'btnCheck'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !ready;
+      });
+      if (!ready) {
+        ['btnRun', 'btnExportCsv', 'btnSendEmail'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = true;
+        });
+        if (typeof resetSmsCalc === 'function') resetSmsCalc();
+        if (typeof resetEmailCalc === 'function') resetEmailCalc();
+      }
+    }
+
     async function loadConfig() {
       try {
         const r = await fetch(API + '/api/config');
@@ -681,8 +741,59 @@
         const emailEv = document.getElementById('emailEventIds');
         if (!smsEv.value.trim()) smsEv.value = tid;
         if (!emailEv.value.trim()) emailEv.value = tid;
+        updateCacheStatusDisplay(d.cacheStatus);
       } catch (e) { /* use default */ }
     }
+
+    document.getElementById('btnUpdateNewsletter').onclick = async () => {
+      const btn = document.getElementById('btnUpdateNewsletter');
+      const el = document.getElementById('newsletterStatus');
+      btn.disabled = true;
+      el.textContent = 'Aggiornamento in corso...';
+      el.style.color = '';
+      try {
+        const r = await fetch(API + '/api/update-newsletter', { method: 'POST' });
+        const d = await r.json();
+        if (d.success) {
+          el.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+          el.style.color = 'var(--success)';
+        } else {
+          el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
+          el.style.color = 'var(--danger)';
+        }
+        const cfg = await fetch(API + '/api/config').then(x => x.json());
+        updateCacheStatusDisplay(cfg.cacheStatus);
+      } catch (e) {
+        el.textContent = 'Errore: ' + e.message;
+        el.style.color = 'var(--danger)';
+      }
+      btn.disabled = false;
+    };
+
+    document.getElementById('btnUpdatePrenotazioni').onclick = async () => {
+      const btn = document.getElementById('btnUpdatePrenotazioni');
+      const el = document.getElementById('prenotazioniStatus');
+      btn.disabled = true;
+      el.textContent = 'Aggiornamento in corso...';
+      el.style.color = '';
+      try {
+        const r = await fetch(API + '/api/update-prenotazioni', { method: 'POST' });
+        const d = await r.json();
+        if (d.success) {
+          el.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+          el.style.color = 'var(--success)';
+        } else {
+          el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
+          el.style.color = 'var(--danger)';
+        }
+        const cfg = await fetch(API + '/api/config').then(x => x.json());
+        updateCacheStatusDisplay(cfg.cacheStatus);
+      } catch (e) {
+        el.textContent = 'Errore: ' + e.message;
+        el.style.color = 'var(--danger)';
+      }
+      btn.disabled = false;
+    };
 
     document.getElementById('btnEditTarget').onclick = async () => {
       const input = document.getElementById('targetResourceId');
@@ -926,7 +1037,7 @@
     async function loadEmailCampaigns() {
       const sel = document.getElementById('emailCampaignId');
       try {
-        const r = await fetch(API + '/api/campaigns?last=5');
+        const r = await fetch(API + '/api/campaigns?last=3');
         const d = await r.json();
         sel.innerHTML = '';
         if (d.campaigns && d.campaigns.length) {

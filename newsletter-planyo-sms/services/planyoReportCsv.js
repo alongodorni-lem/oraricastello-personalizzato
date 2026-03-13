@@ -54,7 +54,8 @@ const COL_ALIASES = {
   email: ['email', 'e-mail', 'mail', 'e-mail address', 'email address', 'client email', 'user email', 'contact email', 'posta', 'correo'],
   telefono: ['phone', 'telefono', 'tel', 'mobile', 'cellulare'],
   evento: ['risorsa', 'resource name', 'nome risorsa', 'evento', 'nome evento'],
-  stato: ['status', 'stato', 'state', 'reservation status', 'stato prenotazione']
+  stato: ['status', 'stato', 'state', 'reservation status', 'stato prenotazione'],
+  creazione: ['creazione', 'creation', 'created', 'data creazione', 'creation date', 'insert date', 'insert_date']
 };
 
 function findColumnIndex(headers, aliases) {
@@ -166,6 +167,7 @@ async function fetchAndParseCsv(csvUrl) {
   const idxTelefono = findColumnIndex(headers, COL_ALIASES.telefono);
   const idxEvento = findColumnIndex(headers, COL_ALIASES.evento);
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
+  const idxCreazione = findColumnIndex(headers, COL_ALIASES.creazione);
 
   if (idxEmail < 0) {
     const firstLine = rows[0]?.slice(0, 3).join(', ') || '(nessuna intestazione)';
@@ -185,7 +187,8 @@ async function fetchAndParseCsv(csvUrl) {
       email: email.toLowerCase(),
       telefono: get(idxTelefono),
       eventoPrenotato: get(idxEvento),
-      stato: get(idxStato)
+      stato: get(idxStato),
+      creazione: get(idxCreazione)
     });
   }
 
@@ -252,13 +255,26 @@ function dedupeByPhone(data) {
 }
 
 /**
- * Carica Lista D da CSV con filtri
+ * Carica Lista D da cache (se disponibile) o da CSV URL
  * @param {{ eventNameContains?: string, statuses?: string[] }} filters
  * @returns {Promise<Array<{ nome, cognome, email, telefono, segment: 'D' }>>}
  */
 async function loadListDFromCsv(filters = {}) {
-  const csvUrl = process.env.PLANYO_LISTD_CSV_URL;
-  const raw = await fetchAndParseCsv(csvUrl);
+  let raw;
+  try {
+    const dataCache = require('./dataCache');
+    const cached = dataCache.loadPlanyoCache();
+    if (cached?.contacts?.length) {
+      raw = cached.contacts;
+    } else {
+      const csvUrl = process.env.PLANYO_LISTD_CSV_URL;
+      raw = await fetchAndParseCsv(csvUrl);
+    }
+  } catch (_) {
+    const csvUrl = process.env.PLANYO_LISTD_CSV_URL;
+    raw = await fetchAndParseCsv(csvUrl);
+  }
+
   const filtered = filterListDData(raw, filters);
   let deduped = dedupeByEmail(filtered);
   deduped = dedupeByPhone(deduped);

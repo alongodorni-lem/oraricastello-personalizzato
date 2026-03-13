@@ -141,7 +141,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   let emails;
   try {
     console.log('[Job] Recupero open/click da Mailchimp...');
-    emails = await mailchimp.getCampaignEngagedEmails(campaignId);
+    emails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
     console.log('[Job] Email da Mailchimp (open/click):', emails.length);
   } catch (err) {
     console.error('[Job] ERRORE Mailchimp:', err.message);
@@ -160,7 +160,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const listId = await mailchimp.getCampaignListId(campaignId);
     if (listId) {
       console.log('[Job] Recupero telefoni da Mailchimp (merge_fields)...');
-      mailchimpPhones = await mailchimp.getPhonesForEmails(listId, new Set(emails.map((e) => e.toLowerCase())));
+      mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(emails.map((e) => e.toLowerCase())));
       console.log('[Job] Telefoni trovati in Mailchimp:', mailchimpPhones.size);
     }
   } catch (err) {
@@ -331,15 +331,13 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
   const searchDigits = String(phone || '').replace(/\D/g, '');
   if (searchDigits.length < 9) return { found: false };
 
-  const emails = await mailchimp.getCampaignEngagedEmails(campaignId);
+  const emails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
   if (emails.length === 0) return { found: false };
 
   let mailchimpPhones = new Map();
   try {
     const listId = await mailchimp.getCampaignListId(campaignId);
-    if (listId) {
-      mailchimpPhones = await mailchimp.getPhonesForEmails(listId, new Set(emails.map((e) => e.toLowerCase())));
-    }
+    mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(emails.map((e) => e.toLowerCase())));
   } catch {
     /* ignore */
   }
@@ -385,12 +383,12 @@ async function getSmsPreview(campaignId, options = {}) {
     return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count } };
   }
 
-  const emails = await mailchimp.getCampaignEngagedEmails(campaignId);
+  const emails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
   if (emails.length === 0) return { total: 0, bySegment: { A: 0, B: 0, C: 0, D: 0 } };
 
   const listId = await mailchimp.getCampaignListId(campaignId);
   const [mailchimpPhones, reservationsByEmail] = await Promise.all([
-    listId ? mailchimp.getPhonesForEmails(listId, new Set(emails.map((e) => e.toLowerCase()))).catch(() => new Map()) : Promise.resolve(new Map()),
+    mailchimp.getPhonesForEmailsWithCache(listId, new Set(emails.map((e) => e.toLowerCase()))).catch(() => new Map()),
     planyo.loadReservationsByEmail(monthsLookback)
   ]);
   const eventIdsNum = eventIds && Array.isArray(eventIds) ? eventIds.map(Number).filter((n) => !isNaN(n)) : null;
