@@ -124,6 +124,7 @@ async function loadReservationsByEmail(monthsLookback = 18) {
       entry.reservations.push({
         resource_id: resourceId,
         start_time: res.start_time,
+        creation_time: res.creation_time,
         resource_name: res.resource_name || res.resource?.name || res.name
       });
       if (phone && !entry.phone) entry.phone = phone;
@@ -142,11 +143,7 @@ async function loadReservationsByEmail(monthsLookback = 18) {
 }
 
 /**
- * Classifica un'email in lista A, B o C in base alle prenotazioni
- * @param {Map} reservationsByEmail - output di loadReservationsByEmail
- * @param {string} email
- * @param {number} targetResourceId
- * @returns {{ segment: 'A'|'B'|'C', phone: string, lastResource?: string, firstName?: string, lastName?: string }}
+ * Classifica un'email in lista A, B o C in base alle prenotazioni (legacy, usare buildListAAndB)
  */
 function segmentEmail(reservationsByEmail, email, targetResourceId) {
   const entry = reservationsByEmail.get(email.toLowerCase().trim());
@@ -168,10 +165,51 @@ function segmentEmail(reservationsByEmail, email, targetResourceId) {
   return { segment: 'B', phone, lastResource: lastRes?.resource_name, firstName, lastName };
 }
 
+/**
+ * Costruisce Lista A (evento target, creation_date ultimi N mesi) e Lista B (altri eventi 18 mesi, esclusi A).
+ * Operazione prioritaria: creare sempre Lista A per prima.
+ * Lista A: resource_id = target AND creation_time negli ultimi N mesi.
+ * @param {Map} reservationsByEmail - output loadReservationsByEmail(18)
+ * @param {number} targetResourceId
+ * @param {number} targetMonths - mesi per evento target (es. 6)
+ * @returns {{ listA: Array<{email, phone}>, listB: Array<{email, phone}>, emailsInA: Set<string> }}
+ */
+function buildListAAndB(reservationsByEmail, targetResourceId, targetMonths) {
+  const now = Date.now();
+  const cutoffDate = new Date(now);
+  cutoffDate.setMonth(cutoffDate.getMonth() - targetMonths);
+  const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000);
+
+  const targetIdNum = Number(targetResourceId);
+  const listA = [];
+  const listB = [];
+  const emailsInA = new Set();
+
+  for (const [email, entry] of reservationsByEmail) {
+    const phone = entry?.phone || '';
+    const reservations = entry?.reservations || [];
+
+    const hasTargetInPeriod = reservations.some(
+      (r) => (Number(r.resource_id) === targetIdNum || String(r.resource_id) === String(targetResourceId)) &&
+        r.creation_time != null && r.creation_time >= cutoffTimestamp
+    );
+
+    if (hasTargetInPeriod) {
+      listA.push({ email, phone });
+      emailsInA.add(email.toLowerCase());
+    } else if (reservations.length > 0) {
+      listB.push({ email, phone });
+    }
+  }
+
+  return { listA, listB, emailsInA };
+}
+
 module.exports = {
   callPlanyoAPI,
   loadReservationsByEmail,
   segmentEmail,
+  buildListAAndB,
   extractPhone,
   normalizePhone
 };

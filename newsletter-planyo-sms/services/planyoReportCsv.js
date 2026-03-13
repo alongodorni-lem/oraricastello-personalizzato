@@ -46,7 +46,7 @@ function normalizeStatusToFilter(rawStatus) {
 }
 
 /**
- * Colonne usate: Nome, Cognome, Email, Telefono (risultato) + Risorsa, Stato (solo per filtri)
+ * Colonne usate: Nome, Cognome, Email, Telefono (risultato) + Risorsa, Stato, IDrisorsa, Creazione
  */
 const COL_ALIASES = {
   nome: ['first name', 'firstname', 'nome', 'name', 'prenome'],
@@ -54,6 +54,7 @@ const COL_ALIASES = {
   email: ['email', 'e-mail', 'mail', 'e-mail address', 'email address', 'client email', 'user email', 'contact email', 'posta', 'correo'],
   telefono: ['phone', 'telefono', 'tel', 'mobile', 'cellulare'],
   evento: ['risorsa', 'resource name', 'nome risorsa', 'evento', 'nome evento'],
+  idRisorsa: ['idrisorsa', 'id risorsa', 'resource id', 'resource_id', 'id_risorsa'],
   stato: ['status', 'stato', 'state', 'reservation status', 'stato prenotazione'],
   creazione: ['creazione', 'creation', 'created', 'data creazione', 'creation date', 'insert date', 'insert_date']
 };
@@ -166,6 +167,7 @@ async function fetchAndParseCsv(csvUrl) {
   const idxEmail = findColumnIndex(headers, COL_ALIASES.email);
   const idxTelefono = findColumnIndex(headers, COL_ALIASES.telefono);
   const idxEvento = findColumnIndex(headers, COL_ALIASES.evento);
+  const idxIdRisorsa = findColumnIndex(headers, COL_ALIASES.idRisorsa);
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
   const idxCreazione = findColumnIndex(headers, COL_ALIASES.creazione);
 
@@ -187,6 +189,7 @@ async function fetchAndParseCsv(csvUrl) {
       email: email.toLowerCase(),
       telefono: get(idxTelefono),
       eventoPrenotato: get(idxEvento),
+      idRisorsa: get(idxIdRisorsa),
       stato: get(idxStato),
       creazione: get(idxCreazione)
     });
@@ -226,6 +229,19 @@ function filterListDData(data, filters = {}) {
 }
 
 /**
+ * Esclude da Lista D i record la cui email è in Lista A.
+ * Lista D = TUTTI i record CSV esclusi quelli con email in Lista A.
+ * @param {Array} data
+ * @param {{ emailsInA?: Set<string> }} excludeOptions
+ */
+function excludeListAFromListD(data, excludeOptions = {}) {
+  const { emailsInA = new Set() } = excludeOptions;
+  if (emailsInA.size === 0) return data;
+
+  return data.filter((r) => !emailsInA.has((r.email || '').toLowerCase()));
+}
+
+/**
  * Deduplica per email (mantiene primo record)
  */
 function dedupeByEmail(data) {
@@ -257,9 +273,10 @@ function dedupeByPhone(data) {
 /**
  * Carica Lista D da cache (se disponibile) o da CSV URL
  * @param {{ eventNameContains?: string, statuses?: string[] }} filters
+ * @param {{ emailsInA?: Set<string>, targetResourceId?: number, targetMonths?: number }} excludeListA - esclude evento target ultimi N mesi
  * @returns {Promise<Array<{ nome, cognome, email, telefono, segment: 'D' }>>}
  */
-async function loadListDFromCsv(filters = {}) {
+async function loadListDFromCsv(filters = {}, excludeListA = {}) {
   let raw;
   try {
     const dataCache = require('./dataCache');
@@ -275,7 +292,8 @@ async function loadListDFromCsv(filters = {}) {
     raw = await fetchAndParseCsv(csvUrl);
   }
 
-  const filtered = filterListDData(raw, filters);
+  let filtered = filterListDData(raw, filters);
+  filtered = excludeListAFromListD(filtered, excludeListA);
   let deduped = dedupeByEmail(filtered);
   deduped = dedupeByPhone(deduped);
 
