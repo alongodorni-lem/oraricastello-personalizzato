@@ -56,6 +56,8 @@ Nella dashboard Render → tuo servizio → **Environment** aggiungi:
 | `PLANYO_SITE_ID` | ID sito Planyo (es. 8895) |
 | `SMSHOSTING_AUTH_KEY` | Auth key Smshosting |
 | `SMSHOSTING_AUTH_SECRET` | Auth secret Smshosting |
+| `SMSHOSTING_USE_ALIAS` | `true` per mittente alfanumerico (alias) |
+| `SMSHOSTING_FROM` | Alias mittente (max 11 caratteri, es. `grottanatal`). Deve essere registrato in Smshosting (Campagne > Mittenti) |
 | `NEWSLETTER_SMS_USER` | Username per accesso interfaccia (Basic Auth) |
 | `NEWSLETTER_SMS_PASSWORD` | Password per accesso interfaccia |
 
@@ -67,6 +69,19 @@ Dopo il push su GitHub, Render farà il deploy automatico.
 
 L'interfaccia sarà disponibile su:
 **https://oraricastello-personalizzato.onrender.com/newsletter-sms**
+
+---
+
+## Mittente alfanumerico (alias)
+
+Per usare un mittente alfanumerico invece del numero:
+
+1. **Registra l'alias** in [cloud.smshosting.it](https://cloud.smshosting.it) → Campagne → Mittenti → Mittenti SMS → Aggiungi Alias. L'alias deve essere approvato (richiede PEC e partita IVA per AGCOM).
+2. **Imposta su Render** le variabili:
+   - `SMSHOSTING_USE_ALIAS=true`
+   - `SMSHOSTING_FROM=grottanatal` (o il tuo alias, max 11 caratteri)
+
+Se l'SMS arriva con mittente numerico: verifica che le variabili siano impostate su Render (Environment) e che l'alias sia attivo nell'area riservata Smshosting. Nei log vedrai `[Smshosting] useAlias= ... from= ...` per il debug.
 
 ---
 

@@ -48,6 +48,11 @@ async function sendSms(to, text, options = {}) {
   const from = (options && (options.from === '' || options.from === false)) ? '' : (useAlias ? (options?.from || process.env.SMSHOSTING_FROM) : '');
   if (from) bodyParams.set('from', String(from).slice(0, 11));
 
+  // Debug: verifica che alias sia inviato (controlla log su Render)
+  if (process.env.NODE_ENV !== 'test') {
+    console.log('[Smshosting] useAlias=', useAlias, '| from=', from || '(numerico)', '| SMSHOSTING_USE_ALIAS=', process.env.SMSHOSTING_USE_ALIAS, '| SMSHOSTING_FROM=', process.env.SMSHOSTING_FROM ? '***' : '(vuoto)');
+  }
+
   const url = `${BASE_URL}/sms/send`;
 
   try {
