@@ -90,4 +90,11 @@ async function sendSms(to, text, options = {}) {
   }
 }
 
+// Log configurazione alias all'avvio (visibile nei log Render)
+if (process.env.NODE_ENV !== 'test') {
+  const useAlias = process.env.SMSHOSTING_USE_ALIAS === 'true' || process.env.SMSHOSTING_USE_ALIAS === '1';
+  const from = process.env.SMSHOSTING_FROM;
+  console.log('[Smshosting] Mittente:', useAlias && from ? `alfanumerico (${from})` : 'numerico', '| USE_ALIAS=', process.env.SMSHOSTING_USE_ALIAS || '(vuoto)', '| FROM=', from ? 'impostato' : '(vuoto)');
+}
+
 module.exports = { sendSms, normalizePhone };

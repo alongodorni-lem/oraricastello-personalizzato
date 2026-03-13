@@ -202,7 +202,7 @@ router.post('/api/test', async (req, res) => {
     const baseText = (typeof customText === 'string' && customText.trim()) ? customText.trim().slice(0, 160) : config.smsTexts.listB;
     const suffix = ' [' + Date.now().toString(36).slice(-6) + ']';
     const text = baseText.length + suffix.length <= 160 ? baseText + suffix : baseText.slice(0, 160 - suffix.length) + suffix;
-    const result = await smshosting.sendSms(phone, text, { from: '' });
+    const result = await smshosting.sendSms(phone, text);
     res.json({
       success: result.success,
       error: result.error,
