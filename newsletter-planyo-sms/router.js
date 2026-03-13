@@ -136,7 +136,7 @@ router.post('/api/config', (req, res) => {
 
 router.get('/api/campaigns', async (req, res) => {
   try {
-    const count = parseInt(req.query.last || '3', 10) || 3;
+    const count = parseInt(req.query.last || '2', 10) || 2;
     const campaigns = await mailchimp.getLastSentCampaigns(count);
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -144,23 +144,73 @@ router.get('/api/campaigns', async (req, res) => {
   }
 });
 
-router.post('/api/update-newsletter', async (req, res) => {
-  res.setTimeout(5 * 60 * 1000);
-  try {
-    const result = await dataCache.runUpdateNewsletter();
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+const updateJobs = new Map();
+
+router.post('/api/update-newsletter', (req, res) => {
+  const jobId = 'nu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+  updateJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
+  setImmediate(async () => {
+    try {
+      const result = await dataCache.runUpdateNewsletter();
+      const job = updateJobs.get(jobId);
+      if (job) {
+        job.status = 'done';
+        job.result = result;
+      }
+    } catch (err) {
+      const job = updateJobs.get(jobId);
+      if (job) {
+        job.status = 'error';
+        job.error = err.message;
+      }
+    }
+  });
+  res.json({ success: true, jobId });
+});
+
+router.get('/api/update-newsletter/status/:jobId', (req, res) => {
+  const job = updateJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, error: 'Job non trovato o scaduto' });
+  if (job.status === 'done') {
+    res.json({ success: true, status: 'done', ...job.result });
+  } else if (job.status === 'error') {
+    res.json({ success: false, status: 'error', error: job.error });
+  } else {
+    res.json({ success: true, status: 'pending' });
   }
 });
 
-router.post('/api/update-prenotazioni', async (req, res) => {
-  res.setTimeout(5 * 60 * 1000);
-  try {
-    const result = await dataCache.runUpdatePrenotazioni();
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+router.post('/api/update-prenotazioni', (req, res) => {
+  const jobId = 'pr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+  updateJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
+  setImmediate(async () => {
+    try {
+      const result = await dataCache.runUpdatePrenotazioni();
+      const job = updateJobs.get(jobId);
+      if (job) {
+        job.status = 'done';
+        job.result = result;
+      }
+    } catch (err) {
+      const job = updateJobs.get(jobId);
+      if (job) {
+        job.status = 'error';
+        job.error = err.message;
+      }
+    }
+  });
+  res.json({ success: true, jobId });
+});
+
+router.get('/api/update-prenotazioni/status/:jobId', (req, res) => {
+  const job = updateJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, error: 'Job non trovato o scaduto' });
+  if (job.status === 'done') {
+    res.json({ success: true, status: 'done', ...job.result });
+  } else if (job.status === 'error') {
+    res.json({ success: false, status: 'error', error: job.error });
+  } else {
+    res.json({ success: true, status: 'pending' });
   }
 });
 
@@ -168,7 +218,7 @@ router.post('/api/run', async (req, res) => {
   if (!requireCacheReady(res)) return;
   res.setTimeout(30 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignIds, campaignId, lastN = 3, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = body_;
+  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = body_;
   const listDFilters = parseListDFilters(body_);
 
   const cap = captureLogs(async () => {
@@ -180,7 +230,7 @@ router.post('/api/run', async (req, res) => {
     if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
       ids = ['list-d-only'];
     } else if (campaignIds && Array.isArray(campaignIds) && campaignIds.length > 0) {
-      ids = campaignIds.slice(0, 3);
+      ids = campaignIds.slice(0, 2);
     } else if (campaignId) {
       ids = [campaignId];
     } else {
@@ -239,7 +289,7 @@ router.post('/api/test', async (req, res) => {
 
 router.post('/api/check-phone', async (req, res) => {
   if (!requireCacheReady(res)) return;
-  const { phone, campaignId, lastN = 3, targetResourceId } = req.body || {};
+  const { phone, campaignId, lastN = 2, targetResourceId } = req.body || {};
   if (!phone || !String(phone).replace(/\D/g, '').length) {
     return res.status(400).json({ success: false, error: 'Numero telefono richiesto' });
   }

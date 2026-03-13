@@ -249,11 +249,11 @@
       <h2>Invio campagna</h2>
       <p class="hint" style="margin-bottom: 1rem;">Invia SMS ai contatti che hanno aperto/cliccato la newsletter, segmentati per prenotazioni.</p>
       <div class="form-group">
-        <label>Campagne (seleziona fino a 3, predefinite: ultime 3 inviate)</label>
+        <label>Campagne (seleziona fino a 2, predefinite: ultime 2 inviate)</label>
         <div id="campaignList" class="campaign-list">
           <span class="hint">Caricamento...</span>
         </div>
-        <p class="hint" id="campaignHint">Seleziona una o più campagne (max 3)</p>
+        <p class="hint" id="campaignHint">Seleziona una o più campagne (max 2)</p>
       </div>
       <div class="form-group">
         <div class="row" style="gap: 1rem; flex-wrap: wrap;">
@@ -487,7 +487,7 @@
       const list = document.getElementById('campaignList');
       const hint = document.getElementById('campaignHint');
       try {
-        const r = await fetch(API + '/api/campaigns?last=3');
+        const r = await fetch(API + '/api/campaigns?last=2');
         const d = await r.json();
         list.innerHTML = '';
         if (d.campaigns && d.campaigns.length) {
@@ -502,15 +502,15 @@
             if (i < 2) cb.checked = true;
             cb.onchange = () => {
               const checked = list.querySelectorAll('input[name="campaign"]:checked');
-              if (checked.length > 3) cb.checked = false;
-              hint.textContent = checked.length >= 3 ? 'Massimo 3 campagne selezionate' : 'Seleziona una o più campagne (max 3)';
+              if (checked.length > 2) cb.checked = false;
+              hint.textContent = checked.length >= 2 ? 'Massimo 2 campagne selezionate' : 'Seleziona una o più campagne (max 2)';
               if (typeof resetSmsCalc === 'function') resetSmsCalc();
             };
             lab.appendChild(cb);
             lab.appendChild(document.createTextNode(` ${(c.subject || c.id).slice(0, 55)}${(c.subject || c.id).length > 55 ? '…' : ''} (${c.send_time ? new Date(c.send_time).toLocaleDateString('it') : ''})`));
             list.appendChild(lab);
           });
-          hint.textContent = 'Predefinite: ultime 3. Seleziona fino a 3 campagne.';
+          hint.textContent = 'Predefinite: ultime 2. Seleziona fino a 2 campagne.';
         } else {
           list.innerHTML = '<span class="hint">Nessuna campagna disponibile</span>';
         }
@@ -745,30 +745,119 @@
       } catch (e) { /* use default */ }
     }
 
+    async function pollUpdateNewsletter(jobId, btn) {
+      const el = document.getElementById('newsletterStatus');
+      try {
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          const r = await fetch(API + '/api/update-newsletter/status/' + jobId);
+          const d = await r.json();
+          if (d.status === 'done') {
+            if (d.success) {
+              el.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+              el.style.color = 'var(--success)';
+            } else {
+              el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
+              el.style.color = 'var(--danger)';
+            }
+            const cfgR = await fetch(API + '/api/config');
+            try {
+              const cfg = JSON.parse(await cfgR.text());
+              updateCacheStatusDisplay(cfg.cacheStatus);
+            } catch (_) {}
+            return;
+          }
+          if (d.status === 'error') {
+            el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
+            el.style.color = 'var(--danger)';
+            return;
+          }
+        } catch (e) {
+          el.textContent = 'Errore polling: ' + e.message;
+          el.style.color = 'var(--danger)';
+          return;
+        }
+      }
+      el.textContent = 'Timeout: l\'aggiornamento sta richiedendo troppo tempo. Riprova.';
+      el.style.color = 'var(--danger)';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     document.getElementById('btnUpdateNewsletter').onclick = async () => {
       const btn = document.getElementById('btnUpdateNewsletter');
       const el = document.getElementById('newsletterStatus');
       btn.disabled = true;
-      el.textContent = 'Aggiornamento in corso...';
+      el.textContent = 'Aggiornamento in corso... (può richiedere 1-2 minuti)';
       el.style.color = '';
       try {
-        const r = await fetch(API + '/api/update-newsletter', { method: 'POST' });
-        const d = await r.json();
-        if (d.success) {
-          el.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
-          el.style.color = 'var(--success)';
-        } else {
-          el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
-          el.style.color = 'var(--danger)';
+        const r = await fetch(API + '/api/update-newsletter', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const text = await r.text();
+        let d;
+        try {
+          d = JSON.parse(text);
+        } catch (_) {
+          if (text.startsWith('<') || text.includes('<!DOCTYPE')) {
+            throw new Error('Il server ha restituito HTML. Controlla i log su Render.');
+          }
+          throw new Error('Risposta non valida (HTTP ' + r.status + ')');
         }
-        const cfg = await fetch(API + '/api/config').then(x => x.json());
-        updateCacheStatusDisplay(cfg.cacheStatus);
+        if (d.jobId) {
+          pollUpdateNewsletter(d.jobId, btn);
+        } else {
+          el.textContent = 'Errore: risposta inattesa dal server';
+          el.style.color = 'var(--danger)';
+          btn.disabled = false;
+        }
       } catch (e) {
         el.textContent = 'Errore: ' + e.message;
         el.style.color = 'var(--danger)';
+        btn.disabled = false;
       }
-      btn.disabled = false;
     };
+
+    async function pollUpdatePrenotazioni(jobId, btn) {
+      const el = document.getElementById('prenotazioniStatus');
+      try {
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          const r = await fetch(API + '/api/update-prenotazioni/status/' + jobId);
+          const d = await r.json();
+          if (d.status === 'done') {
+            if (d.success) {
+              el.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+              el.style.color = 'var(--success)';
+            } else {
+              el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
+              el.style.color = 'var(--danger)';
+            }
+            const cfgR = await fetch(API + '/api/config');
+            try {
+              const cfg = JSON.parse(await cfgR.text());
+              updateCacheStatusDisplay(cfg.cacheStatus);
+            } catch (_) {}
+            return;
+          }
+          if (d.status === 'error') {
+            el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
+            el.style.color = 'var(--danger)';
+            return;
+          }
+        } catch (e) {
+          el.textContent = 'Errore polling: ' + e.message;
+          el.style.color = 'var(--danger)';
+          return;
+        }
+      }
+      el.textContent = 'Timeout: l\'aggiornamento sta richiedendo troppo tempo. Riprova.';
+      el.style.color = 'var(--danger)';
+      } finally {
+        btn.disabled = false;
+      }
+    }
 
     document.getElementById('btnUpdatePrenotazioni').onclick = async () => {
       const btn = document.getElementById('btnUpdatePrenotazioni');
@@ -777,22 +866,29 @@
       el.textContent = 'Aggiornamento in corso...';
       el.style.color = '';
       try {
-        const r = await fetch(API + '/api/update-prenotazioni', { method: 'POST' });
-        const d = await r.json();
-        if (d.success) {
-          el.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
-          el.style.color = 'var(--success)';
-        } else {
-          el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
-          el.style.color = 'var(--danger)';
+        const r = await fetch(API + '/api/update-prenotazioni', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const text = await r.text();
+        let d;
+        try {
+          d = JSON.parse(text);
+        } catch (_) {
+          if (text.startsWith('<') || text.includes('<!DOCTYPE')) {
+            throw new Error('Il server ha restituito HTML. Controlla i log su Render.');
+          }
+          throw new Error('Risposta non valida (HTTP ' + r.status + ')');
         }
-        const cfg = await fetch(API + '/api/config').then(x => x.json());
-        updateCacheStatusDisplay(cfg.cacheStatus);
+        if (d.jobId) {
+          pollUpdatePrenotazioni(d.jobId, btn);
+        } else {
+          el.textContent = 'Errore: risposta inattesa dal server';
+          el.style.color = 'var(--danger)';
+          btn.disabled = false;
+        }
       } catch (e) {
         el.textContent = 'Errore: ' + e.message;
         el.style.color = 'var(--danger)';
+        btn.disabled = false;
       }
-      btn.disabled = false;
     };
 
     document.getElementById('btnEditTarget').onclick = async () => {
@@ -1037,7 +1133,7 @@
     async function loadEmailCampaigns() {
       const sel = document.getElementById('emailCampaignId');
       try {
-        const r = await fetch(API + '/api/campaigns?last=3');
+        const r = await fetch(API + '/api/campaigns?last=2');
         const d = await r.json();
         sel.innerHTML = '';
         if (d.campaigns && d.campaigns.length) {

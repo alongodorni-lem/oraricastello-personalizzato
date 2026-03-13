@@ -298,6 +298,7 @@ async function getMemberDetailsForEmails(listId, emailsSet) {
       detailsMap.set(email, { firstName, lastName, phone });
     }
     if (members.length < count) break;
+    if (detailsMap.size >= emailsSet.size) break; // trovati tutti, esci subito
     offset += count;
   }
   return detailsMap;

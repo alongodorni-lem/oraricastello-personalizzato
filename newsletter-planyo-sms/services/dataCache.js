@@ -60,7 +60,7 @@ function savePlanyoCache(data) {
 }
 
 /**
- * Aggiorna solo cache Mailchimp (ultime 3 newsletter)
+ * Aggiorna solo cache Mailchimp (ultime 2 newsletter)
  * @returns {{ success: boolean, updatedAt?: string, mailchimpContacts?: number, error?: string }}
  */
 async function runUpdateNewsletter() {
@@ -68,15 +68,18 @@ async function runUpdateNewsletter() {
   const result = { success: false, updatedAt: now };
 
   try {
-    const campaigns = await mailchimp.getLastSentCampaigns(3);
+    const campaigns = await mailchimp.getLastSentCampaigns(2);
     const campaignEngagements = {};
     const contactsMap = new Map();
 
-    for (const c of campaigns) {
-      const emails = await mailchimp.getCampaignEngagedEmails(c.id);
+    // Esegui le 2 campagne in parallelo
+    await Promise.all(campaigns.map(async (c) => {
+      const [emails, listId] = await Promise.all([
+        mailchimp.getCampaignEngagedEmails(c.id),
+        mailchimp.getCampaignListId(c.id)
+      ]);
       campaignEngagements[c.id] = emails.map((e) => e.toLowerCase().trim());
 
-      const listId = await mailchimp.getCampaignListId(c.id);
       if (listId && emails.length > 0) {
         const details = await mailchimp.getMemberDetailsForEmails(listId, new Set(emails.map((e) => e.toLowerCase())));
         for (const [email, d] of details) {
@@ -89,7 +92,7 @@ async function runUpdateNewsletter() {
           }
         }
       }
-    }
+    }));
 
     const contacts = {};
     for (const [email, d] of contactsMap) contacts[email] = d;
