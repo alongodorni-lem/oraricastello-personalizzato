@@ -153,17 +153,13 @@ async function getLastSentCampaigns(count = 2) {
 }
 
 /**
- * Unisce email da open e click (senza duplicati)
+ * Restituisce email che hanno cliccato nella campagna (solo click, non open).
+ * Per le aperte si userà un tab dedicato.
  * @param {string} campaignId
  * @returns {Promise<string[]>}
  */
 async function getCampaignEngagedEmails(campaignId) {
-  const [openEmails, clickEmails] = await Promise.all([
-    getCampaignOpenEmails(campaignId),
-    getCampaignClickEmails(campaignId)
-  ]);
-  const all = new Set([...openEmails, ...clickEmails]);
-  return Array.from(all);
+  return getCampaignClickEmails(campaignId);
 }
 
 /**
