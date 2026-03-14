@@ -249,7 +249,7 @@
           <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">CSV newsletter da caricare</p>
         </div>
         <div>
-          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioniApi">AGGIORNA PRENOTAZIONI ULTIMI 12 MESI</button>
+          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioniApi">AGGIORNA PRENOTAZIONI ULTIMI 18 MESI</button>
           <p class="hint" id="prenotazioniApiStatus" style="margin-top: 0.5rem;">Prenotazioni API da aggiornare (lookback 18 mesi)</p>
         </div>
         <div>
@@ -684,7 +684,10 @@
       }
 
       if (cacheStatus?.planyoUpdatedAt) {
-        ps.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(cacheStatus.planyoUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+        const contactsInfo = (typeof cacheStatus.planyoContacts === 'number')
+          ? (' | contatti: ' + cacheStatus.planyoContacts)
+          : '';
+        ps.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(cacheStatus.planyoUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + contactsInfo;
         ps.style.color = 'var(--success)';
       } else {
         ps.textContent = 'Prenotazioni da aggiornare';
@@ -765,12 +768,11 @@
       el.style.color = '';
       try {
         const csvText = await file.text();
-        const r = await fetch(API + '/api/upload-newsletter-csv', {
+        const d = await fetchJson(API + '/api/upload-newsletter-csv', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ csvText, filename: file.name })
         });
-        const d = await r.json();
         if (d.success) {
           el.innerHTML = '<strong>CSV newsletter caricato al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + ' | contatti: ' + (d.uploadedContacts || 0);
           el.style.color = 'var(--success)';

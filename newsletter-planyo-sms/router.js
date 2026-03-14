@@ -21,7 +21,7 @@ const config = require('./config/segments');
 const PUBLIC_PATH = path.join(__dirname, 'public');
 const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
 
-router.use(express.json({ limit: '10mb' }));
+router.use(express.json({ limit: '30mb' }));
 
 // Basic Auth: se NEWSLETTER_SMS_USER e NEWSLETTER_SMS_PASSWORD sono impostati, richiede login
 const authUser = process.env.NEWSLETTER_SMS_USER;
@@ -294,7 +294,7 @@ router.post('/api/update-prenotazioni', (req, res) => {
 router.post('/api/update-prenotazioni-api', async (req, res) => {
   try {
     const planyo = require('./services/planyo');
-    const months = parseInt(req.body?.months || '18', 10) || 18;
+    const months = 18;
     const byEmail = await planyo.loadReservationsByEmail(months);
     const totalReservations = [...byEmail.values()].reduce((sum, e) => sum + (e.reservations?.length || 0), 0);
     res.json({
