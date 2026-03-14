@@ -5,6 +5,36 @@
 const axios = require('axios');
 
 const BASE_URL = 'https://us21.api.mailchimp.com/3.0';
+const RUNTIME_CACHE_TTL_MS = 10 * 60 * 1000;
+const engagedRuntimeCache = new Map();
+
+function getRuntimeCache(key) {
+  const hit = engagedRuntimeCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expiresAt) {
+    engagedRuntimeCache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function setRuntimeCache(key, value, ttlMs = RUNTIME_CACHE_TTL_MS) {
+  engagedRuntimeCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+
+function normalizeCampaignEngagementsShape(cached) {
+  const out = { open: {}, click: {} };
+  if (!cached || !cached.campaignEngagements) return out;
+  const ce = cached.campaignEngagements;
+  if (ce.open || ce.click) {
+    out.open = ce.open || {};
+    out.click = ce.click || {};
+    return out;
+  }
+  // Compatibilità con formato legacy: campaignId -> emails (interpreta come open)
+  out.open = ce;
+  return out;
+}
 
 /**
  * Estrae datacenter dalla API key (formato: xxxxxxxx-dc)
@@ -122,6 +152,10 @@ async function getCampaignClickEmails(campaignId) {
   return Array.from(emails);
 }
 
+function normalizeEngagementType(type) {
+  return String(type || 'open').toLowerCase().trim() === 'click' ? 'click' : 'open';
+}
+
 /**
  * Ottiene le ultime N campagne inviate
  * @param {number} count - numero campagne (default 2)
@@ -153,13 +187,13 @@ async function getLastSentCampaigns(count = 2) {
 }
 
 /**
- * Restituisce email che hanno cliccato nella campagna (solo click, non open).
- * Per le aperte si userà un tab dedicato.
+ * Restituisce email che hanno aperto la campagna.
  * @param {string} campaignId
  * @returns {Promise<string[]>}
  */
-async function getCampaignEngagedEmails(campaignId) {
-  return getCampaignClickEmails(campaignId);
+async function getCampaignEngagedEmails(campaignId, engagementType = 'open') {
+  const type = normalizeEngagementType(engagementType);
+  return type === 'click' ? getCampaignClickEmails(campaignId) : getCampaignOpenEmails(campaignId);
 }
 
 /**
@@ -305,15 +339,39 @@ async function getMemberDetailsForEmails(listId, emailsSet) {
  * @param {string} campaignId
  * @returns {Promise<string[]>}
  */
-async function getCampaignEngagedEmailsWithCache(campaignId) {
+async function getCampaignEngagedEmailsWithCache(campaignId, engagementType = 'open') {
+  const type = normalizeEngagementType(engagementType);
+  const runtimeKey = `engaged:${type}:${campaignId}`;
+  const runtime = getRuntimeCache(runtimeKey);
+  if (runtime) return runtime;
   try {
     const dataCache = require('./dataCache');
     const cached = dataCache.loadMailchimpCache();
-    if (cached?.campaignEngagements?.[campaignId]) {
-      return cached.campaignEngagements[campaignId];
+    const normalized = normalizeCampaignEngagementsShape(cached);
+    const byType = normalized[type];
+    if (byType?.[campaignId]) {
+      const emails = byType[campaignId];
+      setRuntimeCache(runtimeKey, emails);
+      return emails;
     }
   } catch (_) {}
-  return getCampaignEngagedEmails(campaignId);
+  const emails = await getCampaignEngagedEmails(campaignId, type);
+  const normalizedEmails = [...new Set(emails.map((e) => e.toLowerCase().trim()).filter(Boolean))];
+  setRuntimeCache(runtimeKey, normalizedEmails);
+  // Persistenza cache file: utile per riuso rapido nella sessione sui due tab
+  try {
+    const dataCache = require('./dataCache');
+    const cached = dataCache.loadMailchimpCache() || {};
+    const engagements = normalizeCampaignEngagementsShape(cached);
+    engagements[type][campaignId] = normalizedEmails;
+    dataCache.saveMailchimpCache({
+      ...cached,
+      updatedAt: cached.updatedAt || new Date().toISOString(),
+      campaignEngagements: engagements,
+      contacts: cached.contacts || {}
+    });
+  } catch (_) {}
+  return normalizedEmails;
 }
 
 /**
@@ -323,12 +381,15 @@ async function getCampaignEngagedEmailsWithCache(campaignId) {
  * @returns {Promise<Map<string, { firstName: string, lastName: string, phone: string }>>}
  */
 async function getMemberDetailsForEmailsWithCache(emailsSet, listId) {
+  const requested = new Set([...emailsSet].map((e) => e.toLowerCase().trim()).filter(Boolean));
+  if (requested.size === 0) return new Map();
   try {
     const dataCache = require('./dataCache');
     const cached = dataCache.loadMailchimpCache();
+    const map = new Map();
+    const missing = new Set(requested);
     if (cached?.contacts) {
-      const map = new Map();
-      for (const email of emailsSet) {
+      for (const email of requested) {
         const key = email.toLowerCase().trim();
         const c = cached.contacts[key];
         if (c) {
@@ -337,12 +398,36 @@ async function getMemberDetailsForEmailsWithCache(emailsSet, listId) {
             lastName: c.cognome || '',
             phone: c.cellulare || ''
           });
+          missing.delete(key);
         }
       }
-      return map;
     }
+    if (missing.size === 0) return map;
+    if (listId) {
+      const fetched = await getMemberDetailsForEmails(listId, missing);
+      for (const [email, d] of fetched) map.set(email, d);
+      // Merge incrementale in cache file (nome/cognome/email/telefono)
+      try {
+        const nextCached = dataCache.loadMailchimpCache() || cached || {};
+        const contacts = { ...(nextCached.contacts || {}) };
+        for (const [email, d] of fetched) {
+          contacts[email] = {
+            nome: (d.firstName || '').trim(),
+            cognome: (d.lastName || '').trim(),
+            cellulare: (d.phone || '').trim()
+          };
+        }
+        dataCache.saveMailchimpCache({
+          ...nextCached,
+          updatedAt: nextCached.updatedAt || new Date().toISOString(),
+          campaignEngagements: normalizeCampaignEngagementsShape(nextCached),
+          contacts
+        });
+      } catch (_) {}
+    }
+    return map;
   } catch (_) {}
-  if (listId) return getMemberDetailsForEmails(listId, emailsSet);
+  if (listId) return getMemberDetailsForEmails(listId, requested);
   return new Map();
 }
 

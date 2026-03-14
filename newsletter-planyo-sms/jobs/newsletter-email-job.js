@@ -14,11 +14,11 @@ const config = require('../config/segments');
  * @returns {Promise<Array<{ nome: string, cognome: string, email: string, telefono: string, eventoPrenotato: string, segment: string }>>}
  */
 async function buildEmailListData(campaignId, options = {}) {
-  const { targetResourceId: overrideId, monthsLookback } = options;
-  const targetResourceId = overrideId != null ? Number(overrideId) : config.targetResourceId;
+  const { targetResourceId: overrideId, monthsLookback, engagementType = 'open' } = options;
+  const targetResourceId = overrideId != null ? overrideId : config.targetResourceId;
   const months = monthsLookback ?? config.monthsLookback;
 
-  const emails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
+  const emails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
   if (emails.length === 0) return [];
 
   const listId = await mailchimp.getCampaignListId(campaignId);
@@ -86,8 +86,9 @@ function filterBySegment(data, segments) {
  * @param {Array} apiData - dati da API già filtrati per eventIds, eventFilter
  * @param {string[]} segments
  * @param {{ eventNameContains?: string, eventIds?: number[], statuses?: string[] }} listDFilters
+ * @param {{ emailsInA?: Set<string> }} excludeListA
  */
-async function mergeListDFromCsv(apiData, segments, listDFilters = {}) {
+async function mergeListDFromCsv(apiData, segments, listDFilters = {}, excludeListA = {}) {
   if (!segments || !segments.map((s) => String(s).toUpperCase()).includes('D')) return apiData;
   if (!process.env.PLANYO_LISTD_CSV_URL) return apiData;
 
@@ -95,7 +96,7 @@ async function mergeListDFromCsv(apiData, segments, listDFilters = {}) {
   const onlyD = segSet.size === 1 && segSet.has('D');
   const baseData = onlyD ? [] : apiData.filter((r) => segSet.has((r.segment || '').toUpperCase()));
 
-  const listD = await planyoReportCsv.loadListDFromCsv(listDFilters);
+  const listD = await planyoReportCsv.loadListDFromCsv(listDFilters, excludeListA);
   const existingEmails = new Set(baseData.map((r) => r.email.toLowerCase()));
   const fromD = listD.filter((r) => !existingEmails.has(r.email.toLowerCase()));
   return [...baseData, ...fromD];

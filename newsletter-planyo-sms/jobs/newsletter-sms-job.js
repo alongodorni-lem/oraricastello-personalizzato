@@ -88,11 +88,12 @@ function markAsSent(campaignId, email, segment) {
  * @param {{ dryRun?: boolean }} options
  */
 async function runNewsletterSmsJob(campaignId, options = {}) {
-  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck } = options;
+  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck, engagementType = 'open' } = options;
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
-  const targetResourceId = overrideTargetId != null ? Number(overrideTargetId) : configTargetId;
+  const targetResourceId = overrideTargetId != null ? overrideTargetId : configTargetId;
 
   const onlyD = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'D';
+  const engagementLabel = engagementType === 'click' ? 'click' : 'open';
   const trackId = campaignId || 'list-d-only';
 
   console.log('[Job] Avvio newsletter-sms-job');
@@ -182,25 +183,24 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     });
   }
 
-  // 3. Lista C: click Mailchimp esclusi evento target (esclusi Lista A)
+  // 3. Lista C: utenti newsletter (open/click) esclusi Lista A, con controllo solo email
   const segmentsToProcess = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D') : ['A', 'B', 'C'];
   const needC = segmentsToProcess.includes('C');
   if (needC) {
     let mailchimpEmails = [];
     let mailchimpPhones = new Map();
     try {
-      console.log('[Job] Recupero click da Mailchimp...');
-      mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
-      console.log('[Job] Email da Mailchimp (click):', mailchimpEmails.length);
+      console.log('[Job] Recupero', engagementLabel, 'da Mailchimp...');
+      mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
+      const filteredEmails = mailchimpEmails.filter((email) => !emailsInASet.has(email.toLowerCase().trim()));
+      console.log('[Job] Email da Mailchimp (' + engagementLabel + ') dopo esclusione Lista A:', filteredEmails.length);
       const listId = await mailchimp.getCampaignListId(campaignId);
-      if (listId && mailchimpEmails.length > 0) {
+      if (listId && filteredEmails.length > 0) {
         console.log('[Job] Recupero telefoni da Mailchimp (merge_fields)...');
-        mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(mailchimpEmails.map((e) => e.toLowerCase())));
+        mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(filteredEmails.map((e) => e.toLowerCase())));
         console.log('[Job] Telefoni trovati in Mailchimp:', mailchimpPhones.size);
       }
-      for (const email of mailchimpEmails) {
-        if (emailsInASet.has(email.toLowerCase().trim())) continue;
-        if (hasEventFilter) continue;
+      for (const email of filteredEmails) {
         const raw = mailchimpPhones.get(email.toLowerCase()) || '';
         lists.C.push({ email, phone: raw });
       }
@@ -228,7 +228,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   console.log('[Job] Segmenti:');
   console.log('  Lista A (prenotati evento target):', segmentSummary.A.total, '| con telefono:', segmentSummary.A.withPhone, '| senza:', segmentSummary.A.noPhone);
   console.log('  Lista B (prenot. 18m esclusi A):   ', segmentSummary.B.total, '| con telefono:', segmentSummary.B.withPhone, '| senza:', segmentSummary.B.noPhone);
-  console.log('  Lista C (click newsletter esclusi A):', segmentSummary.C.total, '| con telefono:', segmentSummary.C.withPhone, '| senza:', segmentSummary.C.noPhone);
+  console.log('  Lista C (' + engagementLabel + ' newsletter esclusi A):', segmentSummary.C.total, '| con telefono:', segmentSummary.C.withPhone, '| senza:', segmentSummary.C.noPhone);
 
   // 4. Lista D da CSV (se selezionata) - esclusi evento target ultimi 6 mesi
   let listD = [];
@@ -350,9 +350,9 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
  * @returns {Promise<{ found: boolean, segment?: 'A'|'B'|'C', email?: string }>}
  */
 async function checkPhoneInLists(campaignId, phone, options = {}) {
-  const { targetResourceId: overrideId } = options;
+  const { targetResourceId: overrideId, engagementType = 'open' } = options;
   const { targetResourceId: configId, monthsLookback } = config;
-  const targetResourceId = overrideId != null ? Number(overrideId) : configId;
+  const targetResourceId = overrideId != null ? overrideId : configId;
   const searchDigits = String(phone || '').replace(/\D/g, '');
   if (searchDigits.length < 9) return { found: false };
 
@@ -360,7 +360,7 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
   const { listA, listB, emailsInA } = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
   const lists = { A: listA, B: listB, C: [] };
 
-  const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
+  const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
   let mailchimpPhones = new Map();
   try {
     const listId = await mailchimp.getCampaignListId(campaignId);
@@ -394,9 +394,9 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
  * @returns {Promise<{ total: number, bySegment: { A: number, B: number, C: number, D: number } }>}
  */
 async function getSmsPreview(campaignId, options = {}) {
-  const { targetResourceId: overrideId, eventIds, segments: segmentsFilter, listDFilters } = options;
+  const { targetResourceId: overrideId, eventIds, segments: segmentsFilter, listDFilters, engagementType = 'open' } = options;
   const { targetResourceId: configId, monthsLookback } = config;
-  const targetResourceId = overrideId != null ? Number(overrideId) : configId;
+  const targetResourceId = overrideId != null ? overrideId : configId;
   const segFilter = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D') : ['A', 'B', 'C'];
 
   const onlyD = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'D';
@@ -446,17 +446,16 @@ async function getSmsPreview(campaignId, options = {}) {
     });
   }
 
-  // Lista C: click Mailchimp esclusi Lista A
+  // Lista C: aperture Mailchimp escluse email in Lista A (match solo email)
   if (segFilter.includes('C')) {
-    const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId);
+    const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
+    const filteredEmails = mailchimpEmails.filter((email) => !emailsInA.has(email.toLowerCase().trim()));
     let mailchimpPhones = new Map();
-    if (mailchimpEmails.length > 0) {
+    if (filteredEmails.length > 0) {
       const listId = await mailchimp.getCampaignListId(campaignId);
-      mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(mailchimpEmails.map((e) => e.toLowerCase()))).catch(() => new Map());
+      mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(filteredEmails.map((e) => e.toLowerCase()))).catch(() => new Map());
     }
-    for (const email of mailchimpEmails) {
-      if (emailsInA.has(email.toLowerCase().trim())) continue;
-      if (hasEventFilter) continue;
+    for (const email of filteredEmails) {
       let raw = mailchimpPhones.get(email.toLowerCase()) || '';
       const phone = planyo.normalizePhone(raw) || (raw && !raw.includes('@') && raw.replace(/\D/g, '').length >= 9 ? raw : '');
       if (!phone || phone.length < 10 || phone.includes('@')) continue;

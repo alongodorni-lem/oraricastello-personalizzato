@@ -2,7 +2,7 @@
  * Configurazione segmenti per SMS promozionali
  * Lista A: tutti i prenotati evento target (start_date > oggi, hanno già prenotato - esclusi da promozione)
  * Lista B: prenotazioni ultimi 18 mesi esclusi Lista A (API Planyo)
- * Lista C: click newsletter esclusi Lista A (Mailchimp)
+ * Lista C: aperture newsletter escluse Lista A (Mailchimp)
  * Lista D: CSV Planyo esclusi Lista A
  */
 module.exports = {

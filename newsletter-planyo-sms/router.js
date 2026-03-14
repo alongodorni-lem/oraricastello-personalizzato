@@ -113,7 +113,8 @@ router.get('/api/test-planyo', async (req, res) => {
     const byEmail = await planyo.loadReservationsByEmail(months);
     const totalRes = [...byEmail.values()].reduce((s, e) => s + (e.reservations?.length || 0), 0);
     const { buildListAAndB } = planyo;
-    const targetId = config.targetResourceId;
+    const cfg = loadUiConfig();
+    const targetId = cfg.targetResourceId ?? config.targetResourceId;
     const { listA, listB, emailsInA } = buildListAAndB(byEmail, targetId);
     res.json({
       success: true,
@@ -145,10 +146,11 @@ router.get('/api/preload-planyo', (req, res) => {
 router.get('/api/config', (req, res) => {
   try {
     const cfg = loadUiConfig();
-    const targetResourceId = cfg.targetResourceId ?? config.targetResourceId ?? 236955;
+    const targetResourceId = formatTargetResourceIds(cfg.targetResourceId ?? config.targetResourceId ?? 236955);
+    const mailchimpEngagementType = parseEngagementType(cfg.mailchimpEngagementType || 'open');
     const cacheStatus = dataCache.getCacheStatus();
     const ready = dataCache.isReadyForOperations();
-    res.json({ success: true, targetResourceId, cacheStatus, ready });
+    res.json({ success: true, targetResourceId, mailchimpEngagementType, cacheStatus, ready });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -156,15 +158,27 @@ router.get('/api/config', (req, res) => {
 
 router.post('/api/config', (req, res) => {
   try {
-    const { targetResourceId } = req.body || {};
-    const id = parseInt(String(targetResourceId || ''), 10);
-    if (isNaN(id) || id < 1) {
-      return res.status(400).json({ success: false, error: 'ID risorsa non valido' });
-    }
+    const body = req.body || {};
     const cfg = loadUiConfig();
-    cfg.targetResourceId = id;
+
+    if (Object.prototype.hasOwnProperty.call(body, 'targetResourceId')) {
+      const parsedIds = parseTargetResourceIdsParam(body.targetResourceId);
+      if (parsedIds === null) {
+        return res.status(400).json({ success: false, error: 'Valore evento target non valido' });
+      }
+      cfg.targetResourceId = parsedIds.length ? parsedIds.join(',') : '';
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'mailchimpEngagementType')) {
+      cfg.mailchimpEngagementType = parseEngagementType(body.mailchimpEngagementType);
+    }
+
     saveUiConfig(cfg);
-    res.json({ success: true, targetResourceId: id });
+    res.json({
+      success: true,
+      targetResourceId: formatTargetResourceIds(cfg.targetResourceId ?? config.targetResourceId ?? 236955),
+      mailchimpEngagementType: parseEngagementType(cfg.mailchimpEngagementType || 'open')
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -254,7 +268,7 @@ router.post('/api/run', async (req, res) => {
   if (!requireCacheReady(res)) return;
   res.setTimeout(30 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText } = body_;
+  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText, engagementType } = body_;
   const listDFilters = parseListDFilters(body_);
 
   const cap = captureLogs(async () => {
@@ -277,14 +291,15 @@ router.post('/api/run', async (req, res) => {
 
     const evIds = parseEventIdsParam(eventIds);
 
-    const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+    const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
     const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
+    const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     runAbortRequested = false;
     const abortCheck = () => runAbortRequested;
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck });
+      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
@@ -325,7 +340,7 @@ router.post('/api/test', async (req, res) => {
 
 router.post('/api/check-phone', async (req, res) => {
   if (!requireCacheReady(res)) return;
-  const { phone, campaignId, lastN = 2, targetResourceId } = req.body || {};
+  const { phone, campaignId, lastN = 2, targetResourceId, engagementType } = req.body || {};
   if (!phone || !String(phone).replace(/\D/g, '').length) {
     return res.status(400).json({ success: false, error: 'Numero telefono richiesto' });
   }
@@ -336,8 +351,9 @@ router.post('/api/check-phone', async (req, res) => {
       cid = campaigns[0]?.id;
     }
     if (!cid) return res.status(400).json({ success: false, error: 'Nessuna campagna disponibile' });
-    const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
-    const result = await checkPhoneInLists(cid, phone, { targetResourceId: targetId });
+    const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+    const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
+    const result = await checkPhoneInLists(cid, phone, { targetResourceId: targetId, engagementType: mode });
     res.json({
       success: true,
       found: result.found,
@@ -373,6 +389,39 @@ function parseEventIdsParam(val) {
   if (!str) return null;
   const ids = str.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n > 0);
   return ids.length > 0 ? ids : null;
+}
+
+function parseTargetResourceIdsParam(val) {
+  if (val === undefined || val === null) return null;
+  const str = String(val).trim();
+  if (!str) return [];
+  const ids = str.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n > 0);
+  return ids;
+}
+
+function formatTargetResourceIds(idsOrValue, fallback = '236955') {
+  if (Array.isArray(idsOrValue)) return idsOrValue.join(',');
+  if (idsOrValue == null) return fallback;
+  const str = String(idsOrValue).trim();
+  return str;
+}
+
+function parseEngagementType(val) {
+  return String(val || 'open').toLowerCase().trim() === 'click' ? 'click' : 'open';
+}
+
+async function getListAExclusions(targetResourceId) {
+  const empty = { emailsInA: new Set() };
+  if (!process.env.PLANYO_API_KEY) return empty;
+  try {
+    const planyo = require('./services/planyo');
+    const byEmail = await planyo.loadReservationsByEmail(config.monthsLookback);
+    const { emailsInA } = planyo.buildListAAndB(byEmail, targetResourceId);
+    return { emailsInA };
+  } catch (err) {
+    console.warn('[ListaD] Impossibile calcolare esclusioni Lista A:', err.message);
+    return empty;
+  }
 }
 
 function parseListDFilters(query) {
@@ -413,7 +462,8 @@ router.post('/api/sms/preview/start', (req, res) => {
   try {
     const q = req.body || req.query || {};
     const campaignId = q.campaignId;
-    const targetResourceId = q.targetResourceId ? parseInt(q.targetResourceId, 10) : null;
+    const targetResourceId = parseTargetResourceIdsParam(q.targetResourceId);
+    const engagementType = parseEngagementType(q.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const eventIds = parseEventIdsParam(q.eventIds);
     const segments = parseSegmentsParam(q.segments);
     const listDFilters = parseListDFilters(q);
@@ -433,7 +483,8 @@ router.post('/api/sms/preview/start', (req, res) => {
           targetResourceId: targetId,
           eventIds,
           segments: segments || ['A', 'B', 'C'],
-          listDFilters
+          listDFilters,
+          engagementType
         });
         const job = previewJobs.get(jobId);
         if (job) {
@@ -472,7 +523,8 @@ router.get('/api/sms/preview', async (req, res) => {
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
-    const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
+    const targetResourceId = parseTargetResourceIdsParam(req.query.targetResourceId);
+    const engagementType = parseEngagementType(req.query.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
@@ -486,7 +538,8 @@ router.get('/api/sms/preview', async (req, res) => {
       targetResourceId: targetId,
       eventIds,
       segments: segments || ['A', 'B', 'C'],
-      listDFilters
+      listDFilters,
+      engagementType
     });
     res.json({ success: true, ...result });
   } catch (err) {
@@ -499,7 +552,8 @@ router.post('/api/email/preview/start', (req, res) => {
   try {
     const q = req.body || req.query || {};
     const campaignId = q.campaignId;
-    const targetResourceId = q.targetResourceId ? parseInt(q.targetResourceId, 10) : null;
+    const targetResourceId = parseTargetResourceIdsParam(q.targetResourceId);
+    const engagementType = parseEngagementType(q.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const eventFilter = (q.eventFilter || '').trim();
     const eventIds = parseEventIdsParam(q.eventIds);
     const segments = parseSegmentsParam(q.segments);
@@ -518,11 +572,12 @@ router.post('/api/email/preview/start', (req, res) => {
 
     setImmediate(async () => {
       try {
-        let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId });
+        const excludeListA = await getListAExclusions(targetId);
+        let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId, engagementType });
         data = filterByEventIds(data, eventIds);
         data = filterBySegment(data, segments);
         data = filterByEvent(data, eventFilter);
-        data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters);
+        data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
         const total = data.length;
         const block = takeBlock(data, limit);
         const preview = block.slice(0, 10);
@@ -564,7 +619,8 @@ router.get('/api/email/export', async (req, res) => {
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
-    const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
+    const targetResourceId = parseTargetResourceIdsParam(req.query.targetResourceId);
+    const engagementType = parseEngagementType(req.query.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const eventFilter = (req.query.eventFilter || '').trim();
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
@@ -576,11 +632,12 @@ router.get('/api/email/export', async (req, res) => {
     }
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
-    let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId });
+    const excludeListA = await getListAExclusions(targetId);
+    let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
-    data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters);
+    data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
 
     const header = 'nome,cognome,email,telefono,evento,segment';
     const rows = data.map((r) =>
@@ -601,7 +658,8 @@ router.get('/api/email/preview', async (req, res) => {
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
-    const targetResourceId = req.query.targetResourceId ? parseInt(req.query.targetResourceId, 10) : null;
+    const targetResourceId = parseTargetResourceIdsParam(req.query.targetResourceId);
+    const engagementType = parseEngagementType(req.query.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const eventFilter = (req.query.eventFilter || '').trim();
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
@@ -614,11 +672,12 @@ router.get('/api/email/preview', async (req, res) => {
     }
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
-    let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId });
+    const excludeListA = await getListAExclusions(targetId);
+    let data = onlyD ? [] : await buildEmailListData(campaignId || 'dummy', { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
-    data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters);
+    data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
     const total = data.length;
     const block = takeBlock(data, limit);
     const preview = block.slice(0, 10);
@@ -653,10 +712,12 @@ router.get('/api/email/batch-status', (req, res) => {
     const campaignId = (req.query.campaignId || '').trim();
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
+    const engagementType = parseEngagementType(req.query.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const batchId = emailService.getBatchId({
       subject,
       campaignId,
       segments,
+      engagementType,
       listDEventNameContains: listDFilters.eventNameContains,
       listDStatuses: listDFilters.statuses?.join(',')
     });
@@ -699,7 +760,7 @@ router.post('/api/email/send', async (req, res) => {
   if (!requireCacheReady(res)) return;
   res.setTimeout(60 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody } = body_;
+  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody, engagementType } = body_;
   const listDFilters = parseListDFilters(body_);
   const segFilter = parseSegmentsParam(segments);
   const evIds = parseEventIdsParam(eventIds);
@@ -725,6 +786,7 @@ router.post('/api/email/send', async (req, res) => {
     subject,
     campaignId: campaignId || '',
     segments: segFilter,
+    engagementType: parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open'),
     listDEventNameContains: listDFilters.eventNameContains,
     listDStatuses: listDFilters.statuses?.join(',')
   });
@@ -732,12 +794,14 @@ router.post('/api/email/send', async (req, res) => {
   const maxToSend = Math.min(limitNum, limitInfo.remaining);
 
   const cap = captureLogs(async () => {
-    const targetId = targetResourceId != null ? Number(targetResourceId) : (loadUiConfig().targetResourceId ?? config.targetResourceId);
-    let data = onlyD ? [] : await buildEmailListData(campaignId, { targetResourceId: targetId });
+    const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+    const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
+    const excludeListA = await getListAExclusions(targetId);
+    let data = onlyD ? [] : await buildEmailListData(campaignId, { targetResourceId: targetId, engagementType: mode });
     data = filterByEventIds(data, evIds);
     data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
-    data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters);
+    data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
     data = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()));
     const toSend = takeBlock(data, maxToSend);
 

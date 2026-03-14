@@ -69,6 +69,21 @@ function normalizePhone(phone) {
   return p.replace(/\D/g, '').length >= 9 ? p : '';
 }
 
+function parseTargetResourceIds(targetResourceId) {
+  if (targetResourceId == null) return [];
+  if (Array.isArray(targetResourceId)) {
+    return targetResourceId
+      .map((x) => parseInt(String(x).trim(), 10))
+      .filter((n) => !isNaN(n) && n > 0);
+  }
+  const str = String(targetResourceId).trim();
+  if (!str) return [];
+  return str
+    .split(',')
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => !isNaN(n) && n > 0);
+}
+
 const RESERVATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
 let reservationsCache = null;
 let reservationsCacheExpiry = 0;
@@ -159,8 +174,9 @@ function segmentEmail(reservationsByEmail, email, targetResourceId) {
     return { segment: 'C', phone, firstName, lastName };
   }
 
-  const resourceIds = entry.reservations.map((r) => r.resource_id).filter(Boolean);
-  const hasTarget = resourceIds.includes(Number(targetResourceId)) || resourceIds.includes(String(targetResourceId));
+  const resourceIds = entry.reservations.map((r) => Number(r.resource_id)).filter((id) => !isNaN(id));
+  const targetIds = parseTargetResourceIds(targetResourceId);
+  const hasTarget = targetIds.length > 0 && resourceIds.some((id) => targetIds.includes(id));
   const lastRes = entry.reservations[entry.reservations.length - 1];
 
   if (hasTarget) {
@@ -187,12 +203,13 @@ function toStartTimestamp(val) {
  * Lista A = chi ha prenotato evento target con start_date > oggi (escludiamo da promozione: hanno già prenotato).
  * Lista B = prenotazioni ultimi 18 mesi, esclusi chi è in Lista A.
  * @param {Map} reservationsByEmail - output loadReservationsByEmail(18)
- * @param {number} targetResourceId
+ * @param {number|string|Array<number|string>|null} targetResourceId
  * @returns {{ listA: Array<{email, phone}>, listB: Array<{email, phone}>, emailsInA: Set<string> }}
  */
 function buildListAAndB(reservationsByEmail, targetResourceId) {
   const nowTimestamp = Math.floor(Date.now() / 1000);
-  const targetIdNum = Number(targetResourceId);
+  const targetIds = parseTargetResourceIds(targetResourceId);
+  const hasTargetFilter = targetIds.length > 0;
   const listA = [];
   const listB = [];
   const emailsInA = new Set();
@@ -201,8 +218,9 @@ function buildListAAndB(reservationsByEmail, targetResourceId) {
     const phone = entry?.phone || '';
     const reservations = entry?.reservations || [];
 
-    const hasTargetFuture = reservations.some((r) => {
-      if (Number(r.resource_id) !== targetIdNum && String(r.resource_id) !== String(targetResourceId)) return false;
+    const hasTargetFuture = hasTargetFilter && reservations.some((r) => {
+      const resourceId = Number(r.resource_id);
+      if (isNaN(resourceId) || !targetIds.includes(resourceId)) return false;
       const startSec = toStartTimestamp(r.start_time);
       return startSec != null && startSec > nowTimestamp;
     });

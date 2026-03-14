@@ -236,6 +236,17 @@
   <div class="container">
     <h1>Newsletter</h1>
     <p class="subtitle">Invio SMS e email da campagne Mailchimp (segmentate per prenotazioni Planyo)</p>
+    <div class="card" style="margin-bottom: 1rem;">
+      <h2>Filtro Mailchimp (globale)</h2>
+      <div class="form-group">
+        <label for="mailchimpEngagementType">Usa contatti newsletter da</label>
+        <select id="mailchimpEngagementType">
+          <option value="open">Aperture newsletter</option>
+          <option value="click">Click newsletter</option>
+        </select>
+        <p class="hint">La scelta si applica a calcolo, invio SMS, verifica numero, export e invio email.</p>
+      </div>
+    </div>
 
     <div class="tab-bar">
       <button type="button" class="tab-btn active" data-tab="sms">Newsletter SMS</button>
@@ -272,13 +283,13 @@
         <label>Lista A – Evento target (risorsa Planyo)</label>
         <div class="row" style="align-items: flex-end;">
           <div style="flex: 1; min-width: 120px;">
-            <input type="text" id="targetResourceId" value="236955" placeholder="236955" maxlength="10" readonly style="background: #f1f5f9;">
+            <input type="text" id="targetResourceId" value="236955" placeholder="es. 236955 oppure 236955,243693" maxlength="120" readonly style="background: #f1f5f9;">
           </div>
           <div>
             <button type="button" class="btn btn-secondary" id="btnEditTarget">Modifica</button>
           </div>
         </div>
-        <p class="hint">Predefinito: Castello delle Sorprese 2026 (id 236955)</p>
+        <p class="hint">Puoi lasciarlo vuoto, usare 1 ID o più ID separati da virgola (logica OR).</p>
       </div>
       <div class="form-group">
         <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
@@ -290,7 +301,7 @@
         <div class="checkboxes">
           <label class="checkbox-label"><input type="checkbox" name="seg" value="A"> Lista A (tutti i prenotati evento target)</label>
           <label class="checkbox-label"><input type="checkbox" name="seg" value="B"> Lista B (Clienti con prenotazioni ultimi 18 mesi esclusi evento target)</label>
-          <label class="checkbox-label"><input type="checkbox" name="seg" value="C"> Lista C (Utenti con click newsletter esclusi evento target)</label>
+          <label class="checkbox-label"><input type="checkbox" name="seg" value="C"> Lista C (Utenti newsletter da filtro Mailchimp, esclusi evento target)</label>
           <label class="checkbox-label"><input type="checkbox" name="seg" value="D"> Lista D (Contatti da planyo report - file caricato e salvato in cache - esclusi chi in Lista A)</label>
         </div>
       </div>
@@ -391,7 +402,7 @@
           <div class="checkboxes">
             <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="A"> Lista A (tutti i prenotati evento target)</label>
             <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="B"> Lista B (Clienti con prenotazioni ultimi 18 mesi esclusi evento target)</label>
-            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="C"> Lista C (Utenti con click newsletter esclusi evento target)</label>
+            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="C"> Lista C (Utenti newsletter da filtro Mailchimp, esclusi evento target)</label>
             <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="D"> Lista D (Contatti da planyo report - file caricato e salvato in cache - esclusi chi in Lista A)</label>
           </div>
           <p class="hint">Seleziona almeno una lista. Se nessuna selezionata, vengono incluse tutte.</p>
@@ -538,6 +549,11 @@
       return d.innerHTML;
     }
 
+    function getEngagementType() {
+      const v = document.getElementById('mailchimpEngagementType')?.value;
+      return v === 'click' ? 'click' : 'open';
+    }
+
     const isLocalhost = () => /^localhost$|^127\.|^\[::1\]$/.test(window.location.hostname);
 
     async function fetchJson(url, options) {
@@ -596,6 +612,7 @@
             campaignIds: onlyD ? [] : campaignIds,
             segments: segs.length ? segs : ['A', 'B', 'C'],
             dryRun,
+            engagementType: getEngagementType(),
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
             eventIds: document.getElementById('smsEventIds').value.trim() || undefined,
             smsText: document.getElementById('smsText').value.trim() || undefined,
@@ -670,6 +687,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             phone,
+            engagementType: getEngagementType(),
             targetResourceId: document.getElementById('targetResourceId')?.value?.trim() || undefined
           })
         });
@@ -736,7 +754,9 @@
         const r = await fetch(API + '/api/config');
         const d = await r.json();
         const tid = String(d.targetResourceId || document.getElementById('targetResourceId').value || '236955');
+        const engagementType = (d.mailchimpEngagementType === 'click') ? 'click' : 'open';
         document.getElementById('targetResourceId').value = tid;
+        document.getElementById('mailchimpEngagementType').value = engagementType;
         const smsEv = document.getElementById('smsEventIds');
         const emailEv = document.getElementById('emailEventIds');
         if (!smsEv.value.trim()) smsEv.value = tid;
@@ -899,10 +919,13 @@
         input.style.background = 'var(--card)';
         btn.textContent = 'Salva';
       } else {
-        const id = input.value.trim();
-        const num = parseInt(id, 10);
-        if (!id || isNaN(num) || num < 1) {
-          alert('Inserisci un ID risorsa Planyo valido (numero positivo).');
+        const value = input.value.trim();
+        const isValid = value === '' || value.split(',').every((s) => {
+          const n = parseInt(s.trim(), 10);
+          return !isNaN(n) && n > 0;
+        });
+        if (!isValid) {
+          alert('Inserisci valore valido: vuoto, 1 ID o più ID separati da virgola (es. 236955,243693).');
           return;
         }
         btn.disabled = true;
@@ -910,15 +933,15 @@
           const r = await fetch(API + '/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ targetResourceId: num })
+            body: JSON.stringify({ targetResourceId: value })
           });
           const d = await r.json();
           if (d.success) {
-            input.value = d.targetResourceId;
+            input.value = String(d.targetResourceId || '');
             input.readOnly = true;
             input.style.background = '#f1f5f9';
             btn.textContent = 'Modifica';
-            const tid = String(d.targetResourceId);
+            const tid = String(d.targetResourceId || '');
             if (!document.getElementById('smsEventIds').value.trim()) document.getElementById('smsEventIds').value = tid;
             if (!document.getElementById('emailEventIds').value.trim()) document.getElementById('emailEventIds').value = tid;
           } else {
@@ -976,6 +999,17 @@
     document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
     document.getElementById('emailCampaignId').onchange = resetEmailCalc;
     document.getElementById('emailSubject').oninput = () => { if (emailContactCount > 0) updateEmailBatchHint(); };
+    document.getElementById('mailchimpEngagementType').onchange = async () => {
+      resetSmsCalc();
+      resetEmailCalc();
+      try {
+        await fetch(API + '/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mailchimpEngagementType: getEngagementType() })
+        });
+      } catch (_) {}
+    };
 
     let smsContactCount = 0;
     let emailContactCount = 0;
@@ -998,6 +1032,7 @@
         const baseParams = {
           campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
+          engagementType: getEngagementType(),
           segments: (segs.length ? segs : ['A','B','C']).join(',')
         };
         const evIds = document.getElementById('smsEventIds').value.trim();
@@ -1051,6 +1086,7 @@
         const baseParams = {
           campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
+          engagementType: getEngagementType(),
           limit: selectedEmailLimit,
           segments: (segs.length ? segs : ['A','B','C','D']).join(',')
         };
@@ -1098,6 +1134,7 @@
         const params = new URLSearchParams({
           subject: document.getElementById('emailSubject').value.trim(),
           campaignId: document.getElementById('emailCampaignId').value || '',
+          engagementType: getEngagementType(),
           segments: Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value).join(',')
         });
         const lf = getListDFilters(false);
@@ -1216,6 +1253,7 @@
         const params = new URLSearchParams({
           campaignId: campaignId || 'dummy',
           targetResourceId: (document.getElementById('targetResourceId')?.value || '236955').trim(),
+          engagementType: getEngagementType(),
           eventFilter: (document.getElementById('emailEventFilter')?.value || '').trim()
         });
         if (emailSegs.length) params.set('segments', emailSegs.join(','));
@@ -1293,6 +1331,7 @@
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
             eventFilter: document.getElementById('emailEventFilter').value.trim() || undefined,
             eventIds: document.getElementById('emailEventIds').value.trim() || undefined,
+            engagementType: getEngagementType(),
             segments: emailSegs.length ? emailSegs : undefined,
             limit: selectedEmailLimit,
             subject,

@@ -17,7 +17,7 @@ function ensureDataDir() {
 
 /**
  * Carica cache Mailchimp
- * @returns {{ updatedAt?: string, campaignEngagements?: Record<string, string[]>, contacts?: Record<string, { nome: string, cognome: string, cellulare: string }> } | null}
+ * @returns {{ updatedAt?: string, campaignEngagements?: Record<string, string[]>|{open?: Record<string, string[]>, click?: Record<string, string[]>}, contacts?: Record<string, { nome: string, cognome: string, cellulare: string }> } | null}
  */
 function loadMailchimpCache() {
   try {
@@ -69,16 +69,21 @@ async function runUpdateNewsletter() {
 
   try {
     const campaigns = await mailchimp.getLastSentCampaigns(2);
-    const campaignEngagements = {};
+    const campaignEngagements = { open: {}, click: {} };
     const contactsMap = new Map();
 
     // Esegui le 2 campagne in parallelo
     await Promise.all(campaigns.map(async (c) => {
-      const [emails, listId] = await Promise.all([
-        mailchimp.getCampaignEngagedEmails(c.id),
+      const [openEmails, clickEmails, listId] = await Promise.all([
+        mailchimp.getCampaignEngagedEmails(c.id, 'open'),
+        mailchimp.getCampaignEngagedEmails(c.id, 'click'),
         mailchimp.getCampaignListId(c.id)
       ]);
-      campaignEngagements[c.id] = emails.map((e) => e.toLowerCase().trim());
+      const open = openEmails.map((e) => e.toLowerCase().trim());
+      const click = clickEmails.map((e) => e.toLowerCase().trim());
+      campaignEngagements.open[c.id] = [...new Set(open)];
+      campaignEngagements.click[c.id] = [...new Set(click)];
+      const emails = [...new Set([...open, ...click])];
 
       if (listId && emails.length > 0) {
         const details = await mailchimp.getMemberDetailsForEmails(listId, new Set(emails.map((e) => e.toLowerCase())));
@@ -148,10 +153,19 @@ function isReadyForOperations() {
 function getCacheStatus() {
   const mc = loadMailchimpCache();
   const pc = loadPlanyoCache();
+  const campaignsCount = (() => {
+    if (!mc?.campaignEngagements) return 0;
+    if (mc.campaignEngagements.open || mc.campaignEngagements.click) {
+      const openCount = Object.keys(mc.campaignEngagements.open || {}).length;
+      const clickCount = Object.keys(mc.campaignEngagements.click || {}).length;
+      return Math.max(openCount, clickCount);
+    }
+    return Object.keys(mc.campaignEngagements).length;
+  })();
   return {
     mailchimpUpdatedAt: mc?.updatedAt || null,
     planyoUpdatedAt: pc?.updatedAt || null,
-    mailchimpCampaigns: mc?.campaignEngagements ? Object.keys(mc.campaignEngagements).length : 0,
+    mailchimpCampaigns: campaignsCount,
     mailchimpContacts: mc?.contacts ? Object.keys(mc.contacts).length : 0,
     planyoContacts: pc?.contacts?.length || 0
   };

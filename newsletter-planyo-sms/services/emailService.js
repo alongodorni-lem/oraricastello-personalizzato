@@ -100,13 +100,14 @@ async function sendPersonalizedEmail({ to, subject, body, data }) {
 
 /**
  * Genera ID batch da parametri (stesso batch = stesso oggetto + stessi filtri)
- * @param {{ subject: string, campaignId?: string, segments: string[], listDEventNameContains?: string, listDStatuses?: string }} params
+ * @param {{ subject: string, campaignId?: string, segments: string[], engagementType?: string, listDEventNameContains?: string, listDStatuses?: string }} params
  */
 function getBatchId(params) {
   const str = [
     (params.subject || '').trim(),
     (params.campaignId || '').trim(),
     (params.segments || []).sort().join(','),
+    (params.engagementType || 'open').trim(),
     params.listDEventNameContains || '',
     params.listDStatuses || ''
   ].join('|');
