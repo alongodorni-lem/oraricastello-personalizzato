@@ -61,29 +61,31 @@ function savePlanyoCache(data) {
 
 /**
  * Aggiorna solo cache Mailchimp (ultime 2 newsletter)
+ * @param {'open'|'click'} engagementType
  * @returns {{ success: boolean, updatedAt?: string, mailchimpContacts?: number, error?: string }}
  */
-async function runUpdateNewsletter() {
+async function runUpdateNewsletter(engagementType = 'open') {
+  const mode = String(engagementType || 'open').toLowerCase() === 'click' ? 'click' : 'open';
   const now = new Date().toISOString();
   const result = { success: false, updatedAt: now };
 
   try {
     const campaigns = await mailchimp.getLastSentCampaigns(2);
-    const campaignEngagements = { open: {}, click: {} };
+    const previous = loadMailchimpCache();
+    const campaignEngagements = {
+      open: { ...(previous?.campaignEngagements?.open || {}) },
+      click: { ...(previous?.campaignEngagements?.click || {}) }
+    };
     const contactsMap = new Map();
 
     // Esegui le 2 campagne in parallelo
     await Promise.all(campaigns.map(async (c) => {
-      const [openEmails, clickEmails, listId] = await Promise.all([
-        mailchimp.getCampaignEngagedEmails(c.id, 'open'),
-        mailchimp.getCampaignEngagedEmails(c.id, 'click'),
+      const [engagedEmails, listId] = await Promise.all([
+        mailchimp.getCampaignEngagedEmails(c.id, mode),
         mailchimp.getCampaignListId(c.id)
       ]);
-      const open = openEmails.map((e) => e.toLowerCase().trim());
-      const click = clickEmails.map((e) => e.toLowerCase().trim());
-      campaignEngagements.open[c.id] = [...new Set(open)];
-      campaignEngagements.click[c.id] = [...new Set(click)];
-      const emails = [...new Set([...open, ...click])];
+      const emails = [...new Set(engagedEmails.map((e) => e.toLowerCase().trim()))];
+      campaignEngagements[mode][c.id] = emails;
 
       if (listId && emails.length > 0) {
         const details = await mailchimp.getMemberDetailsForEmails(listId, new Set(emails.map((e) => e.toLowerCase())));
@@ -102,8 +104,10 @@ async function runUpdateNewsletter() {
     const contacts = {};
     for (const [email, d] of contactsMap) contacts[email] = d;
 
-    saveMailchimpCache({ updatedAt: now, campaignEngagements, contacts });
+    const mergedContacts = { ...(previous?.contacts || {}), ...contacts };
+    saveMailchimpCache({ updatedAt: now, campaignEngagements, contacts: mergedContacts });
     result.mailchimpContacts = Object.keys(contacts).length;
+    result.mailchimpEngagementType = mode;
     result.success = true;
   } catch (err) {
     result.error = err.message;

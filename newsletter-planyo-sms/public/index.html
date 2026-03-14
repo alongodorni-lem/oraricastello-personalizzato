@@ -768,7 +768,7 @@
     async function pollUpdateNewsletter(jobId, btn) {
       const el = document.getElementById('newsletterStatus');
       try {
-      for (let i = 0; i < 120; i++) {
+      for (let i = 0; i < 300; i++) {
         await new Promise(r => setTimeout(r, 2000));
         try {
           const r = await fetch(API + '/api/update-newsletter/status/' + jobId);
@@ -810,10 +810,14 @@
       const btn = document.getElementById('btnUpdateNewsletter');
       const el = document.getElementById('newsletterStatus');
       btn.disabled = true;
-      el.textContent = 'Aggiornamento in corso... (può richiedere 1-2 minuti)';
+      el.textContent = 'Aggiornamento in corso... (può richiedere alcuni minuti)';
       el.style.color = '';
       try {
-        const r = await fetch(API + '/api/update-newsletter', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const r = await fetch(API + '/api/update-newsletter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engagementType: getEngagementType() })
+        });
         const text = await r.text();
         let d;
         try {

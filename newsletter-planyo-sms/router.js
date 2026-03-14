@@ -199,9 +199,10 @@ const updateJobs = new Map();
 router.post('/api/update-newsletter', (req, res) => {
   const jobId = 'nu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
   updateJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
+  const mode = parseEngagementType(req.body?.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
   setImmediate(async () => {
     try {
-      const result = await dataCache.runUpdateNewsletter();
+      const result = await dataCache.runUpdateNewsletter(mode);
       const job = updateJobs.get(jobId);
       if (job) {
         job.status = 'done';
