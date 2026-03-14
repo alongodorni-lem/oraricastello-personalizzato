@@ -123,10 +123,8 @@ function filterBySegment(data, segments) {
   // Lista D verra aggiunta successivamente da CSV.
   if (!hasAbcSelection) return [];
 
-  // Regola business:
-  // - A: utenti in Lista A
-  // - B: utenti in Lista B
-  // - C: TUTTI gli utenti newsletter esclusi quelli in Lista A (quindi segmenti B + C)
+  // Regola test richiesta:
+  // - C include tutti i contatti newsletter Mailchimp senza esclusioni (A+B+C).
   return data.filter((r) => {
     const seg = String(r.segment || '').toUpperCase();
     const isA = seg === 'A';
@@ -134,7 +132,7 @@ function filterBySegment(data, segments) {
     const isC = seg === 'C';
     if (includeA && isA) return true;
     if (includeB && isB) return true;
-    if (includeC && (isB || isC)) return true;
+    if (includeC && (isA || isB || isC)) return true;
     return false;
   });
 }

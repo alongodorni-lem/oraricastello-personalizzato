@@ -192,8 +192,8 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     try {
       console.log('[Job] Recupero', engagementLabel, 'da Mailchimp...');
       mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
-      const filteredEmails = mailchimpEmails.filter((email) => !emailsInASet.has(email.toLowerCase().trim()));
-      console.log('[Job] Email da Mailchimp (' + engagementLabel + ') dopo esclusione Lista A:', filteredEmails.length);
+      const filteredEmails = mailchimpEmails;
+      console.log('[Job] Email da Mailchimp (' + engagementLabel + ') senza esclusioni:', filteredEmails.length);
       if (filteredEmails.length > 0) {
         console.log('[Job] Recupero telefoni da cache Mailchimp...');
         mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(null, new Set(filteredEmails.map((e) => e.toLowerCase())));
@@ -366,7 +366,6 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
   } catch { /* ignore */ }
 
   for (const email of mailchimpEmails) {
-    if (emailsInA.has(email.toLowerCase().trim())) continue;
     const raw = mailchimpPhones.get(email.toLowerCase()) || '';
     const p = planyo.normalizePhone(raw) || (raw && !raw.includes('@') && raw.replace(/\D/g, '').length >= 9 ? raw.replace(/\D/g, '') : '');
     lists.C.push({ email, phone: p });
@@ -440,7 +439,7 @@ async function getSmsPreview(campaignId, options = {}) {
   // Lista C: aperture Mailchimp escluse email in Lista A (match solo email)
   if (segFilter.includes('C')) {
     const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
-    const filteredEmails = mailchimpEmails.filter((email) => !emailsInA.has(email.toLowerCase().trim()));
+    const filteredEmails = mailchimpEmails;
     for (const email of filteredEmails) {
       lists.C.push({ email });
     }
