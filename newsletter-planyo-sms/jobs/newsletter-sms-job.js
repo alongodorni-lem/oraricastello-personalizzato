@@ -101,12 +101,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
 
   // Sempre creare Lista A per prima (serve per escludere da B, C, D)
   let emailsInA = new Set();
+  let cachedSegmentation = null;
   if (process.env.PLANYO_API_KEY) {
     try {
-      const reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
-      const { emailsInA: setA } = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
-      emailsInA = setA;
-      console.log('[Job] Lista A (prenotati evento target con data futura):', setA.size, 'email da escludere da B/C/D');
+      cachedSegmentation = await planyo.getCachedListAAndB(targetResourceId, monthsLookback);
+      emailsInA = cachedSegmentation.emailsInA;
+      console.log('[Job] Lista A (prenotati evento target con data futura):', emailsInA.size, 'email da escludere da B/C/D');
     } catch (err) {
       console.warn('[Job] Planyo API (skip Lista A):', err.message);
     }
@@ -152,22 +152,33 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     return { processed: 0, inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
   }
 
-  // 1. Carica prenotazioni Planyo (ultimi 18 mesi) - prima operazione: creare sempre Lista A
-  let reservationsByEmail;
-  try {
-    console.log('[Job] Caricamento prenotazioni Planyo (ultimi', monthsLookback, 'mesi)...');
-    reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
-    console.log('[Job] Prenotazioni caricate per', reservationsByEmail.size, 'email');
-  } catch (err) {
-    console.error('[Job] ERRORE Planyo:', err.message);
-    throw err;
-  }
-
   const evIds = options.eventIds && Array.isArray(options.eventIds) ? options.eventIds.map(Number).filter((n) => !isNaN(n)) : null;
   const hasEventFilter = evIds && evIds.length > 0;
 
-  // 2. Lista A (evento target ultimi 6 mesi) e B (altri eventi 18 mesi, esclusi A)
-  const { listA, listB, emailsInA: emailsInASet } = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
+  // 1. Carica segmentazione A/B da cache sessione; usa API solo se serve filtro evento.
+  let reservationsByEmail = null;
+  let listA = [];
+  let listB = [];
+  let emailsInASet = new Set();
+
+  if (cachedSegmentation && !hasEventFilter) {
+    listA = [...cachedSegmentation.listA];
+    listB = [...cachedSegmentation.listB];
+    emailsInASet = new Set(cachedSegmentation.emailsInA);
+  } else {
+    try {
+      console.log('[Job] Caricamento prenotazioni Planyo (ultimi', monthsLookback, 'mesi)...');
+      reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
+      console.log('[Job] Prenotazioni caricate per', reservationsByEmail.size, 'email');
+      const segmented = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
+      listA = segmented.listA;
+      listB = segmented.listB;
+      emailsInASet = segmented.emailsInA;
+    } catch (err) {
+      console.error('[Job] ERRORE Planyo:', err.message);
+      throw err;
+    }
+  }
   const lists = { A: listA, B: listB, C: [] };
 
   if (hasEventFilter) {
@@ -403,9 +414,8 @@ async function getSmsPreview(campaignId, options = {}) {
     let emailsInA = new Set();
     if (process.env.PLANYO_API_KEY) {
       try {
-        const res = await planyo.loadReservationsByEmail(monthsLookback);
-        const { emailsInA: setA } = planyo.buildListAAndB(res, targetResourceId);
-        emailsInA = setA;
+        const segmented = await planyo.getCachedListAAndB(targetResourceId, monthsLookback);
+        emailsInA = segmented.emailsInA;
       } catch (_) {}
     }
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
@@ -414,12 +424,30 @@ async function getSmsPreview(campaignId, options = {}) {
     return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count } };
   }
 
-  const reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
   const eventIdsNum = eventIds && Array.isArray(eventIds) ? eventIds.map(Number).filter((n) => !isNaN(n)) : null;
   const hasEventFilter = eventIdsNum && eventIdsNum.length > 0;
 
-  // Lista A (prenotati evento target con data futura) e B (prenot. 18m esclusi A)
-  const { listA, listB, emailsInA } = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
+  let reservationsByEmail = null;
+  let listA = [];
+  let listB = [];
+  let emailsInA = new Set();
+  if (!hasEventFilter) {
+    try {
+      const segmented = await planyo.getCachedListAAndB(targetResourceId, monthsLookback);
+      listA = segmented.listA;
+      listB = segmented.listB;
+      emailsInA = segmented.emailsInA;
+    } catch (_) {}
+  }
+  if (listA.length === 0 && listB.length === 0 && emailsInA.size === 0) {
+    reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
+    const segmented = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
+    listA = segmented.listA;
+    listB = segmented.listB;
+    emailsInA = segmented.emailsInA;
+  } else if (hasEventFilter) {
+    reservationsByEmail = await planyo.loadReservationsByEmail(monthsLookback);
+  }
   const lists = { A: [], B: [], C: [] };
   const toEmailOnly = (src) => src.map(({ email }) => ({ email }));
   lists.A = toEmailOnly(listA);

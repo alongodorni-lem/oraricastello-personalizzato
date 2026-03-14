@@ -323,6 +323,27 @@ router.post('/api/update-prenotazioni-api', async (req, res) => {
   }
 });
 
+router.post('/api/exclude-target/build', async (req, res) => {
+  try {
+    if (!process.env.PLANYO_API_KEY) {
+      return res.status(400).json({ success: false, error: 'PLANYO_API_KEY non configurata' });
+    }
+    const targetResourceId = parseTargetResourceIdsParam(req.body?.targetResourceId);
+    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    await validateExcludeTargetSetup(true, targetId);
+    const planyo = require('./services/planyo');
+    const segmented = await planyo.getCachedListAAndB(targetId, config.monthsLookback);
+    res.json({
+      success: true,
+      targetResourceId: formatTargetResourceIds(targetId, ''),
+      excludedContacts: segmented.emailsInA.size,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/api/update-prenotazioni/status/:jobId', (req, res) => {
   const job = updateJobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ success: false, error: 'Job non trovato o scaduto' });
@@ -340,6 +361,13 @@ router.post('/api/run', async (req, res) => {
   const body_ = req.body || {};
   const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
   const listDFilters = parseListDFilters(body_);
+  const excludeTarget = parseBoolParam(excludeTargetBooked);
+  const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+  try {
+    await validateExcludeTargetSetup(excludeTarget, targetId);
+  } catch (err) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
 
   const cap = captureLogs(async () => {
     const seg = Array.isArray(segments) ? segments : [segments];
@@ -360,7 +388,6 @@ router.post('/api/run', async (req, res) => {
 
     const evIds = parseEventIdsParam(eventIds);
 
-    const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
     const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
     const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     runAbortRequested = false;
@@ -368,7 +395,7 @@ router.post('/api/run', async (req, res) => {
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: parseBoolParam(excludeTargetBooked) });
+      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: excludeTarget });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
@@ -479,13 +506,26 @@ function parseBoolParam(val) {
   return val === true || val === 'true' || val === '1' || val === 1 || val === 'on';
 }
 
+async function validateExcludeTargetSetup(excludeTargetBooked, targetResourceId) {
+  if (!excludeTargetBooked) return;
+  const targetIds = parseTargetResourceIdsParam(targetResourceId);
+  if (!targetIds || targetIds.length === 0) {
+    throw new Error('ID evento inesistente: inserisci un ID evento Planyo valido.');
+  }
+  const planyo = require('./services/planyo');
+  const check = await planyo.validateTargetResourceIds(targetIds);
+  if (!check.ok) {
+    const idsText = (check.missing || []).join(', ');
+    throw new Error('ID evento inesistente su Planyo: ' + idsText);
+  }
+}
+
 async function getListAExclusions(targetResourceId) {
   const empty = { emailsInA: new Set() };
   if (!process.env.PLANYO_API_KEY) return empty;
   try {
     const planyo = require('./services/planyo');
-    const byEmail = await planyo.loadReservationsByEmail(config.monthsLookback);
-    const { emailsInA } = planyo.buildListAAndB(byEmail, targetResourceId);
+    const { emailsInA } = await planyo.getCachedListAAndB(targetResourceId, config.monthsLookback);
     return { emailsInA };
   } catch (err) {
     console.warn('[ListaD] Impossibile calcolare esclusioni Lista A:', err.message);
@@ -526,7 +566,7 @@ function cleanupOldJobs() {
   }
 }
 
-router.post('/api/sms/preview/start', (req, res) => {
+router.post('/api/sms/preview/start', async (req, res) => {
   try {
     const q = req.body || req.query || {};
     const campaignId = q.campaignId;
@@ -539,8 +579,9 @@ router.post('/api/sms/preview/start', (req, res) => {
 
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
-    const jobId = getJobId();
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    await validateExcludeTargetSetup(excludeTargetBooked, targetId);
+    const jobId = getJobId();
     previewJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
     cleanupOldJobs();
 
@@ -600,6 +641,7 @@ router.get('/api/sms/preview', async (req, res) => {
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    await validateExcludeTargetSetup(excludeTargetBooked, targetId);
     const result = await getSmsPreview(cid, {
       targetResourceId: targetId,
       eventIds,

@@ -87,6 +87,11 @@ function parseTargetResourceIds(targetResourceId) {
 const RESERVATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
 let reservationsCache = null;
 let reservationsCacheExpiry = 0;
+const RESOURCES_CACHE_TTL_MS = 60 * 60 * 1000;
+let resourcesCache = null;
+let resourcesCacheExpiry = 0;
+const TARGET_SEGMENT_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+const targetSegmentCache = new Map();
 
 /**
  * Carica tutte le prenotazioni CONFERMATE effettuate (data di prenotazione) negli ultimi N mesi.
@@ -207,7 +212,9 @@ function toStartTimestamp(val) {
  * @returns {{ listA: Array<{email, phone}>, listB: Array<{email, phone}>, emailsInA: Set<string> }}
  */
 function buildListAAndB(reservationsByEmail, targetResourceId) {
-  const nowTimestamp = Math.floor(Date.now() / 1000);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStartTimestamp = Math.floor(today.getTime() / 1000);
   const targetIds = parseTargetResourceIds(targetResourceId);
   const hasTargetFilter = targetIds.length > 0;
   const listA = [];
@@ -222,7 +229,7 @@ function buildListAAndB(reservationsByEmail, targetResourceId) {
       const resourceId = Number(r.resource_id);
       if (isNaN(resourceId) || !targetIds.includes(resourceId)) return false;
       const startSec = toStartTimestamp(r.start_time);
-      return startSec != null && startSec > nowTimestamp;
+      return startSec != null && startSec >= todayStartTimestamp;
     });
 
     if (hasTargetFuture) {
@@ -236,11 +243,81 @@ function buildListAAndB(reservationsByEmail, targetResourceId) {
   return { listA, listB, emailsInA };
 }
 
+function collectResourceIds(value, out = new Set(), depth = 0) {
+  if (!value || depth > 6) return out;
+  if (Array.isArray(value)) {
+    for (const item of value) collectResourceIds(item, out, depth + 1);
+    return out;
+  }
+  if (typeof value !== 'object') return out;
+
+  const direct = [value.id, value.resource_id, value.resourceId, value.resourceid];
+  for (const v of direct) {
+    const n = parseInt(String(v || '').trim(), 10);
+    if (!isNaN(n) && n > 0) out.add(n);
+  }
+  for (const k of Object.keys(value)) {
+    collectResourceIds(value[k], out, depth + 1);
+  }
+  return out;
+}
+
+async function getPlanyoResourceIds() {
+  if (resourcesCache && Date.now() < resourcesCacheExpiry) return resourcesCache;
+  const siteId = process.env.PLANYO_SITE_ID || '8895';
+  const data = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2 });
+  const ids = [...collectResourceIds(data)];
+  resourcesCache = ids;
+  resourcesCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
+  return ids;
+}
+
+async function validateTargetResourceIds(targetResourceId) {
+  const ids = parseTargetResourceIds(targetResourceId);
+  if (ids.length === 0) return { ok: false, missing: [], all: [] };
+  const existing = new Set(await getPlanyoResourceIds());
+  const missing = ids.filter((id) => !existing.has(id));
+  return { ok: missing.length === 0, missing, all: ids };
+}
+
+function getTargetSegmentCacheKey(targetResourceId, monthsLookback = 18) {
+  const ids = parseTargetResourceIds(targetResourceId).sort((a, b) => a - b);
+  return String(monthsLookback) + '|' + ids.join(',');
+}
+
+/**
+ * Cache temporanea Lista A/B per sessione server.
+ * Evita chiamate ripetute a API Planyo durante la stessa sessione di lavoro.
+ */
+async function getCachedListAAndB(targetResourceId, monthsLookback = 18) {
+  const key = getTargetSegmentCacheKey(targetResourceId, monthsLookback);
+  const now = Date.now();
+  const cached = targetSegmentCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return {
+      listA: [...cached.listA],
+      listB: [...cached.listB],
+      emailsInA: new Set(cached.emailsInA)
+    };
+  }
+  const reservationsByEmail = await loadReservationsByEmail(monthsLookback);
+  const { listA, listB, emailsInA } = buildListAAndB(reservationsByEmail, targetResourceId);
+  targetSegmentCache.set(key, {
+    expiresAt: now + TARGET_SEGMENT_CACHE_TTL_MS,
+    listA: [...listA],
+    listB: [...listB],
+    emailsInA: [...emailsInA]
+  });
+  return { listA, listB, emailsInA };
+}
+
 module.exports = {
   callPlanyoAPI,
   loadReservationsByEmail,
   segmentEmail,
   buildListAAndB,
+  validateTargetResourceIds,
+  getCachedListAAndB,
   extractPhone,
   normalizePhone
 };

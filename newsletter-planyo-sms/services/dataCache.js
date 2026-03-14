@@ -220,10 +220,7 @@ function importNewsletterContacts(items, options = {}) {
     contactsByEmail.set(email, mergeContact(current, incoming));
   }
 
-  const dedupeByPhone = new Set();
   for (const [email, c] of contactsByEmail.entries()) {
-    if (c.telefono && dedupeByPhone.has(c.telefono)) continue;
-    if (c.telefono) dedupeByPhone.add(c.telefono);
     baseContacts[email] = mergeContact(baseContacts[email], c);
   }
 
@@ -326,8 +323,9 @@ async function runUpdatePrenotazioni() {
     }
 
     const raw = await planyoReportCsv.fetchAndParseCsv(csvUrl);
-    savePlanyoCache({ updatedAt: now, contacts: raw });
-    result.planyoContacts = raw.length;
+    const uniqueByEmail = planyoReportCsv.dedupeByEmail(raw);
+    savePlanyoCache({ updatedAt: now, contacts: uniqueByEmail });
+    result.planyoContacts = uniqueByEmail.length;
     result.success = true;
   } catch (err) {
     result.error = err.message;

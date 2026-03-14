@@ -270,20 +270,23 @@
     <div class="card">
       <h2>Crea Pubblico</h2>
       <div class="form-group">
+        <p class="hint" style="margin-bottom:0.5rem;"><strong>DA ESCLUDERE</strong></p>
+        <button type="button" class="btn btn-secondary" id="btnBuildExcludeTarget">ESCLUDI PRENOTATI EVENTO TARGET</button>
+        <p class="hint" id="excludeTargetStatus" style="margin-top: 0.5rem;">Esclusione evento target non attiva.</p>
+      </div>
+      <div class="form-group">
+        <label>ID evento Planyo (filtro prenotazioni)</label>
+        <input type="text" id="smsEventIds" placeholder="236955" maxlength="80">
+        <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola (es. 236955, 243693).</p>
+      </div>
+      <hr style="margin: 0.75rem 0; border: 0; border-top: 1px solid var(--border);">
+      <div class="form-group">
         <p class="hint" style="margin-bottom:0.5rem;"><strong>DA INSERIRE IN LISTA</strong></p>
         <div class="checkboxes">
           <label class="checkbox-label"><input type="checkbox" name="smsSource" value="newsletter"> Tutti i contatti da newsletter caricata (CSV)</label>
           <label class="checkbox-label"><input type="checkbox" name="smsSource" value="prenotazioni"> Tutti i contatti Prenotazioni (API Planyo)</label>
           <label class="checkbox-label"><input type="checkbox" name="smsSource" value="report"> Tutti i contatti dal report (CSV Planyo)</label>
         </div>
-        <hr style="margin: 0.75rem 0; border: 0; border-top: 1px solid var(--border);">
-        <p class="hint" style="margin-bottom:0.5rem;"><strong>DA ESCLUDERE</strong></p>
-        <label class="checkbox-label"><input type="checkbox" id="excludeTargetBooked"> ESCLUDI PRENOTATI EVENTO TARGET</label>
-      </div>
-      <div class="form-group">
-        <label>ID evento Planyo (filtro prenotazioni)</label>
-        <input type="text" id="smsEventIds" placeholder="236955" maxlength="80">
-        <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola (es. 236955, 243693).</p>
       </div>
       <div class="form-group" id="smsListDFilters" style="display:none;">
         <label>Filtri Lista D (da CSV Planyo)</label>
@@ -301,12 +304,6 @@
           </div>
           <p class="hint">Seleziona gli stati da includere. Se nessuno: tutti.</p>
         </div>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="dryRun">
-          Solo simulazione (nessun SMS inviato)
-        </label>
       </div>
       <div class="form-group">
         <button type="button" class="btn btn-secondary" id="btnSmsCalc">Calcola contatti</button>
@@ -454,6 +451,7 @@
     })();
 
     const NEWSLETTER_SOURCE_ID = 'uploaded-file';
+    let excludeTargetBookedActive = false;
 
     function showOutput(el, logs, extra) {
       let html = '';
@@ -480,7 +478,7 @@
       const includeNewsletter = src.includes('newsletter');
       const includePrenotazioni = src.includes('prenotazioni');
       const includeReport = src.includes('report');
-      const excludeTargetBooked = !!document.getElementById('excludeTargetBooked')?.checked;
+      const excludeTargetBooked = excludeTargetBookedActive;
       const segments = [];
       if (includePrenotazioni) segments.push(excludeTargetBooked ? 'B' : 'A', 'B');
       if (includeNewsletter) segments.push('C');
@@ -573,14 +571,13 @@
       const btn = document.getElementById('btnRun');
       const btnAbort = document.getElementById('btnAbort');
       const out = document.getElementById('runOutput');
-      const dryRun = document.getElementById('dryRun').checked;
       const audience = getSmsAudienceSelection();
       const segs = audience.segments;
       if (!segs.length) {
         out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Da inserire in lista".</div>';
         return;
       }
-      if (!dryRun && !confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
+      if (!confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
         return;
       }
 
@@ -605,7 +602,6 @@
             campaignId: NEWSLETTER_SOURCE_ID,
             segments: segs.length ? segs : ['A', 'B', 'C'],
             excludeTargetBooked: audience.excludeTargetBooked,
-            dryRun,
             engagementType: getEngagementType(),
             targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
             eventIds: document.getElementById('smsEventIds').value.trim() || undefined,
@@ -733,15 +729,30 @@
     let updateNewsletterRunning = false;
     let updatePrenotazioniRunning = false;
     let updatePrenotazioniApiRunning = false;
+    let updateExcludeTargetRunning = false;
 
     function refreshUpdateButtonsState() {
       const btnNewsletter = document.getElementById('btnUpdateNewsletter');
       const btnPrenotazioniApi = document.getElementById('btnUpdatePrenotazioniApi');
       const btnPrenotazioni = document.getElementById('btnUpdatePrenotazioni');
-      const busy = updateNewsletterRunning || updatePrenotazioniRunning || updatePrenotazioniApiRunning;
+      const btnExcludeTarget = document.getElementById('btnBuildExcludeTarget');
+      const busy = updateNewsletterRunning || updatePrenotazioniRunning || updatePrenotazioniApiRunning || updateExcludeTargetRunning;
       if (btnNewsletter) btnNewsletter.disabled = busy;
       if (btnPrenotazioniApi) btnPrenotazioniApi.disabled = busy;
       if (btnPrenotazioni) btnPrenotazioni.disabled = busy;
+      if (btnExcludeTarget) btnExcludeTarget.disabled = busy;
+      const btnSmsCalc = document.getElementById('btnSmsCalc');
+      const btnRun = document.getElementById('btnRun');
+      const btnEmailCalc = document.getElementById('btnEmailCalc');
+      const btnExportCsv = document.getElementById('btnExportCsv');
+      const btnSendEmail = document.getElementById('btnSendEmail');
+      const btnTest = document.getElementById('btnTest');
+      if (btnSmsCalc) btnSmsCalc.disabled = busy;
+      if (btnRun && busy) btnRun.disabled = true;
+      if (btnEmailCalc) btnEmailCalc.disabled = busy;
+      if (btnExportCsv && busy) btnExportCsv.disabled = true;
+      if (btnSendEmail && busy) btnSendEmail.disabled = true;
+      if (btnTest) btnTest.disabled = busy;
     }
 
     document.getElementById('btnUpdateNewsletter').onclick = async () => {
@@ -904,11 +915,25 @@
       document.getElementById('smsCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti (totale email).';
       document.getElementById('btnRun').disabled = true;
     }
+    function resetExcludeTargetState() {
+      excludeTargetBookedActive = false;
+      const status = document.getElementById('excludeTargetStatus');
+      const btn = document.getElementById('btnBuildExcludeTarget');
+      if (status) {
+        status.textContent = 'Esclusione evento target non attiva.';
+        status.style.color = '';
+      }
+      if (btn) {
+        btn.textContent = 'ESCLUDI PRENOTATI EVENTO TARGET';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+      }
+    }
     function resetEmailCalc() {
       document.getElementById('emailCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti (totale email).';
       document.getElementById('btnExportCsv').disabled = document.getElementById('btnSendEmail').disabled = true;
     }
-    document.getElementById('smsEventIds').oninput = resetSmsCalc;
+    document.getElementById('smsEventIds').oninput = () => { resetSmsCalc(); resetExcludeTargetState(); };
     document.getElementById('emailEventIds').oninput = resetEmailCalc;
     document.getElementById('emailEventFilter').oninput = resetEmailCalc;
     ['listDEventNameContains'].forEach(id => {
@@ -955,9 +980,44 @@
       emailDraftSaveTimer = setTimeout(saveEmailDraftConfig, 500);
     }
     document.querySelectorAll('input[name="smsSource"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
-    const excludeTargetBookedEl = document.getElementById('excludeTargetBooked');
-    if (excludeTargetBookedEl) excludeTargetBookedEl.onchange = resetSmsCalc;
     document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
+    document.getElementById('btnBuildExcludeTarget').onclick = async () => {
+      const btn = document.getElementById('btnBuildExcludeTarget');
+      const status = document.getElementById('excludeTargetStatus');
+      if (updateNewsletterRunning || updatePrenotazioniRunning || updatePrenotazioniApiRunning || updateExcludeTargetRunning) return;
+      if (excludeTargetBookedActive) {
+        resetExcludeTargetState();
+        resetSmsCalc();
+        return;
+      }
+      const targetValue = document.getElementById('smsEventIds').value.trim();
+      updateExcludeTargetRunning = true;
+      refreshUpdateButtonsState();
+      status.textContent = 'Creazione elenco esclusioni evento target in corso...';
+      status.style.color = '';
+      try {
+        const d = await fetchJson(API + '/api/exclude-target/build', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetResourceId: targetValue || undefined })
+        });
+        if (!d.success) throw new Error(d.error || 'Errore creazione esclusioni');
+        excludeTargetBookedActive = true;
+        btn.textContent = 'ESCLUSIONE ATTIVA (clicca per disattivare)';
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+        status.innerHTML = '<strong>Esclusione evento target attiva</strong> | contatti esclusi: ' + (d.excludedContacts || 0);
+        status.style.color = 'var(--success)';
+        resetSmsCalc();
+      } catch (e) {
+        excludeTargetBookedActive = false;
+        status.textContent = 'Errore: ' + e.message;
+        status.style.color = 'var(--danger)';
+      } finally {
+        updateExcludeTargetRunning = false;
+        refreshUpdateButtonsState();
+      }
+    };
     
     document.getElementById('emailSubject').oninput = () => {
       if (emailContactCount > 0) updateEmailBatchHint();
