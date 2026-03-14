@@ -31,8 +31,9 @@ function normalizeCampaignEngagementsShape(cached) {
     out.click = ce.click || {};
     return out;
   }
-  // Compatibilità con formato legacy: campaignId -> emails (interpreta come open)
-  out.open = ce;
+  // Formato legacy (campaignId -> emails) non ha tipo engagement affidabile:
+  // evitiamo mapping impliciti a open/click per non riusare dati sbagliati.
+  // In questo caso verrà fatto fetch API e cache riscritta nel nuovo formato.
   return out;
 }
 
