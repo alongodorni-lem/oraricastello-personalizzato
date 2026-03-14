@@ -257,6 +257,9 @@ function collectResourceIds(value, out = new Set(), depth = 0) {
     if (!isNaN(n) && n > 0) out.add(n);
   }
   for (const k of Object.keys(value)) {
+    // Alcune risposte Planyo usano l'ID risorsa come chiave oggetto.
+    const keyNum = parseInt(String(k || '').trim(), 10);
+    if (!isNaN(keyNum) && keyNum > 0) out.add(keyNum);
     collectResourceIds(value[k], out, depth + 1);
   }
   return out;
@@ -275,8 +278,27 @@ async function getPlanyoResourceIds() {
 async function validateTargetResourceIds(targetResourceId) {
   const ids = parseTargetResourceIds(targetResourceId);
   if (ids.length === 0) return { ok: false, missing: [], all: [] };
-  const existing = new Set(await getPlanyoResourceIds());
-  const missing = ids.filter((id) => !existing.has(id));
+  let existing = new Set();
+  try {
+    existing = new Set(await getPlanyoResourceIds());
+  } catch (_) {
+    // fallback gestito sotto su prenotazioni cache/API
+  }
+
+  // Fallback robusto: se list_resources non restituisce gli ID attesi,
+  // verifica anche gli ID risorsa presenti nelle prenotazioni confermate recenti.
+  let reservationIds = new Set();
+  try {
+    const byEmail = await loadReservationsByEmail(18);
+    for (const entry of byEmail.values()) {
+      for (const r of (entry?.reservations || [])) {
+        const n = Number(r.resource_id);
+        if (!isNaN(n) && n > 0) reservationIds.add(n);
+      }
+    }
+  } catch (_) {}
+
+  const missing = ids.filter((id) => !existing.has(id) && !reservationIds.has(id));
   return { ok: missing.length === 0, missing, all: ids };
 }
 
