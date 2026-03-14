@@ -45,6 +45,15 @@ function normalizeStatusToFilter(rawStatus) {
   return null;
 }
 
+function normalizeContainsText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * Colonne usate: Nome, Cognome, Email, Telefono (risultato) + Risorsa, Stato, IDrisorsa, Creazione
  */
@@ -207,11 +216,11 @@ function filterListDData(data, filters = {}) {
   let out = data;
 
   if (filters.eventNameContains && typeof filters.eventNameContains === 'string') {
-    const q = filters.eventNameContains.trim().toLowerCase();
+    const q = normalizeContainsText(filters.eventNameContains);
     if (q) {
       const synonyms = q === 'grotta' ? ['grotta', 'grotto'] : q === 'grotto' ? ['grotto', 'grotta'] : [q];
       out = out.filter((r) => {
-        const ev = (r.eventoPrenotato || '').toLowerCase();
+        const ev = normalizeContainsText(r.eventoPrenotato || '');
         return synonyms.some((s) => ev.includes(s));
       });
     }

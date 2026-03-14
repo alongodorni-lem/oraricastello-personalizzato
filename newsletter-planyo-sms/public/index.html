@@ -287,7 +287,7 @@
         </div>
       </div>
       <div class="form-group" id="smsListDFilters" style="display:none;">
-        <label>Filtri Lista D (da CSV Planyo)</label>
+        <label>Lista da report planyo</label>
         <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per Risorsa e Stato:</p>
         <div class="form-group">
           <label>Nome evento contiene (colonna Risorsa)</label>
@@ -367,7 +367,7 @@
           <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola.</p>
         </div>
         <div class="form-group" id="emailListDFilters" style="display:none;">
-          <label>Filtri Lista D (da CSV Planyo)</label>
+          <label>Lista da report planyo</label>
           <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per Risorsa e Stato:</p>
           <div class="form-group">
             <label>Nome evento contiene (colonna Risorsa)</label>
@@ -602,7 +602,6 @@
             excludeTargetBooked: audience.excludeTargetBooked,
             engagementType: getEngagementType(),
             targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
-            eventIds: document.getElementById('smsEventIds').value.trim() || undefined,
             smsText: document.getElementById('smsText').value.trim() || undefined,
             ...getListDFilters(true)
           }),
@@ -1050,8 +1049,6 @@
           segments: (segs.length ? segs : ['A','B','C']).join(','),
           excludeTargetBooked: audience.excludeTargetBooked ? '1' : '0'
         };
-        const evIds = document.getElementById('smsEventIds').value.trim();
-        if (evIds) baseParams.eventIds = evIds;
         Object.assign(baseParams, getListDFilters(true));
         let d;
         if (isLocalhost()) {
