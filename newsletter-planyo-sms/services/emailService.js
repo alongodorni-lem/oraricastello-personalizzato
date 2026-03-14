@@ -70,7 +70,9 @@ function applyTemplate(template, data) {
   out = out.replace(/\{\{nome\}\}/g, data.nome || '');
   out = out.replace(/\{\{cognome\}\}/g, data.cognome || '');
   out = out.replace(/\{\{email\}\}/g, data.email || '');
-  out = out.replace(/\{\{evento\}\}/g, data.eventoPrenotato || '');
+  const seg = String(data.segment || '').toUpperCase();
+  const evento = (seg === 'A' || seg === 'B' || seg === 'D') ? (data.eventoPrenotato || '') : '';
+  out = out.replace(/\{\{evento\}\}/g, evento);
   return out;
 }
 

@@ -7,6 +7,29 @@ const planyo = require('../services/planyo');
 const planyoReportCsv = require('../services/planyoReportCsv');
 const config = require('../config/segments');
 
+function looksLikeNumericResource(value) {
+  const s = String(value || '').trim();
+  return !!s && /^\d+$/.test(s);
+}
+
+function pickEventNameFromReservations(entry) {
+  const reservations = entry?.reservations || [];
+  if (!reservations.length) return '';
+
+  const sorted = [...reservations].sort((a, b) => {
+    const at = Number(a?.start_time || 0);
+    const bt = Number(b?.start_time || 0);
+    return bt - at;
+  });
+
+  // Priorita alla prenotazione piu recente con nome testuale.
+  for (const r of sorted) {
+    const name = String(r?.resource_name || '').trim();
+    if (name && !looksLikeNumericResource(name)) return name;
+  }
+  return '';
+}
+
 /**
  * Costruisce l'array di dati per Newsletter EMAIL (nome, cognome, email, telefono, evento, segment)
  * @param {string} campaignId
@@ -40,7 +63,12 @@ async function buildEmailListData(campaignId, options = {}) {
     const nome = (planyoFirst || mc?.firstName || '').trim();
     const cognome = (planyoLast || mc?.lastName || '').trim();
     const telefono = planyo.normalizePhone(phone || mc?.phone) || (phone || mc?.phone || '').trim();
-    const eventoPrenotato = (lastResource || '').trim();
+    const segmentUpper = String(segment || '').toUpperCase();
+    let eventoPrenotato = '';
+    if (segmentUpper === 'A' || segmentUpper === 'B') {
+      const fromSegment = String(lastResource || '').trim();
+      eventoPrenotato = !looksLikeNumericResource(fromSegment) ? fromSegment : pickEventNameFromReservations(entry);
+    }
 
     result.push({
       nome,
@@ -48,7 +76,7 @@ async function buildEmailListData(campaignId, options = {}) {
       email: key,
       telefono,
       eventoPrenotato,
-      segment,
+      segment: segmentUpper,
       resourceIds
     });
   }

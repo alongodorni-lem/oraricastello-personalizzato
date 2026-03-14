@@ -148,10 +148,12 @@ router.get('/api/config', (req, res) => {
     const cfg = loadUiConfig();
     const targetResourceId = formatTargetResourceIds(cfg.targetResourceId ?? config.targetResourceId ?? 236955);
     const mailchimpEngagementType = parseEngagementType(cfg.mailchimpEngagementType || 'open');
+    const emailSubject = typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '';
+    const emailBody = typeof cfg.emailBody === 'string' ? cfg.emailBody : '';
     dataCache.startWeeklyNewsletterRefresh(mailchimpEngagementType);
     const cacheStatus = dataCache.getCacheStatus();
     const ready = dataCache.isReadyForOperations();
-    res.json({ success: true, targetResourceId, mailchimpEngagementType, cacheStatus, ready });
+    res.json({ success: true, targetResourceId, mailchimpEngagementType, emailSubject, emailBody, cacheStatus, ready });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -173,12 +175,20 @@ router.post('/api/config', (req, res) => {
     if (Object.prototype.hasOwnProperty.call(body, 'mailchimpEngagementType')) {
       cfg.mailchimpEngagementType = parseEngagementType(body.mailchimpEngagementType);
     }
+    if (Object.prototype.hasOwnProperty.call(body, 'emailSubject')) {
+      cfg.emailSubject = String(body.emailSubject || '').slice(0, 200);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'emailBody')) {
+      cfg.emailBody = String(body.emailBody || '').slice(0, 20000);
+    }
 
     saveUiConfig(cfg);
     res.json({
       success: true,
       targetResourceId: formatTargetResourceIds(cfg.targetResourceId ?? config.targetResourceId ?? 236955),
-      mailchimpEngagementType: parseEngagementType(cfg.mailchimpEngagementType || 'open')
+      mailchimpEngagementType: parseEngagementType(cfg.mailchimpEngagementType || 'open'),
+      emailSubject: typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '',
+      emailBody: typeof cfg.emailBody === 'string' ? cfg.emailBody : ''
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

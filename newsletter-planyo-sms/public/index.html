@@ -382,7 +382,7 @@
     <div id="tabEmail" class="tab-panel">
       <div class="card">
         <h2>Newsletter EMAIL</h2>
-        <p class="hint" style="margin-bottom: 1rem;">Esporta CSV, filtra per evento, invia email personalizzate via Gmail (max 500/giorno). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}}</p>
+        <p class="hint" style="margin-bottom: 1rem;">Esporta CSV, filtra per evento, invia email personalizzate via Gmail (max 500/giorno). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
         <div class="form-group">
           <label>Campagna</label>
           <select id="emailCampaignId">
@@ -459,7 +459,7 @@
         <div class="form-group">
           <label>Messaggio email</label>
           <textarea id="emailBody" rows="6" placeholder="Ciao {{nome}},\n\n..."></textarea>
-          <p class="hint">Placeholder: {{nome}} {{cognome}} {{email}} {{evento}}</p>
+          <p class="hint">Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
         </div>
         <div class="form-group">
           <label>Invio prova</label>
@@ -761,6 +761,8 @@
         const engagementType = (d.mailchimpEngagementType === 'click') ? 'click' : 'open';
         document.getElementById('targetResourceId').value = tid;
         document.getElementById('mailchimpEngagementType').value = engagementType;
+        if (typeof d.emailSubject === 'string') document.getElementById('emailSubject').value = d.emailSubject;
+        if (typeof d.emailBody === 'string') document.getElementById('emailBody').value = d.emailBody;
         const smsEv = document.getElementById('smsEventIds');
         const emailEv = document.getElementById('emailEventIds');
         if (!smsEv.value.trim()) smsEv.value = tid;
@@ -1063,10 +1065,33 @@
       if (statuses.length) obj.listDStatuses = statuses.join(',');
       return obj;
     }
+    let emailDraftSaveTimer = null;
+    async function saveEmailDraftConfig() {
+      try {
+        await fetch(API + '/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            emailSubject: document.getElementById('emailSubject').value,
+            emailBody: document.getElementById('emailBody').value
+          })
+        });
+      } catch (_) {}
+    }
+    function scheduleEmailDraftSave() {
+      if (emailDraftSaveTimer) clearTimeout(emailDraftSaveTimer);
+      emailDraftSaveTimer = setTimeout(saveEmailDraftConfig, 500);
+    }
     document.querySelectorAll('input[name="seg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
     document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
     document.getElementById('emailCampaignId').onchange = resetEmailCalc;
-    document.getElementById('emailSubject').oninput = () => { if (emailContactCount > 0) updateEmailBatchHint(); };
+    document.getElementById('emailSubject').oninput = () => {
+      if (emailContactCount > 0) updateEmailBatchHint();
+      scheduleEmailDraftSave();
+    };
+    document.getElementById('emailBody').oninput = scheduleEmailDraftSave;
+    document.getElementById('emailSubject').onblur = saveEmailDraftConfig;
+    document.getElementById('emailBody').onblur = saveEmailDraftConfig;
     document.getElementById('mailchimpEngagementType').onchange = async () => {
       resetSmsCalc();
       resetEmailCalc();
