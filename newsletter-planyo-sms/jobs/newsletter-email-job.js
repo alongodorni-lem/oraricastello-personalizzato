@@ -50,23 +50,28 @@ async function buildEmailListData(campaignId, options = {}) {
     planyo.loadReservationsByEmail(months),
     mailchimp.getMemberDetailsForEmailsWithCache(emailsSet, null)
   ]);
+  const { emailsInA } = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
 
   const result = [];
   for (const email of emails) {
     const key = email.toLowerCase().trim();
     const entry = reservationsByEmail.get(key);
-    const { segment, phone, lastResource, firstName: planyoFirst, lastName: planyoLast } = planyo.segmentEmail(reservationsByEmail, email, targetResourceId);
     const mc = memberDetails.get(key);
 
     const resourceIds = (entry?.reservations || []).map((r) => r.resource_id).filter((id) => id != null).map(Number);
 
+    const planyoPhone = entry?.phone || '';
+    const planyoFirst = entry?.firstName || '';
+    const planyoLast = entry?.lastName || '';
     const nome = (planyoFirst || mc?.firstName || '').trim();
     const cognome = (planyoLast || mc?.lastName || '').trim();
-    const telefono = planyo.normalizePhone(phone || mc?.phone) || (phone || mc?.phone || '').trim();
-    const segmentUpper = String(segment || '').toUpperCase();
+    const telefono = planyo.normalizePhone(planyoPhone || mc?.phone) || (planyoPhone || mc?.phone || '').trim();
+
+    const hasReservations18m = !!(entry?.reservations?.length);
+    const segmentUpper = emailsInA.has(key) ? 'A' : (hasReservations18m ? 'B' : 'C');
     let eventoPrenotato = '';
     if (segmentUpper === 'A' || segmentUpper === 'B') {
-      const fromSegment = String(lastResource || '').trim();
+      const fromSegment = String((entry?.reservations || [])[((entry?.reservations || []).length - 1)]?.resource_name || '').trim();
       eventoPrenotato = !looksLikeNumericResource(fromSegment) ? fromSegment : pickEventNameFromReservations(entry);
     }
 
@@ -93,7 +98,12 @@ function filterByEventIds(data, eventIds) {
   if (!eventIds || !Array.isArray(eventIds) || eventIds.length === 0) return data;
   const ids = new Set(eventIds.map((id) => Number(id)).filter((n) => !isNaN(n)));
   if (ids.size === 0) return data;
-  return data.filter((r) => (r.resourceIds || []).some((id) => ids.has(Number(id))));
+  return data.filter((r) => {
+    const seg = String(r.segment || '').toUpperCase();
+    // Lista C deve essere sempre "newsletter - A" (match solo email), indipendente da eventIds.
+    if (seg === 'C') return true;
+    return (r.resourceIds || []).some((id) => ids.has(Number(id)));
+  });
 }
 
 /**
@@ -104,8 +114,29 @@ function filterByEventIds(data, eventIds) {
 function filterBySegment(data, segments) {
   if (!segments || !Array.isArray(segments) || segments.length === 0) return data;
   const set = new Set(segments.map((s) => String(s).toUpperCase()));
-  if (set.has('D')) return data;
-  return data.filter((r) => set.has((r.segment || '').toUpperCase()));
+  const includeA = set.has('A');
+  const includeB = set.has('B');
+  const includeC = set.has('C');
+  const hasAbcSelection = includeA || includeB || includeC;
+
+  // Se e selezionata solo D, la parte API deve risultare vuota:
+  // Lista D verra aggiunta successivamente da CSV.
+  if (!hasAbcSelection) return [];
+
+  // Regola business:
+  // - A: utenti in Lista A
+  // - B: utenti in Lista B
+  // - C: TUTTI gli utenti newsletter esclusi quelli in Lista A (quindi segmenti B + C)
+  return data.filter((r) => {
+    const seg = String(r.segment || '').toUpperCase();
+    const isA = seg === 'A';
+    const isB = seg === 'B';
+    const isC = seg === 'C';
+    if (includeA && isA) return true;
+    if (includeB && isB) return true;
+    if (includeC && (isB || isC)) return true;
+    return false;
+  });
 }
 
 /**
