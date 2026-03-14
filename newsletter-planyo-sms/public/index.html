@@ -740,7 +740,10 @@
         const next = cacheStatus.mailchimpNextRefreshAt
           ? (' | <strong>Prossimo refresh</strong> ' + new Date(cacheStatus.mailchimpNextRefreshAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }))
           : '';
-        ns.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(cacheStatus.mailchimpUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + next;
+        const contactsInfo = (typeof cacheStatus.mailchimpContacts === 'number')
+          ? (' | contatti: ' + cacheStatus.mailchimpContacts)
+          : '';
+        ns.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(cacheStatus.mailchimpUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + contactsInfo + next;
         ns.style.color = 'var(--success)';
       } else {
         ns.textContent = 'Newsletter da aggiornare';
