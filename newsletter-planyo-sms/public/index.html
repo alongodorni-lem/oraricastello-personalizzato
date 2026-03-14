@@ -765,6 +765,16 @@
       } catch (e) { /* use default */ }
     }
 
+    let updateNewsletterRunning = false;
+    let updatePrenotazioniRunning = false;
+
+    function refreshUpdateButtonsState() {
+      const btnNewsletter = document.getElementById('btnUpdateNewsletter');
+      const btnPrenotazioni = document.getElementById('btnUpdatePrenotazioni');
+      if (btnNewsletter) btnNewsletter.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
+      if (btnPrenotazioni) btnPrenotazioni.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
+    }
+
     async function pollUpdateNewsletter(jobId, btn) {
       const el = document.getElementById('newsletterStatus');
       try {
@@ -802,14 +812,17 @@
       el.textContent = 'Timeout: l\'aggiornamento sta richiedendo troppo tempo. Riprova.';
       el.style.color = 'var(--danger)';
       } finally {
-        btn.disabled = false;
+        updateNewsletterRunning = false;
+        refreshUpdateButtonsState();
       }
     }
 
     document.getElementById('btnUpdateNewsletter').onclick = async () => {
       const btn = document.getElementById('btnUpdateNewsletter');
+      if (updatePrenotazioniRunning || updateNewsletterRunning) return;
       const el = document.getElementById('newsletterStatus');
-      btn.disabled = true;
+      updateNewsletterRunning = true;
+      refreshUpdateButtonsState();
       el.textContent = 'Aggiornamento in corso... (può richiedere alcuni minuti)';
       el.style.color = '';
       try {
@@ -833,12 +846,14 @@
         } else {
           el.textContent = 'Errore: risposta inattesa dal server';
           el.style.color = 'var(--danger)';
-          btn.disabled = false;
+          updateNewsletterRunning = false;
+          refreshUpdateButtonsState();
         }
       } catch (e) {
         el.textContent = 'Errore: ' + e.message;
         el.style.color = 'var(--danger)';
-        btn.disabled = false;
+        updateNewsletterRunning = false;
+        refreshUpdateButtonsState();
       }
     };
 
@@ -879,14 +894,17 @@
       el.textContent = 'Timeout: l\'aggiornamento sta richiedendo troppo tempo. Riprova.';
       el.style.color = 'var(--danger)';
       } finally {
-        btn.disabled = false;
+        updatePrenotazioniRunning = false;
+        refreshUpdateButtonsState();
       }
     }
 
     document.getElementById('btnUpdatePrenotazioni').onclick = async () => {
       const btn = document.getElementById('btnUpdatePrenotazioni');
+      if (updateNewsletterRunning || updatePrenotazioniRunning) return;
       const el = document.getElementById('prenotazioniStatus');
-      btn.disabled = true;
+      updatePrenotazioniRunning = true;
+      refreshUpdateButtonsState();
       el.textContent = 'Aggiornamento in corso...';
       el.style.color = '';
       try {
@@ -906,12 +924,14 @@
         } else {
           el.textContent = 'Errore: risposta inattesa dal server';
           el.style.color = 'var(--danger)';
-          btn.disabled = false;
+          updatePrenotazioniRunning = false;
+          refreshUpdateButtonsState();
         }
       } catch (e) {
         el.textContent = 'Errore: ' + e.message;
         el.style.color = 'var(--danger)';
-        btn.disabled = false;
+        updatePrenotazioniRunning = false;
+        refreshUpdateButtonsState();
       }
     };
 
