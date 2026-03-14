@@ -355,6 +355,17 @@ async function getCampaignEngagedEmailsWithCache(campaignId, engagementType = 'o
       setRuntimeCache(runtimeKey, emails);
       return emails;
     }
+    // Fallback robusto: se l'ID campagna richiesto non e presente in cache,
+    // usa l'unione di tutte le campagne cached per il tipo selezionato.
+    const allCached = Object.values(byType || {})
+      .flat()
+      .map((e) => String(e || '').toLowerCase().trim())
+      .filter(Boolean);
+    if (allCached.length > 0) {
+      const union = [...new Set(allCached)];
+      setRuntimeCache(runtimeKey, union);
+      return union;
+    }
   } catch (_) {}
   // In preview/run non facciamo fetch live: se manca in cache, ritorna vuoto.
   return [];
