@@ -757,7 +757,9 @@
       try {
         const r = await fetch(API + '/api/config');
         const d = await r.json();
-        const tid = String(d.targetResourceId || document.getElementById('targetResourceId').value || '236955');
+        const tid = (d.targetResourceId !== undefined && d.targetResourceId !== null)
+          ? String(d.targetResourceId)
+          : String(document.getElementById('targetResourceId').value || '236955');
         const engagementType = (d.mailchimpEngagementType === 'click') ? 'click' : 'open';
         document.getElementById('targetResourceId').value = tid;
         document.getElementById('mailchimpEngagementType').value = engagementType;
@@ -1124,7 +1126,7 @@
       try {
         const baseParams = {
           campaignId: campaignId || 'dummy',
-          targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
+          targetResourceId: document.getElementById('targetResourceId').value.trim(),
           engagementType: getEngagementType(),
           segments: (segs.length ? segs : ['A','B','C']).join(',')
         };
@@ -1178,7 +1180,7 @@
       try {
         const baseParams = {
           campaignId: campaignId || 'dummy',
-          targetResourceId: document.getElementById('targetResourceId').value.trim() || '236955',
+          targetResourceId: document.getElementById('targetResourceId').value.trim(),
           engagementType: getEngagementType(),
           limit: selectedEmailLimit,
           segments: (segs.length ? segs : ['A','B','C','D']).join(',')
@@ -1345,7 +1347,7 @@
       try {
         const params = new URLSearchParams({
           campaignId: campaignId || 'dummy',
-          targetResourceId: (document.getElementById('targetResourceId')?.value || '236955').trim(),
+          targetResourceId: (document.getElementById('targetResourceId')?.value || '').trim(),
           engagementType: getEngagementType(),
           eventFilter: (document.getElementById('emailEventFilter')?.value || '').trim()
         });
