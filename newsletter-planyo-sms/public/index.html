@@ -235,17 +235,29 @@
 <body>
   <div class="container">
     <h1>Newsletter</h1>
-    <p class="subtitle">Invio SMS e email da campagne Mailchimp (segmentate per prenotazioni Planyo)</p>
+    <p class="subtitle">Invio SMS e email segmentate da base dati CSV + prenotazioni Planyo</p>
     <div class="card" style="margin-bottom: 1rem;">
-      <h2>Filtro Mailchimp (globale)</h2>
+      <h2>Base Dati</h2>
       <div class="form-group">
-        <label for="mailchimpEngagementType">Usa contatti newsletter da</label>
-        <select id="mailchimpEngagementType">
-          <option value="open">Aperture newsletter</option>
-          <option value="click">Click newsletter</option>
-        </select>
-        <p class="hint">La scelta si applica a calcolo, invio SMS, verifica numero, export e invio email.</p>
+        <label for="newsletterCsvFile">Newsletter CSV (email, nome, cognome, telefono)</label>
+        <input type="file" id="newsletterCsvFile" accept=".csv,text/csv">
+        <p class="hint">Carica il file .csv newsletter: il sistema userà tutti i contatti nel file.</p>
       </div>
+      <div class="row" style="gap: 1rem; flex-wrap: wrap;">
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">CARICA FILE CSV NEWSLETTER</button>
+          <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">CSV newsletter da caricare</p>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioniApi">AGGIORNA PRENOTAZIONI ULTIMI 12 MESI</button>
+          <p class="hint" id="prenotazioniApiStatus" style="margin-top: 0.5rem;">Prenotazioni API da aggiornare (lookback 18 mesi)</p>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioni">AGGIORNA REPORT PLANYO</button>
+          <p class="hint" id="prenotazioniStatus" style="margin-top: 0.5rem;">Report Planyo da aggiornare</p>
+        </div>
+      </div>
+      <p class="hint" id="cacheReadyHint" style="margin-top: 0.75rem; color: var(--danger); font-weight: 500;">Carica CSV newsletter e aggiorna report Planyo per abilitare le operazioni.</p>
     </div>
 
     <div class="tab-bar">
@@ -258,28 +270,7 @@
     <!-- Invio campagna -->
     <div class="card">
       <h2>Invio campagna</h2>
-      <p class="hint" style="margin-bottom: 1rem;">Invia SMS ai contatti che hanno aperto/cliccato la newsletter, segmentati per prenotazioni.</p>
-      <div class="form-group">
-        <label>Campagne (seleziona fino a 2, predefinite: ultime 2 inviate)</label>
-        <div id="campaignList" class="campaign-list">
-          <span class="hint">Caricamento...</span>
-        </div>
-        <p class="hint" id="campaignHint">Seleziona una o più campagne (max 2)</p>
-      </div>
-      <div class="form-group">
-        <div class="row" style="gap: 1rem; flex-wrap: wrap;">
-          <div>
-            <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">AGGIORNA NEWSLETTER</button>
-            <button type="button" class="btn btn-secondary" id="btnForceNewsletterCache" style="margin-left: 0.5rem;">RICREA CACHE NEWSLETTER</button>
-            <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">Newsletter da aggiornare</p>
-          </div>
-          <div>
-            <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioni">AGGIORNA PRENOTAZIONI</button>
-            <p class="hint" id="prenotazioniStatus" style="margin-top: 0.5rem;">Prenotazioni da aggiornare</p>
-          </div>
-        </div>
-        <p class="hint" id="cacheReadyHint" style="margin-top: 0.75rem; color: var(--danger); font-weight: 500;">Aggiorna Newsletter e Prenotazioni per abilitare le altre opzioni.</p>
-      </div>
+      <p class="hint" style="margin-bottom: 1rem;">Invia SMS ai contatti del CSV newsletter, segmentati per prenotazioni.</p>
       <div class="form-group">
         <label>Lista A – Evento target (risorsa Planyo)</label>
         <div class="row" style="align-items: flex-end;">
@@ -302,7 +293,7 @@
         <div class="checkboxes">
           <label class="checkbox-label"><input type="checkbox" name="seg" value="A"> Lista A (tutti i prenotati evento target)</label>
           <label class="checkbox-label"><input type="checkbox" name="seg" value="B"> Lista B (Clienti con prenotazioni ultimi 18 mesi esclusi evento target)</label>
-          <label class="checkbox-label"><input type="checkbox" name="seg" value="C"> Lista C (Utenti newsletter da filtro Mailchimp, esclusi evento target)</label>
+          <label class="checkbox-label"><input type="checkbox" name="seg" value="C"> Lista C (Utenti newsletter da CSV, esclusi evento target)</label>
           <label class="checkbox-label"><input type="checkbox" name="seg" value="D"> Lista D (Contatti da planyo report - file caricato e salvato in cache - esclusi chi in Lista A)</label>
         </div>
       </div>
@@ -382,13 +373,7 @@
     <div id="tabEmail" class="tab-panel">
       <div class="card">
         <h2>Newsletter EMAIL</h2>
-        <p class="hint" style="margin-bottom: 1rem;">Esporta CSV, filtra per evento, invia email personalizzate via Gmail (max 500/giorno). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
-        <div class="form-group">
-          <label>Campagna</label>
-          <select id="emailCampaignId">
-            <option value="">Caricamento...</option>
-          </select>
-        </div>
+      <p class="hint" style="margin-bottom: 1rem;">Esporta CSV, filtra per evento, invia email personalizzate via Gmail (max 500/giorno). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
         <div class="form-group">
           <label>Risorsa Planyo (evento target)</label>
           <p class="hint">Usa il valore dalla tab Newsletter SMS (stesso ID risorsa)</p>
@@ -403,7 +388,7 @@
           <div class="checkboxes">
             <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="A"> Lista A (tutti i prenotati evento target)</label>
             <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="B"> Lista B (Clienti con prenotazioni ultimi 18 mesi esclusi evento target)</label>
-            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="C"> Lista C (Utenti newsletter da filtro Mailchimp, esclusi evento target)</label>
+            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="C"> Lista C (Utenti newsletter da CSV, esclusi evento target)</label>
             <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="D"> Lista D (Contatti da planyo report - file caricato e salvato in cache - esclusi chi in Lista A)</label>
           </div>
           <p class="hint">Seleziona almeno una lista. Se nessuna selezionata, vengono incluse tutte.</p>
@@ -495,41 +480,7 @@
       return '/' + base;
     })();
 
-    async function loadCampaigns() {
-      const list = document.getElementById('campaignList');
-      const hint = document.getElementById('campaignHint');
-      try {
-        const r = await fetch(API + '/api/campaigns?last=2');
-        const d = await r.json();
-        list.innerHTML = '';
-        if (d.campaigns && d.campaigns.length) {
-          d.campaigns.forEach((c, i) => {
-            const lab = document.createElement('label');
-            lab.className = 'checkbox-label';
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.name = 'campaign';
-            cb.value = c.id;
-            cb.dataset.subject = (c.subject || c.id).slice(0, 60);
-            if (i < 2) cb.checked = true;
-            cb.onchange = () => {
-              const checked = list.querySelectorAll('input[name="campaign"]:checked');
-              if (checked.length > 2) cb.checked = false;
-              hint.textContent = checked.length >= 2 ? 'Massimo 2 campagne selezionate' : 'Seleziona una o più campagne (max 2)';
-              if (typeof resetSmsCalc === 'function') resetSmsCalc();
-            };
-            lab.appendChild(cb);
-            lab.appendChild(document.createTextNode(` ${(c.subject || c.id).slice(0, 55)}${(c.subject || c.id).length > 55 ? '…' : ''} (${c.send_time ? new Date(c.send_time).toLocaleDateString('it') : ''})`));
-            list.appendChild(lab);
-          });
-          hint.textContent = 'Predefinite: ultime 2. Seleziona fino a 2 campagne.';
-        } else {
-          list.innerHTML = '<span class="hint">Nessuna campagna disponibile</span>';
-        }
-      } catch (e) {
-        list.innerHTML = '<span class="hint" style="color:var(--danger)">Errore caricamento</span>';
-      }
-    }
+    const NEWSLETTER_SOURCE_ID = 'uploaded-file';
 
     function showOutput(el, logs, extra) {
       let html = '';
@@ -550,10 +501,7 @@
       return d.innerHTML;
     }
 
-    function getEngagementType() {
-      const v = document.getElementById('mailchimpEngagementType')?.value;
-      return v === 'click' ? 'click' : 'open';
-    }
+    function getEngagementType() { return 'open'; }
 
     const isLocalhost = () => /^localhost$|^127\.|^\[::1\]$/.test(window.location.hostname);
 
@@ -577,15 +525,8 @@
       const out = document.getElementById('runOutput');
       const dryRun = document.getElementById('dryRun').checked;
       const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
-      const campaignIds = Array.from(document.querySelectorAll('input[name="campaign"]:checked')).map(c => c.value);
-
       if (!segs.length) {
         out.innerHTML = '<div class="error">Seleziona almeno una lista (A, B, C o D).</div>';
-        return;
-      }
-      const onlyD = segs.length === 1 && segs[0] === 'D';
-      if (!campaignIds.length && !onlyD) {
-        out.innerHTML = '<div class="error">Seleziona almeno una campagna (o solo Lista D).</div>';
         return;
       }
       if (!dryRun && !confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
@@ -610,7 +551,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            campaignIds: onlyD ? [] : campaignIds,
+            campaignId: NEWSLETTER_SOURCE_ID,
             segments: segs.length ? segs : ['A', 'B', 'C'],
             dryRun,
             engagementType: getEngagementType(),
@@ -760,9 +701,7 @@
         const tid = (d.targetResourceId !== undefined && d.targetResourceId !== null)
           ? String(d.targetResourceId)
           : String(document.getElementById('targetResourceId').value || '236955');
-        const engagementType = (d.mailchimpEngagementType === 'click') ? 'click' : 'open';
         document.getElementById('targetResourceId').value = tid;
-        document.getElementById('mailchimpEngagementType').value = engagementType;
         if (typeof d.emailSubject === 'string') document.getElementById('emailSubject').value = d.emailSubject;
         if (typeof d.emailBody === 'string') document.getElementById('emailBody').value = d.emailBody;
         const smsEv = document.getElementById('smsEventIds');
@@ -775,132 +714,77 @@
 
     let updateNewsletterRunning = false;
     let updatePrenotazioniRunning = false;
+    let updatePrenotazioniApiRunning = false;
 
     function refreshUpdateButtonsState() {
       const btnNewsletter = document.getElementById('btnUpdateNewsletter');
-      const btnForceNewsletterCache = document.getElementById('btnForceNewsletterCache');
+      const btnPrenotazioniApi = document.getElementById('btnUpdatePrenotazioniApi');
       const btnPrenotazioni = document.getElementById('btnUpdatePrenotazioni');
-      if (btnNewsletter) btnNewsletter.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
-      if (btnForceNewsletterCache) btnForceNewsletterCache.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
-      if (btnPrenotazioni) btnPrenotazioni.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
-    }
-
-    async function pollUpdateNewsletter(jobId, btn) {
-      const el = document.getElementById('newsletterStatus');
-      try {
-      for (let i = 0; i < 300; i++) {
-        await new Promise(r => setTimeout(r, 2000));
-        try {
-          const r = await fetch(API + '/api/update-newsletter/status/' + jobId);
-          const d = await r.json();
-          if (d.status === 'done') {
-            if (d.success) {
-              el.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
-              el.style.color = 'var(--success)';
-            } else {
-              el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
-              el.style.color = 'var(--danger)';
-            }
-            const cfgR = await fetch(API + '/api/config');
-            try {
-              const cfg = JSON.parse(await cfgR.text());
-              updateCacheStatusDisplay(cfg.cacheStatus);
-            } catch (_) {}
-            return;
-          }
-          if (d.status === 'error') {
-            el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
-            el.style.color = 'var(--danger)';
-            return;
-          }
-        } catch (e) {
-          el.textContent = 'Errore polling: ' + e.message;
-          el.style.color = 'var(--danger)';
-          return;
-        }
-      }
-      el.textContent = 'Timeout: l\'aggiornamento sta richiedendo troppo tempo. Riprova.';
-      el.style.color = 'var(--danger)';
-      } finally {
-        updateNewsletterRunning = false;
-        refreshUpdateButtonsState();
-      }
+      const busy = updateNewsletterRunning || updatePrenotazioniRunning || updatePrenotazioniApiRunning;
+      if (btnNewsletter) btnNewsletter.disabled = busy;
+      if (btnPrenotazioniApi) btnPrenotazioniApi.disabled = busy;
+      if (btnPrenotazioni) btnPrenotazioni.disabled = busy;
     }
 
     document.getElementById('btnUpdateNewsletter').onclick = async () => {
-      const btn = document.getElementById('btnUpdateNewsletter');
-      if (updatePrenotazioniRunning || updateNewsletterRunning) return;
+      if (updatePrenotazioniRunning || updateNewsletterRunning || updatePrenotazioniApiRunning) return;
       const el = document.getElementById('newsletterStatus');
+      const fileInput = document.getElementById('newsletterCsvFile');
+      const file = fileInput?.files?.[0];
+      if (!file) {
+        el.textContent = 'Seleziona prima un file CSV newsletter.';
+        el.style.color = 'var(--danger)';
+        return;
+      }
       updateNewsletterRunning = true;
       refreshUpdateButtonsState();
-      el.textContent = 'Aggiornamento in corso... (può richiedere alcuni minuti)';
+      el.textContent = 'Caricamento CSV in corso...';
       el.style.color = '';
       try {
-        const r = await fetch(API + '/api/update-newsletter', {
+        const csvText = await file.text();
+        const r = await fetch(API + '/api/upload-newsletter-csv', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ engagementType: getEngagementType() })
+          body: JSON.stringify({ csvText, filename: file.name })
         });
-        const text = await r.text();
-        let d;
-        try {
-          d = JSON.parse(text);
-        } catch (_) {
-          if (text.startsWith('<') || text.includes('<!DOCTYPE')) {
-            throw new Error('Il server ha restituito HTML. Controlla i log su Render.');
-          }
-          throw new Error('Risposta non valida (HTTP ' + r.status + ')');
-        }
-        if (d.jobId) {
-          pollUpdateNewsletter(d.jobId, btn);
+        const d = await r.json();
+        if (d.success) {
+          el.innerHTML = '<strong>CSV newsletter caricato al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + ' | contatti: ' + (d.uploadedContacts || 0);
+          el.style.color = 'var(--success)';
+          const cfgR = await fetch(API + '/api/config');
+          const cfg = JSON.parse(await cfgR.text());
+          updateCacheStatusDisplay(cfg.cacheStatus);
         } else {
-          el.textContent = 'Errore: risposta inattesa dal server';
+          el.textContent = 'Errore: ' + (d.error || 'caricamento fallito');
           el.style.color = 'var(--danger)';
-          updateNewsletterRunning = false;
-          refreshUpdateButtonsState();
         }
       } catch (e) {
         el.textContent = 'Errore: ' + e.message;
         el.style.color = 'var(--danger)';
+      } finally {
         updateNewsletterRunning = false;
         refreshUpdateButtonsState();
       }
     };
 
-    document.getElementById('btnForceNewsletterCache').onclick = async () => {
-      if (updatePrenotazioniRunning || updateNewsletterRunning) return;
-      const el = document.getElementById('newsletterStatus');
-      updateNewsletterRunning = true;
+    document.getElementById('btnUpdatePrenotazioniApi').onclick = async () => {
+      if (updatePrenotazioniRunning || updateNewsletterRunning || updatePrenotazioniApiRunning) return;
+      const el = document.getElementById('prenotazioniApiStatus');
+      updatePrenotazioniApiRunning = true;
       refreshUpdateButtonsState();
-      el.textContent = 'Ricostruzione cache newsletter in corso...';
+      el.textContent = 'Aggiornamento prenotazioni API in corso...';
       el.style.color = '';
       try {
-        const r = await fetch(API + '/api/update-newsletter/force', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        const text = await r.text();
-        let d;
-        try {
-          d = JSON.parse(text);
-        } catch (_) {
-          if (text.startsWith('<') || text.includes('<!DOCTYPE')) {
-            throw new Error('Il server ha restituito HTML. Controlla i log su Render.');
-          }
-          throw new Error('Risposta non valida (HTTP ' + r.status + ')');
-        }
-        if (d.jobId) {
-          pollUpdateNewsletter(d.jobId, document.getElementById('btnUpdateNewsletter'));
-        } else {
-          el.textContent = 'Errore: risposta inattesa dal server';
-          el.style.color = 'var(--danger)';
-          updateNewsletterRunning = false;
-          refreshUpdateButtonsState();
-        }
+        const r = await fetch(API + '/api/update-prenotazioni-api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ months: 18 }) });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Aggiornamento fallito');
+        el.innerHTML = '<strong>Prenotazioni API aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + ' | contatti: ' + (d.contacts || 0);
+        el.style.color = 'var(--success)';
       } catch (e) {
         el.textContent = 'Errore: ' + e.message;
         el.style.color = 'var(--danger)';
-        updateNewsletterRunning = false;
+      } finally {
+        updatePrenotazioniApiRunning = false;
         refreshUpdateButtonsState();
       }
     };
@@ -1086,7 +970,7 @@
     }
     document.querySelectorAll('input[name="seg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
     document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
-    document.getElementById('emailCampaignId').onchange = resetEmailCalc;
+    
     document.getElementById('emailSubject').oninput = () => {
       if (emailContactCount > 0) updateEmailBatchHint();
       scheduleEmailDraftSave();
@@ -1094,33 +978,16 @@
     document.getElementById('emailBody').oninput = scheduleEmailDraftSave;
     document.getElementById('emailSubject').onblur = saveEmailDraftConfig;
     document.getElementById('emailBody').onblur = saveEmailDraftConfig;
-    document.getElementById('mailchimpEngagementType').onchange = async () => {
-      resetSmsCalc();
-      resetEmailCalc();
-      try {
-        await fetch(API + '/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mailchimpEngagementType: getEngagementType() })
-        });
-      } catch (_) {}
-    };
+    
 
     let smsContactCount = 0;
     let emailContactCount = 0;
 
     document.getElementById('btnSmsCalc').onclick = async () => {
-      const campaignIds = Array.from(document.querySelectorAll('input[name="campaign"]:checked')).map(c => c.value);
-      const campaignId = campaignIds[0];
+      const campaignId = NEWSLETTER_SOURCE_ID;
       const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
-      const onlyD = segs.length === 1 && segs[0] === 'D';
       const status = document.getElementById('smsCountStatus');
       const btnRun = document.getElementById('btnRun');
-      if (!campaignId && !onlyD) {
-        status.textContent = 'Seleziona almeno una campagna (o solo Lista D).';
-        btnRun.disabled = true;
-        return;
-      }
       status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
       btnRun.disabled = true;
       try {
@@ -1164,17 +1031,11 @@
     };
 
     document.getElementById('btnEmailCalc').onclick = async () => {
-      const campaignId = document.getElementById('emailCampaignId').value;
+      const campaignId = NEWSLETTER_SOURCE_ID;
       const segs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
-      const onlyD = segs.length === 1 && segs[0] === 'D';
       const status = document.getElementById('emailCountStatus');
       const btnExport = document.getElementById('btnExportCsv');
       const btnSend = document.getElementById('btnSendEmail');
-      if (!campaignId && !onlyD) {
-        status.textContent = 'Seleziona una campagna (o solo Lista D).';
-        btnExport.disabled = btnSend.disabled = true;
-        return;
-      }
       status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
       btnExport.disabled = btnSend.disabled = true;
       try {
@@ -1228,7 +1089,7 @@
       try {
         const params = new URLSearchParams({
           subject: document.getElementById('emailSubject').value.trim(),
-          campaignId: document.getElementById('emailCampaignId').value || '',
+          campaignId: NEWSLETTER_SOURCE_ID,
           engagementType: getEngagementType(),
           segments: Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value).join(',')
         });
@@ -1260,29 +1121,6 @@
         document.getElementById(tab === 'sms' ? 'tabSms' : 'tabEmail').classList.add('active');
       };
     });
-
-    // Populate email campaign dropdown
-    async function loadEmailCampaigns() {
-      const sel = document.getElementById('emailCampaignId');
-      try {
-        const r = await fetch(API + '/api/campaigns?last=2');
-        const d = await r.json();
-        sel.innerHTML = '';
-        if (d.campaigns && d.campaigns.length) {
-          d.campaigns.forEach((c, i) => {
-            const opt = document.createElement('option');
-            opt.value = c.id;
-            opt.textContent = (c.subject || c.id).slice(0, 60) + (c.send_time ? ' (' + new Date(c.send_time).toLocaleDateString('it') + ')' : '');
-            if (i === 0) opt.selected = true;
-            sel.appendChild(opt);
-          });
-        } else {
-          sel.innerHTML = '<option value="">Nessuna campagna</option>';
-        }
-      } catch (e) {
-        sel.innerHTML = '<option value="">Errore caricamento</option>';
-      }
-    }
 
     // Block buttons
     document.querySelectorAll('.block-btns [data-limit]').forEach((btn) => {
@@ -1333,14 +1171,9 @@
 
     // Export CSV
     document.getElementById('btnExportCsv').onclick = async () => {
-      const campaignId = document.getElementById('emailCampaignId').value;
+      const campaignId = NEWSLETTER_SOURCE_ID;
       const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
-      const onlyD = emailSegs.length === 1 && emailSegs[0] === 'D';
       const out = document.getElementById('emailOutput');
-      if (!campaignId && !onlyD) {
-        out.innerHTML = '<div class="error">Seleziona una campagna (o solo Lista D).</div>';
-        return;
-      }
       const btn = document.getElementById('btnExportCsv');
       btn.disabled = true;
       out.innerHTML = '<div class="log">Generazione CSV...</div>';
@@ -1388,7 +1221,7 @@
 
     // Send email
     document.getElementById('btnSendEmail').onclick = async () => {
-      const campaignId = document.getElementById('emailCampaignId').value;
+      const campaignId = NEWSLETTER_SOURCE_ID;
       const subject = document.getElementById('emailSubject').value.trim();
       const body = document.getElementById('emailBody').value.trim();
       const out = document.getElementById('emailOutput');
@@ -1396,9 +1229,8 @@
       const btnAbort = document.getElementById('btnEmailAbort');
 
       const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
-      const onlyD = emailSegs.length === 1 && emailSegs[0] === 'D';
-      if ((!campaignId && !onlyD) || !subject || !body) {
-        out.innerHTML = '<div class="error">Campagna (o solo Lista D), oggetto e messaggio richiesti.</div>';
+      if (!subject || !body) {
+        out.innerHTML = '<div class="error">Oggetto e messaggio richiesti.</div>';
         return;
       }
       const limitCap = Math.min(selectedEmailLimit, 500);
@@ -1422,7 +1254,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            campaignId: campaignId || (onlyD ? 'dummy' : undefined),
+            campaignId,
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
             eventFilter: document.getElementById('emailEventFilter').value.trim() || undefined,
             eventIds: document.getElementById('emailEventIds').value.trim() || undefined,
@@ -1460,10 +1292,8 @@
     };
 
     toggleListDFilters();
-    loadCampaigns();
     loadConfig();
     fetch(API + '/api/preload-planyo').catch(() => {}); // Preload Lista A in background (API Planyo)
-    loadEmailCampaigns();
   </script>
 </body>
 </html>

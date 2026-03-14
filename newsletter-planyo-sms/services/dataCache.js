@@ -6,11 +6,13 @@ const fs = require('fs');
 const path = require('path');
 const mailchimp = require('./mailchimp');
 const planyoReportCsv = require('./planyoReportCsv');
+const planyo = require('./planyo');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const MAILCHIMP_CACHE_FILE = path.join(DATA_DIR, 'mailchimp-cache.json');
 const PLANYO_CACHE_FILE = path.join(DATA_DIR, 'planyo-cache.json');
 const NEWSLETTER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const UPLOADED_CAMPAIGN_ID = 'uploaded-file';
 
 let weeklyRefreshRunning = false;
 
@@ -88,6 +90,135 @@ function shouldRefreshWeekly(cache) {
 function savePlanyoCache(data) {
   ensureDataDir();
   fs.writeFileSync(PLANYO_CACHE_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let field = '';
+  let row = [];
+  let inQuotes = false;
+  const src = String(text || '').replace(/\r\n/g, '\n');
+
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',' || ch === ';') {
+      row.push(field.trim());
+      field = '';
+    } else if (ch === '\n') {
+      row.push(field.trim());
+      if (row.some((x) => x)) rows.push(row);
+      row = [];
+      field = '';
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length || row.length) {
+    row.push(field.trim());
+    if (row.some((x) => x)) rows.push(row);
+  }
+  return rows;
+}
+
+function findColumn(headers, aliases) {
+  const cols = headers.map((x) => String(x || '').toLowerCase().trim());
+  for (const alias of aliases) {
+    const i = cols.findIndex((h) => h === alias || h.includes(alias));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+function normalizeMobilePhone(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let digits = raw.replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) digits = digits.slice(1);
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('39')) {
+    const national = digits.slice(2);
+    if (/^3\d{9}$/.test(national)) return '39' + national;
+    return '';
+  }
+  if (/^3\d{9}$/.test(digits)) return '39' + digits;
+  return '';
+}
+
+function mergeContact(current, incoming) {
+  if (!current) return incoming;
+  return {
+    nome: current.nome || incoming.nome || '',
+    cognome: current.cognome || incoming.cognome || '',
+    email: current.email || incoming.email || '',
+    telefono: current.telefono || incoming.telefono || '',
+    cellulare: current.cellulare || incoming.cellulare || ''
+  };
+}
+
+function importNewsletterCsv(csvText) {
+  const rows = parseCsvRows(csvText);
+  if (rows.length < 2) throw new Error('CSV newsletter vuoto o non valido');
+
+  const headers = rows[0];
+  const idxEmail = findColumn(headers, ['email', 'e-mail', 'mail']);
+  const idxNome = findColumn(headers, ['nome', 'first name', 'firstname', 'name', 'fname']);
+  const idxCognome = findColumn(headers, ['cognome', 'last name', 'lastname', 'surname', 'lname']);
+  const idxTelefono = findColumn(headers, ['telefono', 'phone', 'mobile', 'cellulare', 'tel']);
+  const idxAltTelefono = findColumn(headers, ['altro tel', 'altro telefono', 'telefono 2', 'phone 2', 'mobile 2']);
+  if (idxEmail < 0) throw new Error('Colonna email non trovata nel CSV newsletter');
+
+  const contactsByEmail = new Map();
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const get = (idx) => (idx >= 0 && row[idx] !== undefined ? String(row[idx] || '').trim() : '');
+    const email = get(idxEmail).toLowerCase().trim();
+    if (!email || !email.includes('@')) continue;
+    const nome = get(idxNome);
+    const cognome = get(idxCognome);
+    const rawPhone = get(idxTelefono);
+    const rawAltPhone = get(idxAltTelefono);
+    const telefono = normalizeMobilePhone(rawPhone) || normalizeMobilePhone(rawAltPhone) || normalizeMobilePhone(planyo.normalizePhone(rawPhone)) || '';
+    const incoming = { nome, cognome, email, telefono, cellulare: telefono };
+    const current = contactsByEmail.get(email);
+    contactsByEmail.set(email, mergeContact(current, incoming));
+  }
+
+  const dedupeByPhone = new Set();
+  const contacts = {};
+  for (const [email, c] of contactsByEmail.entries()) {
+    if (c.telefono && dedupeByPhone.has(c.telefono)) continue;
+    if (c.telefono) dedupeByPhone.add(c.telefono);
+    contacts[email] = c;
+  }
+  const uniqueEmails = Object.keys(contacts);
+  const now = new Date();
+  const previous = normalizeCacheShape(loadMailchimpCache());
+  saveMailchimpCache({
+    updatedAt: now.toISOString(),
+    nextRefreshAt: computeNextRefreshAt(now),
+    campaignEngagements: {
+      open: { ...(previous.campaignEngagements.open || {}), [UPLOADED_CAMPAIGN_ID]: uniqueEmails },
+      click: { ...(previous.campaignEngagements.click || {}), [UPLOADED_CAMPAIGN_ID]: uniqueEmails }
+    },
+    contacts: { ...(previous.contacts || {}), ...contacts }
+  });
+
+  return { success: true, uploadedContacts: uniqueEmails.length, updatedAt: now.toISOString() };
 }
 
 /**
@@ -274,6 +405,8 @@ module.exports = {
   runUpdatePrenotazioni,
   isReadyForOperations,
   getCacheStatus,
+  importNewsletterCsv,
+  UPLOADED_CAMPAIGN_ID,
   MAILCHIMP_CACHE_FILE,
   PLANYO_CACHE_FILE
 };
