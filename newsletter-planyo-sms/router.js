@@ -212,6 +212,20 @@ router.post('/api/upload-newsletter-csv', (req, res) => {
   }
 });
 
+router.post('/api/upload-newsletter-contacts', (req, res) => {
+  try {
+    const contacts = req.body?.contacts;
+    if (!Array.isArray(contacts)) {
+      return res.status(400).json({ success: false, error: 'Formato contatti non valido' });
+    }
+    const replace = !!req.body?.replace;
+    const out = dataCache.importNewsletterContacts(contacts, { replace });
+    res.json({ success: true, ...out });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/api/update-newsletter', (req, res) => {
   const jobId = 'nu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
   updateJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
@@ -322,7 +336,6 @@ router.get('/api/update-prenotazioni/status/:jobId', (req, res) => {
 });
 
 router.post('/api/run', async (req, res) => {
-  if (!requireCacheReady(res)) return;
   res.setTimeout(30 * 60 * 1000);
   const body_ = req.body || {};
   const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
@@ -514,7 +527,6 @@ function cleanupOldJobs() {
 }
 
 router.post('/api/sms/preview/start', (req, res) => {
-  if (!requireCacheReady(res)) return;
   try {
     const q = req.body || req.query || {};
     const campaignId = q.campaignId;
@@ -575,7 +587,6 @@ router.get('/api/sms/preview/status/:jobId', (req, res) => {
 });
 
 router.get('/api/sms/preview', async (req, res) => {
-  if (!requireCacheReady(res)) return;
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;

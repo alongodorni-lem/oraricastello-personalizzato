@@ -236,30 +236,6 @@
   <div class="container">
     <h1>Newsletter</h1>
     <p class="subtitle">Invio SMS e email segmentate da base dati CSV + prenotazioni Planyo</p>
-    <div class="card" style="margin-bottom: 1rem;">
-      <h2>Base Dati</h2>
-      <div class="form-group">
-        <label for="newsletterCsvFile">Newsletter CSV (email, nome, cognome, telefono)</label>
-        <input type="file" id="newsletterCsvFile" accept=".csv,text/csv">
-        <p class="hint">Carica il file .csv newsletter: il sistema userà tutti i contatti nel file.</p>
-      </div>
-      <div class="row" style="gap: 1rem; flex-wrap: wrap;">
-        <div>
-          <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">CARICA FILE CSV NEWSLETTER</button>
-          <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">CSV newsletter da caricare</p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioniApi">AGGIORNA PRENOTAZIONI ULTIMI 18 MESI</button>
-          <p class="hint" id="prenotazioniApiStatus" style="margin-top: 0.5rem;">Prenotazioni API da aggiornare (lookback 18 mesi)</p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioni">AGGIORNA REPORT PLANYO</button>
-          <p class="hint" id="prenotazioniStatus" style="margin-top: 0.5rem;">Report Planyo da aggiornare</p>
-        </div>
-      </div>
-      <p class="hint" id="cacheReadyHint" style="margin-top: 0.75rem; color: var(--danger); font-weight: 500;">Carica CSV newsletter e aggiorna report Planyo per abilitare le operazioni.</p>
-    </div>
-
     <div class="tab-bar">
       <button type="button" class="tab-btn active" data-tab="sms">Newsletter SMS</button>
       <button type="button" class="tab-btn" data-tab="email">NEWSLETTER EMAIL</button>
@@ -332,6 +308,11 @@
         <button type="button" class="btn btn-secondary" id="btnSmsCalc">Calcola contatti</button>
         <p class="hint" id="smsCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare il totale contatti (email) che corrispondono ai criteri.</p>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>Invio SMS</h2>
+      <p class="hint" style="margin-bottom: 0.75rem;">Dopo "Calcola contatti", avvia l'invio reale o simulato.</p>
       <div class="actions">
         <button class="btn btn-primary" id="btnRun" disabled>
           Avvia invio
@@ -341,6 +322,30 @@
         </button>
       </div>
       <div class="output" id="runOutput"></div>
+    </div>
+
+    <div class="card">
+      <h2>Base Dati</h2>
+      <div class="form-group">
+        <label for="newsletterCsvFile">Newsletter CSV (email, nome, cognome, telefono)</label>
+        <input type="file" id="newsletterCsvFile" accept=".csv,text/csv">
+        <p class="hint">Carica il file .csv newsletter: il sistema userà tutti i contatti nel file.</p>
+      </div>
+      <div class="row" style="gap: 1rem; flex-wrap: wrap;">
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">CARICA FILE CSV NEWSLETTER</button>
+          <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">CSV newsletter da caricare</p>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioniApi">AGGIORNA PRENOTAZIONI ULTIMI 18 MESI</button>
+          <p class="hint" id="prenotazioniApiStatus" style="margin-top: 0.5rem;">Prenotazioni API da aggiornare (lookback 18 mesi)</p>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioni">AGGIORNA REPORT PLANYO</button>
+          <p class="hint" id="prenotazioniStatus" style="margin-top: 0.5rem;">Report Planyo da aggiornare</p>
+        </div>
+      </div>
+      <p class="hint" id="cacheReadyHint" style="margin-top: 0.75rem; color: var(--danger); font-weight: 500;">Carica CSV newsletter e aggiorna report Planyo per abilitare le operazioni.</p>
     </div>
 
     <!-- Test SMS -->
@@ -540,6 +545,65 @@
       }
     }
 
+    function parseCsvRows(text) {
+      const rows = [];
+      let row = [];
+      let field = '';
+      let inQuotes = false;
+      const src = String(text || '').replace(/\r\n/g, '\n');
+      for (let i = 0; i < src.length; i++) {
+        const ch = src[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (src[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+          } else field += ch;
+          continue;
+        }
+        if (ch === '"') inQuotes = true;
+        else if (ch === ',' || ch === ';') { row.push(field.trim()); field = ''; }
+        else if (ch === '\n') { row.push(field.trim()); if (row.some(Boolean)) rows.push(row); row = []; field = ''; }
+        else field += ch;
+      }
+      if (field.length || row.length) { row.push(field.trim()); if (row.some(Boolean)) rows.push(row); }
+      return rows;
+    }
+
+    function findCsvCol(headers, aliases) {
+      const cols = headers.map((x) => String(x || '').toLowerCase().trim());
+      for (const a of aliases) {
+        const i = cols.findIndex((h) => h === a || h.includes(a));
+        if (i >= 0) return i;
+      }
+      return -1;
+    }
+
+    function extractContactsFromCsv(csvText) {
+      const rows = parseCsvRows(csvText);
+      if (rows.length < 2) return [];
+      const headers = rows[0];
+      const idxEmail = findCsvCol(headers, ['email', 'e-mail', 'mail']);
+      const idxNome = findCsvCol(headers, ['nome', 'first name', 'firstname', 'name', 'fname']);
+      const idxCognome = findCsvCol(headers, ['cognome', 'last name', 'lastname', 'surname', 'lname']);
+      const idxTelefono = findCsvCol(headers, ['telefono', 'phone', 'mobile', 'cellulare', 'tel']);
+      const idxAltTelefono = findCsvCol(headers, ['altro tel', 'altro telefono', 'telefono 2', 'phone 2', 'mobile 2']);
+      if (idxEmail < 0) throw new Error('Colonna email non trovata nel CSV');
+
+      const out = [];
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const get = (idx) => (idx >= 0 && row[idx] !== undefined ? String(row[idx] || '').trim() : '');
+        const email = get(idxEmail).toLowerCase().trim();
+        if (!email || !email.includes('@')) continue;
+        out.push({
+          email,
+          nome: get(idxNome),
+          cognome: get(idxCognome),
+          telefono: get(idxTelefono) || get(idxAltTelefono)
+        });
+      }
+      return out;
+    }
+
     document.getElementById('btnRun').onclick = async () => {
       const btn = document.getElementById('btnRun');
       const btnAbort = document.getElementById('btnAbort');
@@ -699,23 +763,22 @@
         hint.textContent = 'Dati pronti. Puoi procedere con calcolo contatti, invio SMS, invio Newsletter e scaricamento CSV.';
         hint.style.color = 'var(--success)';
       } else {
-        hint.textContent = 'Aggiorna Newsletter e Prenotazioni per abilitare le altre opzioni.';
+        hint.textContent = 'Puoi usare Calcola contatti SMS anche con fonti parziali. Per il flusso completo aggiorna CSV newsletter e report Planyo.';
         hint.style.color = 'var(--danger)';
       }
       updateCacheReadyState(ready);
     }
 
     function updateCacheReadyState(ready) {
-      ['btnSmsCalc', 'btnEmailCalc', 'btnCheck'].forEach(id => {
+      ['btnEmailCalc', 'btnCheck'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !ready;
       });
       if (!ready) {
-        ['btnRun', 'btnExportCsv', 'btnSendEmail'].forEach(id => {
+        ['btnExportCsv', 'btnSendEmail'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.disabled = true;
         });
-        if (typeof resetSmsCalc === 'function') resetSmsCalc();
         if (typeof resetEmailCalc === 'function') resetEmailCalc();
       }
     }
@@ -768,17 +831,26 @@
       el.style.color = '';
       try {
         const csvText = await file.text();
-        const d = await fetchJson(API + '/api/upload-newsletter-csv', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ csvText, filename: file.name })
-        });
+        const contacts = extractContactsFromCsv(csvText);
+        if (!contacts.length) throw new Error('CSV senza contatti validi');
+        const chunkSize = 1000;
+        let uploaded = 0;
+        for (let i = 0; i < contacts.length; i += chunkSize) {
+          const chunk = contacts.slice(i, i + chunkSize);
+          const dChunk = await fetchJson(API + '/api/upload-newsletter-contacts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contacts: chunk, replace: i === 0 })
+          });
+          if (!dChunk.success) throw new Error(dChunk.error || 'Errore upload contatti');
+          uploaded = Math.min(contacts.length, i + chunk.length);
+          el.textContent = `Caricamento CSV in corso... ${uploaded}/${contacts.length}`;
+        }
+        const d = await fetchJson(API + '/api/config');
         if (d.success) {
-          el.innerHTML = '<strong>CSV newsletter caricato al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + ' | contatti: ' + (d.uploadedContacts || 0);
+          el.innerHTML = '<strong>CSV newsletter caricato al</strong> ' + new Date(d.cacheStatus.mailchimpUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + ' | contatti: ' + (d.cacheStatus.mailchimpContacts || 0);
           el.style.color = 'var(--success)';
-          const cfgR = await fetch(API + '/api/config');
-          const cfg = JSON.parse(await cfgR.text());
-          updateCacheStatusDisplay(cfg.cacheStatus);
+          updateCacheStatusDisplay(d.cacheStatus);
         } else {
           el.textContent = 'Errore: ' + (d.error || 'caricamento fallito');
           el.style.color = 'var(--danger)';

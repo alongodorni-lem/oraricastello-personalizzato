@@ -198,16 +198,37 @@ function importNewsletterCsv(csvText) {
     contactsByEmail.set(email, mergeContact(current, incoming));
   }
 
-  const dedupeByPhone = new Set();
   const contacts = {};
+  for (const [email, c] of contactsByEmail.entries()) contacts[email] = c;
+  return importNewsletterContacts(Object.values(contacts), { replace: false });
+}
+
+function importNewsletterContacts(items, options = {}) {
+  const { replace = false } = options;
+  const list = Array.isArray(items) ? items : [];
+  const previous = normalizeCacheShape(loadMailchimpCache());
+  const baseContacts = replace ? {} : { ...(previous.contacts || {}) };
+  const contactsByEmail = new Map();
+  for (const item of list) {
+    const email = String(item?.email || '').toLowerCase().trim();
+    if (!email || !email.includes('@')) continue;
+    const nome = String(item?.nome || '').trim();
+    const cognome = String(item?.cognome || '').trim();
+    const telefono = normalizeMobilePhone(item?.telefono || item?.cellulare || '');
+    const incoming = { nome, cognome, email, telefono, cellulare: telefono };
+    const current = contactsByEmail.get(email);
+    contactsByEmail.set(email, mergeContact(current, incoming));
+  }
+
+  const dedupeByPhone = new Set();
   for (const [email, c] of contactsByEmail.entries()) {
     if (c.telefono && dedupeByPhone.has(c.telefono)) continue;
     if (c.telefono) dedupeByPhone.add(c.telefono);
-    contacts[email] = c;
+    baseContacts[email] = mergeContact(baseContacts[email], c);
   }
-  const uniqueEmails = Object.keys(contacts);
+
+  const uniqueEmails = Object.keys(baseContacts);
   const now = new Date();
-  const previous = normalizeCacheShape(loadMailchimpCache());
   saveMailchimpCache({
     updatedAt: now.toISOString(),
     nextRefreshAt: computeNextRefreshAt(now),
@@ -215,7 +236,7 @@ function importNewsletterCsv(csvText) {
       open: { ...(previous.campaignEngagements.open || {}), [UPLOADED_CAMPAIGN_ID]: uniqueEmails },
       click: { ...(previous.campaignEngagements.click || {}), [UPLOADED_CAMPAIGN_ID]: uniqueEmails }
     },
-    contacts: { ...(previous.contacts || {}), ...contacts }
+    contacts: baseContacts
   });
 
   return { success: true, uploadedContacts: uniqueEmails.length, updatedAt: now.toISOString() };
@@ -406,6 +427,7 @@ module.exports = {
   isReadyForOperations,
   getCacheStatus,
   importNewsletterCsv,
+  importNewsletterContacts,
   UPLOADED_CAMPAIGN_ID,
   MAILCHIMP_CACHE_FILE,
   PLANYO_CACHE_FILE
