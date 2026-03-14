@@ -243,29 +243,33 @@
 
     <!-- Tab SMS -->
     <div id="tabSms" class="tab-panel active">
-    <!-- Invio campagna -->
     <div class="card">
-      <h2>Invio campagna</h2>
-      <p class="hint" style="margin-bottom: 1rem;">Invia SMS ai contatti del CSV newsletter, segmentati per prenotazioni.</p>
+      <h2>Base Dati</h2>
       <div class="form-group">
-        <label>Lista A – Evento target (risorsa Planyo)</label>
-        <div class="row" style="align-items: flex-end;">
-          <div style="flex: 1; min-width: 120px;">
-            <input type="text" id="targetResourceId" value="236955" placeholder="es. 236955 oppure 236955,243693" maxlength="120" readonly style="background: #f1f5f9;">
-          </div>
-          <div>
-            <button type="button" class="btn btn-secondary" id="btnEditTarget">Modifica</button>
-          </div>
+        <label for="newsletterCsvFile">Newsletter CSV (email, nome, cognome, telefono)</label>
+        <input type="file" id="newsletterCsvFile" accept=".csv,text/csv">
+        <p class="hint">Carica il file .csv newsletter: il sistema userà tutti i contatti nel file.</p>
+      </div>
+      <div class="row" style="gap: 1rem; flex-wrap: wrap;">
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">CARICA FILE CSV NEWSLETTER</button>
+          <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">CSV newsletter da caricare</p>
         </div>
-        <p class="hint">Puoi lasciarlo vuoto, usare 1 ID o più ID separati da virgola (logica OR).</p>
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioniApi">AGGIORNA PRENOTAZIONI ULTIMI 18 MESI</button>
+          <p class="hint" id="prenotazioniApiStatus" style="margin-top: 0.5rem;">Prenotazioni API da aggiornare (lookback 18 mesi)</p>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioni">AGGIORNA REPORT PLANYO</button>
+          <p class="hint" id="prenotazioniStatus" style="margin-top: 0.5rem;">Report Planyo da aggiornare</p>
+        </div>
       </div>
+      <p class="hint" id="cacheReadyHint" style="margin-top: 0.75rem; color: var(--danger); font-weight: 500;">Carica CSV newsletter e aggiorna report Planyo per abilitare le operazioni.</p>
+    </div>
+
+    <div class="card">
+      <h2>Crea Pubblico</h2>
       <div class="form-group">
-        <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
-        <textarea id="smsText" rows="3" maxlength="160" placeholder="Lascia vuoto per usare il testo predefinito della lista"></textarea>
-        <p class="hint">Massimo 160 caratteri. Se vuoto, viene usato il testo predefinito.</p>
-      </div>
-      <div class="form-group">
-        <label>Crea Pubblico</label>
         <p class="hint" style="margin-bottom:0.5rem;"><strong>DA INSERIRE IN LISTA</strong></p>
         <div class="checkboxes">
           <label class="checkbox-label"><input type="checkbox" name="smsSource" value="newsletter"> Tutti i contatti da newsletter caricata (CSV)</label>
@@ -311,9 +315,21 @@
     </div>
 
     <div class="card">
-      <h2>Invio SMS</h2>
-      <p class="hint" style="margin-bottom: 0.75rem;">Dopo "Calcola contatti", avvia l'invio reale o simulato.</p>
+      <h2>Invio campagna</h2>
+      <p class="hint" style="margin-bottom: 0.75rem;">Dopo "Calcola contatti", imposta il testo e avvia l'invio reale o simulato.</p>
+      <div class="form-group">
+        <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
+        <textarea id="smsText" rows="3" maxlength="160" placeholder="Lascia vuoto per usare il testo predefinito della lista"></textarea>
+        <p class="hint">Massimo 160 caratteri. Se vuoto, viene usato il testo predefinito.</p>
+      </div>
+      <div class="form-group">
+        <label>Invio prova</label>
+        <p class="hint" style="margin-bottom: 0.5rem;">Invia un SMS di test al tuo numero. Usa il testo scritto nel campo sopra (se presente), altrimenti il predefinito Lista B.</p>
+        <label>Numero telefono</label>
+        <input type="text" id="testPhone" placeholder="+39 333 1234567" maxlength="20">
+      </div>
       <div class="actions">
+        <button class="btn btn-secondary" id="btnTest">Invia SMS di prova</button>
         <button class="btn btn-primary" id="btnRun" disabled>
           Avvia invio
         </button>
@@ -321,59 +337,8 @@
           Annulla
         </button>
       </div>
-      <div class="output" id="runOutput"></div>
-    </div>
-
-    <div class="card">
-      <h2>Base Dati</h2>
-      <div class="form-group">
-        <label for="newsletterCsvFile">Newsletter CSV (email, nome, cognome, telefono)</label>
-        <input type="file" id="newsletterCsvFile" accept=".csv,text/csv">
-        <p class="hint">Carica il file .csv newsletter: il sistema userà tutti i contatti nel file.</p>
-      </div>
-      <div class="row" style="gap: 1rem; flex-wrap: wrap;">
-        <div>
-          <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">CARICA FILE CSV NEWSLETTER</button>
-          <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">CSV newsletter da caricare</p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioniApi">AGGIORNA PRENOTAZIONI ULTIMI 18 MESI</button>
-          <p class="hint" id="prenotazioniApiStatus" style="margin-top: 0.5rem;">Prenotazioni API da aggiornare (lookback 18 mesi)</p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-secondary" id="btnUpdatePrenotazioni">AGGIORNA REPORT PLANYO</button>
-          <p class="hint" id="prenotazioniStatus" style="margin-top: 0.5rem;">Report Planyo da aggiornare</p>
-        </div>
-      </div>
-      <p class="hint" id="cacheReadyHint" style="margin-top: 0.75rem; color: var(--danger); font-weight: 500;">Carica CSV newsletter e aggiorna report Planyo per abilitare le operazioni.</p>
-    </div>
-
-    <!-- Test SMS -->
-    <div class="card">
-      <h2>Invio prova</h2>
-      <p class="hint" style="margin-bottom: 1rem;">Invia un SMS di test al tuo numero. Usa il testo scritto nel campo sopra (se presente), altrimenti il predefinito Lista B.</p>
-      <div class="form-group">
-        <label>Numero telefono</label>
-        <input type="text" id="testPhone" placeholder="+39 333 1234567" maxlength="20">
-      </div>
-      <div class="actions">
-        <button class="btn btn-secondary" id="btnTest">Invia SMS di prova</button>
-      </div>
       <div class="output" id="testOutput"></div>
-    </div>
-
-    <!-- Verifica numero -->
-    <div class="card">
-      <h2>Verifica numero</h2>
-      <p class="hint" style="margin-bottom: 1rem;">Controlla se un numero era incluso in una lista (A, B o C) per l'ultima campagna.</p>
-      <div class="form-group">
-        <label>Numero da cercare</label>
-        <input type="text" id="checkPhone" placeholder="+39 333 1234567" maxlength="20">
-      </div>
-      <div class="actions">
-        <button class="btn btn-secondary" id="btnCheck">Verifica</button>
-      </div>
-      <div class="output" id="checkOutput"></div>
+      <div class="output" id="runOutput"></div>
     </div>
     </div>
 
@@ -642,7 +607,7 @@
             excludeTargetBooked: audience.excludeTargetBooked,
             dryRun,
             engagementType: getEngagementType(),
-            targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
+            targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
             eventIds: document.getElementById('smsEventIds').value.trim() || undefined,
             smsText: document.getElementById('smsText').value.trim() || undefined,
             ...getListDFilters(true)
@@ -700,37 +665,6 @@
       btn.disabled = false;
     };
 
-    document.getElementById('btnCheck').onclick = async () => {
-      const phone = document.getElementById('checkPhone').value.trim();
-      const out = document.getElementById('checkOutput');
-      if (!phone) {
-        out.innerHTML = '<div class="error">Inserisci un numero da cercare.</div>';
-        return;
-      }
-      const btn = document.getElementById('btnCheck');
-      btn.disabled = true;
-      out.innerHTML = '<div class="log">Verifica in corso...</div>';
-      try {
-        const r = await fetch(API + '/api/check-phone', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phone,
-            engagementType: getEngagementType(),
-            targetResourceId: document.getElementById('targetResourceId')?.value?.trim() || undefined
-          })
-        });
-        const d = await r.json();
-        out.innerHTML = d.found
-          ? `<div class="log result-ok">Trovato in Lista ${d.segment} | ${escapeHtml(d.email)}</div>`
-          : '<div class="log">Numero non trovato in nessuna lista.</div>';
-        if (d.error) out.innerHTML = `<div class="error">${escapeHtml(d.error)}</div>`;
-      } catch (e) {
-        out.innerHTML = `<div class="error">${escapeHtml(e.message)}</div>`;
-      }
-      btn.disabled = false;
-    };
-
     function updateCacheStatusDisplay(cacheStatus) {
       const ns = document.getElementById('newsletterStatus');
       const ps = document.getElementById('prenotazioniStatus');
@@ -773,7 +707,7 @@
     }
 
     function updateCacheReadyState(ready) {
-      ['btnEmailCalc', 'btnCheck'].forEach(id => {
+      ['btnEmailCalc'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !ready;
       });
@@ -790,16 +724,8 @@
       try {
         const r = await fetch(API + '/api/config');
         const d = await r.json();
-        const tid = (d.targetResourceId !== undefined && d.targetResourceId !== null)
-          ? String(d.targetResourceId)
-          : String(document.getElementById('targetResourceId').value || '236955');
-        document.getElementById('targetResourceId').value = tid;
         if (typeof d.emailSubject === 'string') document.getElementById('emailSubject').value = d.emailSubject;
         if (typeof d.emailBody === 'string') document.getElementById('emailBody').value = d.emailBody;
-        const smsEv = document.getElementById('smsEventIds');
-        const emailEv = document.getElementById('emailEventIds');
-        if (!smsEv.value.trim()) smsEv.value = tid;
-        if (!emailEv.value.trim()) emailEv.value = tid;
         updateCacheStatusDisplay(d.cacheStatus);
       } catch (e) { /* use default */ }
     }
@@ -970,49 +896,6 @@
       }
     };
 
-    document.getElementById('btnEditTarget').onclick = async () => {
-      const input = document.getElementById('targetResourceId');
-      const btn = document.getElementById('btnEditTarget');
-      if (input.readOnly) {
-        input.readOnly = false;
-        input.style.background = 'var(--card)';
-        btn.textContent = 'Salva';
-      } else {
-        const value = input.value.trim();
-        const isValid = value === '' || value.split(',').every((s) => {
-          const n = parseInt(s.trim(), 10);
-          return !isNaN(n) && n > 0;
-        });
-        if (!isValid) {
-          alert('Inserisci valore valido: vuoto, 1 ID o più ID separati da virgola (es. 236955,243693).');
-          return;
-        }
-        btn.disabled = true;
-        try {
-          const r = await fetch(API + '/api/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ targetResourceId: value })
-          });
-          const d = await r.json();
-          if (d.success) {
-            input.value = String(d.targetResourceId || '');
-            input.readOnly = true;
-            input.style.background = '#f1f5f9';
-            btn.textContent = 'Modifica';
-            const tid = String(d.targetResourceId || '');
-            if (!document.getElementById('smsEventIds').value.trim()) document.getElementById('smsEventIds').value = tid;
-            if (!document.getElementById('emailEventIds').value.trim()) document.getElementById('emailEventIds').value = tid;
-          } else {
-            alert(d.error || 'Errore salvataggio');
-          }
-        } catch (e) {
-          alert('Errore: ' + e.message);
-        }
-        btn.disabled = false;
-      }
-    };
-
     document.getElementById('smsText').oninput = function() {
       document.getElementById('smsCharCount').textContent = this.value.length + '/160';
     };
@@ -1104,7 +987,7 @@
       try {
         const baseParams = {
           campaignId: campaignId || 'dummy',
-          targetResourceId: document.getElementById('targetResourceId').value.trim(),
+          targetResourceId: document.getElementById('smsEventIds').value.trim(),
           engagementType: getEngagementType(),
           segments: (segs.length ? segs : ['A','B','C']).join(','),
           excludeTargetBooked: audience.excludeTargetBooked ? '1' : '0'
@@ -1153,7 +1036,7 @@
       try {
         const baseParams = {
           campaignId: campaignId || 'dummy',
-          targetResourceId: document.getElementById('targetResourceId').value.trim(),
+          targetResourceId: document.getElementById('emailEventIds').value.trim(),
           engagementType: getEngagementType(),
           limit: selectedEmailLimit,
           segments: (segs.length ? segs : ['A','B','C','D']).join(',')
@@ -1292,7 +1175,7 @@
       try {
         const params = new URLSearchParams({
           campaignId: campaignId || 'dummy',
-          targetResourceId: (document.getElementById('targetResourceId')?.value || '').trim(),
+          targetResourceId: (document.getElementById('emailEventIds')?.value || '').trim(),
           engagementType: getEngagementType(),
           eventFilter: (document.getElementById('emailEventFilter')?.value || '').trim()
         });
@@ -1367,7 +1250,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             campaignId,
-            targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
+            targetResourceId: document.getElementById('emailEventIds').value.trim() || undefined,
             eventFilter: document.getElementById('emailEventFilter').value.trim() || undefined,
             eventIds: document.getElementById('emailEventIds').value.trim() || undefined,
             engagementType: getEngagementType(),
