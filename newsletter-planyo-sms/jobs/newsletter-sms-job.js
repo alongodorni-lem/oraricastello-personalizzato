@@ -194,11 +194,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
       const filteredEmails = mailchimpEmails.filter((email) => !emailsInASet.has(email.toLowerCase().trim()));
       console.log('[Job] Email da Mailchimp (' + engagementLabel + ') dopo esclusione Lista A:', filteredEmails.length);
-      const listId = await mailchimp.getCampaignListId(campaignId);
-      if (listId && filteredEmails.length > 0) {
-        console.log('[Job] Recupero telefoni da Mailchimp (merge_fields)...');
-        mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(filteredEmails.map((e) => e.toLowerCase())));
-        console.log('[Job] Telefoni trovati in Mailchimp:', mailchimpPhones.size);
+      if (filteredEmails.length > 0) {
+        console.log('[Job] Recupero telefoni da cache Mailchimp...');
+        mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(null, new Set(filteredEmails.map((e) => e.toLowerCase())));
+        console.log('[Job] Telefoni trovati in cache Mailchimp:', mailchimpPhones.size);
       }
       for (const email of filteredEmails) {
         const raw = mailchimpPhones.get(email.toLowerCase()) || '';
@@ -363,8 +362,7 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
   const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
   let mailchimpPhones = new Map();
   try {
-    const listId = await mailchimp.getCampaignListId(campaignId);
-    mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(mailchimpEmails.map((e) => e.toLowerCase())));
+    mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(null, new Set(mailchimpEmails.map((e) => e.toLowerCase())));
   } catch { /* ignore */ }
 
   for (const email of mailchimpEmails) {
@@ -411,7 +409,7 @@ async function getSmsPreview(campaignId, options = {}) {
     }
     const excludeListA = { emailsInA };
     const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
-    const count = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@')).length;
+    const count = listD.length;
     return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count } };
   }
 
@@ -422,16 +420,9 @@ async function getSmsPreview(campaignId, options = {}) {
   // Lista A (prenotati evento target con data futura) e B (prenot. 18m esclusi A)
   const { listA, listB, emailsInA } = planyo.buildListAAndB(reservationsByEmail, targetResourceId);
   const lists = { A: [], B: [], C: [] };
-
-  const addWithPhone = (arr, src) => {
-    for (const { email, phone } of src) {
-      const raw = phone || '';
-      const p = planyo.normalizePhone(raw) || (raw && !raw.includes('@') && raw.replace(/\D/g, '').length >= 9 ? raw : '');
-      if (p && p.length >= 10 && !p.includes('@')) arr.push({ email, phone: p });
-    }
-  };
-  addWithPhone(lists.A, listA);
-  addWithPhone(lists.B, listB);
+  const toEmailOnly = (src) => src.map(({ email }) => ({ email }));
+  lists.A = toEmailOnly(listA);
+  lists.B = toEmailOnly(listB);
 
   if (hasEventFilter) {
     lists.A = lists.A.filter((x) => {
@@ -450,16 +441,8 @@ async function getSmsPreview(campaignId, options = {}) {
   if (segFilter.includes('C')) {
     const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
     const filteredEmails = mailchimpEmails.filter((email) => !emailsInA.has(email.toLowerCase().trim()));
-    let mailchimpPhones = new Map();
-    if (filteredEmails.length > 0) {
-      const listId = await mailchimp.getCampaignListId(campaignId);
-      mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(listId, new Set(filteredEmails.map((e) => e.toLowerCase()))).catch(() => new Map());
-    }
     for (const email of filteredEmails) {
-      let raw = mailchimpPhones.get(email.toLowerCase()) || '';
-      const phone = planyo.normalizePhone(raw) || (raw && !raw.includes('@') && raw.replace(/\D/g, '').length >= 9 ? raw : '');
-      if (!phone || phone.length < 10 || phone.includes('@')) continue;
-      lists.C.push({ email, phone });
+      lists.C.push({ email });
     }
   }
 
@@ -473,7 +456,7 @@ async function getSmsPreview(campaignId, options = {}) {
     try {
       const excludeListA = { emailsInA };
       const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
-      listDCount = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@')).length;
+      listDCount = listD.length;
       total += listDCount;
     } catch (_) {}
   }

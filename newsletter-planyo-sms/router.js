@@ -148,6 +148,7 @@ router.get('/api/config', (req, res) => {
     const cfg = loadUiConfig();
     const targetResourceId = formatTargetResourceIds(cfg.targetResourceId ?? config.targetResourceId ?? 236955);
     const mailchimpEngagementType = parseEngagementType(cfg.mailchimpEngagementType || 'open');
+    dataCache.startWeeklyNewsletterRefresh(mailchimpEngagementType);
     const cacheStatus = dataCache.getCacheStatus();
     const ready = dataCache.isReadyForOperations();
     res.json({ success: true, targetResourceId, mailchimpEngagementType, cacheStatus, ready });
@@ -203,6 +204,28 @@ router.post('/api/update-newsletter', (req, res) => {
   setImmediate(async () => {
     try {
       const result = await dataCache.runUpdateNewsletter(mode);
+      const job = updateJobs.get(jobId);
+      if (job) {
+        job.status = 'done';
+        job.result = result;
+      }
+    } catch (err) {
+      const job = updateJobs.get(jobId);
+      if (job) {
+        job.status = 'error';
+        job.error = err.message;
+      }
+    }
+  });
+  res.json({ success: true, jobId });
+});
+
+router.post('/api/update-newsletter/force', (req, res) => {
+  const jobId = 'nuf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+  updateJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
+  setImmediate(async () => {
+    try {
+      const result = await dataCache.runForceRebuildNewsletterCache();
       const job = updateJobs.get(jobId);
       if (job) {
         job.status = 'done';

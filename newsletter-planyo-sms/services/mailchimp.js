@@ -356,23 +356,8 @@ async function getCampaignEngagedEmailsWithCache(campaignId, engagementType = 'o
       return emails;
     }
   } catch (_) {}
-  const emails = await getCampaignEngagedEmails(campaignId, type);
-  const normalizedEmails = [...new Set(emails.map((e) => e.toLowerCase().trim()).filter(Boolean))];
-  setRuntimeCache(runtimeKey, normalizedEmails);
-  // Persistenza cache file: utile per riuso rapido nella sessione sui due tab
-  try {
-    const dataCache = require('./dataCache');
-    const cached = dataCache.loadMailchimpCache() || {};
-    const engagements = normalizeCampaignEngagementsShape(cached);
-    engagements[type][campaignId] = normalizedEmails;
-    dataCache.saveMailchimpCache({
-      ...cached,
-      updatedAt: cached.updatedAt || new Date().toISOString(),
-      campaignEngagements: engagements,
-      contacts: cached.contacts || {}
-    });
-  } catch (_) {}
-  return normalizedEmails;
+  // In preview/run non facciamo fetch live: se manca in cache, ritorna vuoto.
+  return [];
 }
 
 /**
@@ -397,38 +382,17 @@ async function getMemberDetailsForEmailsWithCache(emailsSet, listId) {
           map.set(key, {
             firstName: c.nome || '',
             lastName: c.cognome || '',
-            phone: c.cellulare || ''
+            phone: c.telefono || c.cellulare || ''
           });
           missing.delete(key);
         }
       }
     }
-    if (missing.size === 0) return map;
-    if (listId) {
-      const fetched = await getMemberDetailsForEmails(listId, missing);
-      for (const [email, d] of fetched) map.set(email, d);
-      // Merge incrementale in cache file (nome/cognome/email/telefono)
-      try {
-        const nextCached = dataCache.loadMailchimpCache() || cached || {};
-        const contacts = { ...(nextCached.contacts || {}) };
-        for (const [email, d] of fetched) {
-          contacts[email] = {
-            nome: (d.firstName || '').trim(),
-            cognome: (d.lastName || '').trim(),
-            cellulare: (d.phone || '').trim()
-          };
-        }
-        dataCache.saveMailchimpCache({
-          ...nextCached,
-          updatedAt: nextCached.updatedAt || new Date().toISOString(),
-          campaignEngagements: normalizeCampaignEngagementsShape(nextCached),
-          contacts
-        });
-      } catch (_) {}
+    if (missing.size > 0) {
+      // Nessun fetch live in preview/run: il popolamento avviene via update cache.
     }
     return map;
   } catch (_) {}
-  if (listId) return getMemberDetailsForEmails(listId, requested);
   return new Map();
 }
 

@@ -10,6 +10,9 @@ const planyoReportCsv = require('./planyoReportCsv');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const MAILCHIMP_CACHE_FILE = path.join(DATA_DIR, 'mailchimp-cache.json');
 const PLANYO_CACHE_FILE = path.join(DATA_DIR, 'planyo-cache.json');
+const NEWSLETTER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+let weeklyRefreshRunning = false;
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -51,6 +54,34 @@ function saveMailchimpCache(data) {
   fs.writeFileSync(MAILCHIMP_CACHE_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
+function normalizeCacheShape(raw) {
+  const c = raw || {};
+  const engagements = c.campaignEngagements || {};
+  const byType = (engagements.open || engagements.click)
+    ? engagements
+    : { open: {}, click: {} };
+  return {
+    updatedAt: c.updatedAt || null,
+    nextRefreshAt: c.nextRefreshAt || null,
+    campaignEngagements: {
+      open: byType.open || {},
+      click: byType.click || {}
+    },
+    contacts: c.contacts || {}
+  };
+}
+
+function computeNextRefreshAt(baseDate = new Date()) {
+  return new Date(baseDate.getTime() + NEWSLETTER_CACHE_TTL_MS).toISOString();
+}
+
+function shouldRefreshWeekly(cache) {
+  const c = normalizeCacheShape(cache);
+  if (!c.updatedAt) return true;
+  const next = c.nextRefreshAt ? new Date(c.nextRefreshAt).getTime() : (new Date(c.updatedAt).getTime() + NEWSLETTER_CACHE_TTL_MS);
+  return Date.now() >= next;
+}
+
 /**
  * Salva cache Planyo
  */
@@ -64,18 +95,21 @@ function savePlanyoCache(data) {
  * @param {'open'|'click'} engagementType
  * @returns {{ success: boolean, updatedAt?: string, mailchimpContacts?: number, error?: string }}
  */
-async function runUpdateNewsletter(engagementType = 'open') {
+async function runUpdateNewsletter(engagementType = 'open', options = {}) {
   const mode = String(engagementType || 'open').toLowerCase() === 'click' ? 'click' : 'open';
+  const { force = false } = options;
   const now = new Date().toISOString();
   const result = { success: false, updatedAt: now };
 
   try {
     const campaigns = await mailchimp.getLastSentCampaigns(2);
-    const previous = loadMailchimpCache();
-    const campaignEngagements = {
-      open: { ...(previous?.campaignEngagements?.open || {}) },
-      click: { ...(previous?.campaignEngagements?.click || {}) }
-    };
+    const previous = normalizeCacheShape(loadMailchimpCache());
+    const campaignEngagements = force
+      ? { open: {}, click: {} }
+      : {
+          open: { ...(previous.campaignEngagements.open || {}) },
+          click: { ...(previous.campaignEngagements.click || {}) }
+        };
     const contactsMap = new Map();
 
     // Esegui le 2 campagne in parallelo
@@ -102,12 +136,20 @@ async function runUpdateNewsletter(engagementType = 'open') {
     }));
 
     const contacts = {};
-    for (const [email, d] of contactsMap) contacts[email] = d;
+    for (const [email, d] of contactsMap) {
+      contacts[email] = { nome: d.nome, cognome: d.cognome, email, telefono: d.cellulare, cellulare: d.cellulare };
+    }
 
-    const mergedContacts = { ...(previous?.contacts || {}), ...contacts };
-    saveMailchimpCache({ updatedAt: now, campaignEngagements, contacts: mergedContacts });
+    const mergedContacts = force ? contacts : { ...(previous.contacts || {}), ...contacts };
+    saveMailchimpCache({
+      updatedAt: now,
+      nextRefreshAt: computeNextRefreshAt(new Date(now)),
+      campaignEngagements,
+      contacts: mergedContacts
+    });
     result.mailchimpContacts = Object.keys(contacts).length;
     result.mailchimpEngagementType = mode;
+    result.nextRefreshAt = computeNextRefreshAt(new Date(now));
     result.success = true;
   } catch (err) {
     result.error = err.message;
@@ -151,26 +193,71 @@ function isReadyForOperations() {
   return !!(mc?.updatedAt && pc?.updatedAt);
 }
 
+function startWeeklyNewsletterRefresh(engagementType = 'open') {
+  const mode = String(engagementType || 'open').toLowerCase() === 'click' ? 'click' : 'open';
+  if (weeklyRefreshRunning) return { started: false, reason: 'already_running' };
+  const cache = normalizeCacheShape(loadMailchimpCache());
+  if (!shouldRefreshWeekly(cache)) return { started: false, reason: 'not_due', nextRefreshAt: cache.nextRefreshAt };
+
+  weeklyRefreshRunning = true;
+  setImmediate(async () => {
+    try {
+      // Pre-carica entrambe le modalità in ciclo settimanale.
+      await runUpdateNewsletter('open');
+      await runUpdateNewsletter('click');
+      // Allinea timestamp di refresh alla fine dell'aggiornamento.
+      const current = normalizeCacheShape(loadMailchimpCache());
+      saveMailchimpCache({
+        ...current,
+        updatedAt: new Date().toISOString(),
+        nextRefreshAt: computeNextRefreshAt(new Date())
+      });
+    } catch (_) {
+      // no-op: errori visibili tramite comandi manuali
+    } finally {
+      weeklyRefreshRunning = false;
+    }
+  });
+  return { started: true, mode };
+}
+
+async function runForceRebuildNewsletterCache() {
+  const first = await runUpdateNewsletter('open', { force: true });
+  const second = await runUpdateNewsletter('click');
+  const now = new Date();
+  const cache = normalizeCacheShape(loadMailchimpCache());
+  saveMailchimpCache({
+    ...cache,
+    updatedAt: now.toISOString(),
+    nextRefreshAt: computeNextRefreshAt(now)
+  });
+  return {
+    success: !!(first.success && second.success),
+    updatedAt: now.toISOString(),
+    nextRefreshAt: computeNextRefreshAt(now),
+    open: first,
+    click: second,
+    error: first.success && second.success ? undefined : (first.error || second.error || 'Errore rebuild cache')
+  };
+}
+
 /**
  * Stato cache (per UI)
  */
 function getCacheStatus() {
-  const mc = loadMailchimpCache();
+  const mc = normalizeCacheShape(loadMailchimpCache());
   const pc = loadPlanyoCache();
   const campaignsCount = (() => {
-    if (!mc?.campaignEngagements) return 0;
-    if (mc.campaignEngagements.open || mc.campaignEngagements.click) {
-      const openCount = Object.keys(mc.campaignEngagements.open || {}).length;
-      const clickCount = Object.keys(mc.campaignEngagements.click || {}).length;
-      return Math.max(openCount, clickCount);
-    }
-    return Object.keys(mc.campaignEngagements).length;
+    const openCount = Object.keys(mc.campaignEngagements.open || {}).length;
+    const clickCount = Object.keys(mc.campaignEngagements.click || {}).length;
+    return Math.max(openCount, clickCount);
   })();
   return {
-    mailchimpUpdatedAt: mc?.updatedAt || null,
+    mailchimpUpdatedAt: mc.updatedAt || null,
+    mailchimpNextRefreshAt: mc.nextRefreshAt || null,
     planyoUpdatedAt: pc?.updatedAt || null,
     mailchimpCampaigns: campaignsCount,
-    mailchimpContacts: mc?.contacts ? Object.keys(mc.contacts).length : 0,
+    mailchimpContacts: mc.contacts ? Object.keys(mc.contacts).length : 0,
     planyoContacts: pc?.contacts?.length || 0
   };
 }
@@ -181,6 +268,9 @@ module.exports = {
   saveMailchimpCache,
   savePlanyoCache,
   runUpdateNewsletter,
+  runForceRebuildNewsletterCache,
+  startWeeklyNewsletterRefresh,
+  shouldRefreshWeekly,
   runUpdatePrenotazioni,
   isReadyForOperations,
   getCacheStatus,

@@ -270,6 +270,7 @@
         <div class="row" style="gap: 1rem; flex-wrap: wrap;">
           <div>
             <button type="button" class="btn btn-secondary" id="btnUpdateNewsletter">AGGIORNA NEWSLETTER</button>
+            <button type="button" class="btn btn-secondary" id="btnForceNewsletterCache" style="margin-left: 0.5rem;">RICREA CACHE NEWSLETTER</button>
             <p class="hint" id="newsletterStatus" style="margin-top: 0.5rem;">Newsletter da aggiornare</p>
           </div>
           <div>
@@ -335,7 +336,7 @@
       </div>
       <div class="form-group">
         <button type="button" class="btn btn-secondary" id="btnSmsCalc">Calcola contatti</button>
-        <p class="hint" id="smsCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare i contatti che corrispondono ai criteri.</p>
+        <p class="hint" id="smsCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare il totale contatti (email) che corrispondono ai criteri.</p>
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="btnRun" disabled>
@@ -431,7 +432,7 @@
         </div>
         <div class="form-group">
           <button type="button" class="btn btn-secondary" id="btnEmailCalc">Calcola contatti</button>
-          <p class="hint" id="emailCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare i contatti che corrispondono ai criteri.</p>
+          <p class="hint" id="emailCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare il totale contatti (email) che corrispondono ai criteri.</p>
         </div>
         <div class="form-group">
           <label>Scarica CSV</label>
@@ -708,7 +709,10 @@
       const hint = document.getElementById('cacheReadyHint');
 
       if (cacheStatus?.mailchimpUpdatedAt) {
-        ns.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(cacheStatus.mailchimpUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+        const next = cacheStatus.mailchimpNextRefreshAt
+          ? (' | <strong>Prossimo refresh</strong> ' + new Date(cacheStatus.mailchimpNextRefreshAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }))
+          : '';
+        ns.innerHTML = '<strong>Newsletter aggiornate al</strong> ' + new Date(cacheStatus.mailchimpUpdatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + next;
         ns.style.color = 'var(--success)';
       } else {
         ns.textContent = 'Newsletter da aggiornare';
@@ -770,8 +774,10 @@
 
     function refreshUpdateButtonsState() {
       const btnNewsletter = document.getElementById('btnUpdateNewsletter');
+      const btnForceNewsletterCache = document.getElementById('btnForceNewsletterCache');
       const btnPrenotazioni = document.getElementById('btnUpdatePrenotazioni');
       if (btnNewsletter) btnNewsletter.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
+      if (btnForceNewsletterCache) btnForceNewsletterCache.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
       if (btnPrenotazioni) btnPrenotazioni.disabled = updateNewsletterRunning || updatePrenotazioniRunning;
     }
 
@@ -843,6 +849,44 @@
         }
         if (d.jobId) {
           pollUpdateNewsletter(d.jobId, btn);
+        } else {
+          el.textContent = 'Errore: risposta inattesa dal server';
+          el.style.color = 'var(--danger)';
+          updateNewsletterRunning = false;
+          refreshUpdateButtonsState();
+        }
+      } catch (e) {
+        el.textContent = 'Errore: ' + e.message;
+        el.style.color = 'var(--danger)';
+        updateNewsletterRunning = false;
+        refreshUpdateButtonsState();
+      }
+    };
+
+    document.getElementById('btnForceNewsletterCache').onclick = async () => {
+      if (updatePrenotazioniRunning || updateNewsletterRunning) return;
+      const el = document.getElementById('newsletterStatus');
+      updateNewsletterRunning = true;
+      refreshUpdateButtonsState();
+      el.textContent = 'Ricostruzione cache newsletter in corso...';
+      el.style.color = '';
+      try {
+        const r = await fetch(API + '/api/update-newsletter/force', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const text = await r.text();
+        let d;
+        try {
+          d = JSON.parse(text);
+        } catch (_) {
+          if (text.startsWith('<') || text.includes('<!DOCTYPE')) {
+            throw new Error('Il server ha restituito HTML. Controlla i log su Render.');
+          }
+          throw new Error('Risposta non valida (HTTP ' + r.status + ')');
+        }
+        if (d.jobId) {
+          pollUpdateNewsletter(d.jobId, document.getElementById('btnUpdateNewsletter'));
         } else {
           el.textContent = 'Errore: risposta inattesa dal server';
           el.style.color = 'var(--danger)';
@@ -983,11 +1027,11 @@
     };
 
     function resetSmsCalc() {
-      document.getElementById('smsCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti.';
+      document.getElementById('smsCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti (totale email).';
       document.getElementById('btnRun').disabled = true;
     }
     function resetEmailCalc() {
-      document.getElementById('emailCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti.';
+      document.getElementById('emailCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti (totale email).';
       document.getElementById('btnExportCsv').disabled = document.getElementById('btnSendEmail').disabled = true;
     }
     document.getElementById('smsEventIds').oninput = resetSmsCalc;
@@ -1084,7 +1128,7 @@
         }
         if (d.error) throw new Error(d.error);
         smsContactCount = d.total || 0;
-        status.textContent = smsContactCount + ' contatti corrispondono al criterio. Puoi procedere con l\'invio.';
+        status.textContent = smsContactCount + ' contatti totali (email) corrispondono al criterio. In invio SMS verranno usati solo i numeri validi.';
         btnRun.disabled = smsContactCount === 0;
       } catch (e) {
         status.textContent = 'Errore: ' + e.message;
@@ -1141,7 +1185,7 @@
         }
         if (d.error) throw new Error(d.error);
         emailContactCount = d.total || 0;
-        status.textContent = emailContactCount + ' contatti corrispondono al criterio. Puoi procedere con export o invio.';
+        status.textContent = emailContactCount + ' contatti totali (email) corrispondono al criterio. Puoi procedere con export o invio.';
         btnExport.disabled = btnSend.disabled = emailContactCount === 0;
         updateEmailBatchHint();
       } catch (e) {
