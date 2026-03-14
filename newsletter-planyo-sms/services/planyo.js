@@ -74,8 +74,8 @@ let reservationsCache = null;
 let reservationsCacheExpiry = 0;
 
 /**
- * Carica tutte le prenotazioni negli ultimi N mesi e le indicizza per email
- * Cache in-memory 5 min per evitare timeout su richieste ripetute
+ * Carica tutte le prenotazioni CONFERMATE effettuate (data di prenotazione) negli ultimi N mesi.
+ * Usa list_by_creation_date=true (data prenotazione) e required_status=4 (confermate).
  * @param {number} monthsLookback
  * @returns {Promise<Map<string, { reservations: Array, phone: string }>>}
  */
@@ -103,6 +103,9 @@ async function loadReservationsByEmail(monthsLookback = 18) {
       site_id: siteId,
       start_time: startTime,
       end_time: endTime,
+      list_by_creation_date: true,
+      required_status: 4,
+      excluded_status: 8 | 16,
       detail_level: 4,
       include_deleted: false,
       limit: PAGE_SIZE,
@@ -135,6 +138,8 @@ async function loadReservationsByEmail(monthsLookback = 18) {
     page++;
     if (page > 200) break;
   }
+
+  console.log('[Planyo] Prenotazioni confermate (creation_date ultimi', monthsLookback, 'mesi):', byEmail.size, 'email,', [...byEmail.values()].reduce((s, e) => s + (e.reservations?.length || 0), 0), 'prenotazioni');
 
   reservationsCache = { key: cacheKey, data: byEmail };
   reservationsCacheExpiry = Date.now() + RESERVATIONS_CACHE_TTL_MS;

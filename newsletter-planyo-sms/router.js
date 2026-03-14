@@ -105,6 +105,30 @@ router.get('/', (req, res) => {
 // Static files (CSS, etc. se presenti)
 router.use(express.static(PUBLIC_PATH));
 
+// Test API Planyo: conta prenotazioni confermate (creation_date) ultimi 18 mesi
+router.get('/api/test-planyo', async (req, res) => {
+  try {
+    const planyo = require('./services/planyo');
+    const months = parseInt(req.query.months || '18', 10) || 18;
+    const byEmail = await planyo.loadReservationsByEmail(months);
+    const totalRes = [...byEmail.values()].reduce((s, e) => s + (e.reservations?.length || 0), 0);
+    const { buildListAAndB } = planyo;
+    const targetId = config.targetResourceId;
+    const { listA, listB, emailsInA } = buildListAAndB(byEmail, targetId);
+    res.json({
+      success: true,
+      months,
+      totalEmails: byEmail.size,
+      totalReservations: totalRes,
+      listA_count: listA.length,
+      listB_count: listB.length,
+      emailsInA_count: emailsInA.size
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Preload Planyo (Lista A) in background - avviato al caricamento pagina per velocizzare Calcola contatti
 router.get('/api/preload-planyo', (req, res) => {
   res.json({ success: true, message: 'Preload Lista A avviato' });
