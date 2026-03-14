@@ -289,13 +289,16 @@
         <p class="hint">Massimo 160 caratteri. Se vuoto, viene usato il testo predefinito.</p>
       </div>
       <div class="form-group">
-        <label>Liste da inviare</label>
+        <label>Crea Pubblico</label>
+        <p class="hint" style="margin-bottom:0.5rem;"><strong>DA INSERIRE IN LISTA</strong></p>
         <div class="checkboxes">
-          <label class="checkbox-label"><input type="checkbox" name="seg" value="A"> Lista A (tutti i prenotati evento target)</label>
-          <label class="checkbox-label"><input type="checkbox" name="seg" value="B"> Lista B (Clienti con prenotazioni ultimi 18 mesi esclusi evento target)</label>
-          <label class="checkbox-label"><input type="checkbox" name="seg" value="C"> Lista C (Utenti newsletter da CSV, esclusi evento target)</label>
-          <label class="checkbox-label"><input type="checkbox" name="seg" value="D"> Lista D (Contatti da planyo report - file caricato e salvato in cache - esclusi chi in Lista A)</label>
+          <label class="checkbox-label"><input type="checkbox" name="smsSource" value="newsletter"> Tutti i contatti da newsletter caricata (CSV)</label>
+          <label class="checkbox-label"><input type="checkbox" name="smsSource" value="prenotazioni"> Tutti i contatti Prenotazioni (API Planyo)</label>
+          <label class="checkbox-label"><input type="checkbox" name="smsSource" value="report"> Tutti i contatti dal report (CSV Planyo)</label>
         </div>
+        <hr style="margin: 0.75rem 0; border: 0; border-top: 1px solid var(--border);">
+        <p class="hint" style="margin-bottom:0.5rem;"><strong>DA ESCLUDERE</strong></p>
+        <label class="checkbox-label"><input type="checkbox" id="excludeTargetBooked"> ESCLUDI PRENOTATI EVENTO TARGET</label>
       </div>
       <div class="form-group">
         <label>ID evento Planyo (filtro prenotazioni)</label>
@@ -502,6 +505,24 @@
     }
 
     function getEngagementType() { return 'open'; }
+    function getSmsAudienceSelection() {
+      const src = Array.from(document.querySelectorAll('input[name="smsSource"]:checked')).map(c => c.value);
+      const includeNewsletter = src.includes('newsletter');
+      const includePrenotazioni = src.includes('prenotazioni');
+      const includeReport = src.includes('report');
+      const excludeTargetBooked = !!document.getElementById('excludeTargetBooked')?.checked;
+      const segments = [];
+      if (includePrenotazioni) segments.push(excludeTargetBooked ? 'B' : 'A', 'B');
+      if (includeNewsletter) segments.push('C');
+      if (includeReport) segments.push('D');
+      return {
+        includeNewsletter,
+        includePrenotazioni,
+        includeReport,
+        excludeTargetBooked,
+        segments: [...new Set(segments)]
+      };
+    }
 
     const isLocalhost = () => /^localhost$|^127\.|^\[::1\]$/.test(window.location.hostname);
 
@@ -524,9 +545,10 @@
       const btnAbort = document.getElementById('btnAbort');
       const out = document.getElementById('runOutput');
       const dryRun = document.getElementById('dryRun').checked;
-      const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
+      const audience = getSmsAudienceSelection();
+      const segs = audience.segments;
       if (!segs.length) {
-        out.innerHTML = '<div class="error">Seleziona almeno una lista (A, B, C o D).</div>';
+        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Da inserire in lista".</div>';
         return;
       }
       if (!dryRun && !confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
@@ -553,6 +575,7 @@
           body: JSON.stringify({
             campaignId: NEWSLETTER_SOURCE_ID,
             segments: segs.length ? segs : ['A', 'B', 'C'],
+            excludeTargetBooked: audience.excludeTargetBooked,
             dryRun,
             engagementType: getEngagementType(),
             targetResourceId: document.getElementById('targetResourceId').value.trim() || undefined,
@@ -799,7 +822,10 @@
           const d = await r.json();
           if (d.status === 'done') {
             if (d.success) {
-              el.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
+              const contactsInfo = (typeof d.planyoContacts === 'number')
+                ? (' | contatti: ' + d.planyoContacts)
+                : '';
+              el.innerHTML = '<strong>Prenotazioni aggiornate al</strong> ' + new Date(d.updatedAt).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' }) + contactsInfo;
               el.style.color = 'var(--success)';
             } else {
               el.textContent = 'Errore: ' + (d.error || 'Aggiornamento fallito');
@@ -937,7 +963,7 @@
       cb.onchange = () => { resetSmsCalc(); resetEmailCalc(); };
     });
     function toggleListDFilters() {
-      const dSms = document.querySelector('input[name="seg"][value="D"]')?.checked;
+      const dSms = document.querySelector('input[name="smsSource"][value="report"]')?.checked;
       const dEmail = document.querySelector('input[name="emailSeg"][value="D"]')?.checked;
       document.getElementById('smsListDFilters').style.display = dSms ? 'block' : 'none';
       document.getElementById('emailListDFilters').style.display = dEmail ? 'block' : 'none';
@@ -968,7 +994,9 @@
       if (emailDraftSaveTimer) clearTimeout(emailDraftSaveTimer);
       emailDraftSaveTimer = setTimeout(saveEmailDraftConfig, 500);
     }
-    document.querySelectorAll('input[name="seg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
+    document.querySelectorAll('input[name="smsSource"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
+    const excludeTargetBookedEl = document.getElementById('excludeTargetBooked');
+    if (excludeTargetBookedEl) excludeTargetBookedEl.onchange = resetSmsCalc;
     document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
     
     document.getElementById('emailSubject').oninput = () => {
@@ -985,9 +1013,15 @@
 
     document.getElementById('btnSmsCalc').onclick = async () => {
       const campaignId = NEWSLETTER_SOURCE_ID;
-      const segs = Array.from(document.querySelectorAll('input[name="seg"]:checked')).map(c => c.value);
+      const audience = getSmsAudienceSelection();
+      const segs = audience.segments;
       const status = document.getElementById('smsCountStatus');
       const btnRun = document.getElementById('btnRun');
+      if (!segs.length) {
+        status.textContent = 'Seleziona almeno una sorgente in "Da inserire in lista".';
+        btnRun.disabled = true;
+        return;
+      }
       status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
       btnRun.disabled = true;
       try {
@@ -995,7 +1029,8 @@
           campaignId: campaignId || 'dummy',
           targetResourceId: document.getElementById('targetResourceId').value.trim(),
           engagementType: getEngagementType(),
-          segments: (segs.length ? segs : ['A','B','C']).join(',')
+          segments: (segs.length ? segs : ['A','B','C']).join(','),
+          excludeTargetBooked: audience.excludeTargetBooked ? '1' : '0'
         };
         const evIds = document.getElementById('smsEventIds').value.trim();
         if (evIds) baseParams.eventIds = evIds;

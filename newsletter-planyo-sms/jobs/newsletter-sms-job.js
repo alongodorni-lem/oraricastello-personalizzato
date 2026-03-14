@@ -88,7 +88,7 @@ function markAsSent(campaignId, email, segment) {
  * @param {{ dryRun?: boolean }} options
  */
 async function runNewsletterSmsJob(campaignId, options = {}) {
-  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck, engagementType = 'open' } = options;
+  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck, engagementType = 'open', excludeTargetBooked = false } = options;
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
   const targetResourceId = overrideTargetId != null ? overrideTargetId : configTargetId;
 
@@ -113,7 +113,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   }
 
   if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
-    const excludeListA = { emailsInA };
+    const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
     const withPhone = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
     console.log('[Job] Lista D da CSV:', withPhone.length, 'contatti con telefono');
@@ -192,8 +192,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     try {
       console.log('[Job] Recupero', engagementLabel, 'da Mailchimp...');
       mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
-      const filteredEmails = mailchimpEmails;
-      console.log('[Job] Email da Mailchimp (' + engagementLabel + ') senza esclusioni:', filteredEmails.length);
+      const filteredEmails = excludeTargetBooked
+        ? mailchimpEmails.filter((email) => !emailsInASet.has(email.toLowerCase().trim()))
+        : mailchimpEmails;
+      console.log('[Job] Email da Mailchimp (' + engagementLabel + ')', excludeTargetBooked ? 'dopo esclusione Lista A:' : 'senza esclusioni:', filteredEmails.length);
       if (filteredEmails.length > 0) {
         console.log('[Job] Recupero telefoni da cache Mailchimp...');
         mailchimpPhones = await mailchimp.getPhonesForEmailsWithCache(null, new Set(filteredEmails.map((e) => e.toLowerCase())));
@@ -233,7 +235,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   let listD = [];
   if (segmentsFilter && segmentsFilter.includes('D') && process.env.PLANYO_LISTD_CSV_URL) {
     try {
-      const excludeListA = { emailsInA: emailsInASet };
+      const excludeListA = excludeTargetBooked ? { emailsInA: emailsInASet } : {};
       listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
       listD = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
       console.log('[Job] Lista D da CSV:', listD.length, 'contatti con telefono');
@@ -391,7 +393,7 @@ async function checkPhoneInLists(campaignId, phone, options = {}) {
  * @returns {Promise<{ total: number, bySegment: { A: number, B: number, C: number, D: number } }>}
  */
 async function getSmsPreview(campaignId, options = {}) {
-  const { targetResourceId: overrideId, eventIds, segments: segmentsFilter, listDFilters, engagementType = 'open' } = options;
+  const { targetResourceId: overrideId, eventIds, segments: segmentsFilter, listDFilters, engagementType = 'open', excludeTargetBooked = false } = options;
   const { targetResourceId: configId, monthsLookback } = config;
   const targetResourceId = overrideId != null ? overrideId : configId;
   const segFilter = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D') : ['A', 'B', 'C'];
@@ -406,7 +408,7 @@ async function getSmsPreview(campaignId, options = {}) {
         emailsInA = setA;
       } catch (_) {}
     }
-    const excludeListA = { emailsInA };
+    const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
     const count = listD.length;
     return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count } };
@@ -439,7 +441,9 @@ async function getSmsPreview(campaignId, options = {}) {
   // Lista C: aperture Mailchimp escluse email in Lista A (match solo email)
   if (segFilter.includes('C')) {
     const mailchimpEmails = await mailchimp.getCampaignEngagedEmailsWithCache(campaignId, engagementType);
-    const filteredEmails = mailchimpEmails;
+    const filteredEmails = excludeTargetBooked
+      ? mailchimpEmails.filter((email) => !emailsInA.has(email.toLowerCase().trim()))
+      : mailchimpEmails;
     for (const email of filteredEmails) {
       lists.C.push({ email });
     }
@@ -453,7 +457,7 @@ async function getSmsPreview(campaignId, options = {}) {
   let listDCount = 0;
   if (segmentsFilter && segmentsFilter.includes('D') && process.env.PLANYO_LISTD_CSV_URL) {
     try {
-      const excludeListA = { emailsInA };
+      const excludeListA = excludeTargetBooked ? { emailsInA } : {};
       const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
       listDCount = listD.length;
       total += listDCount;

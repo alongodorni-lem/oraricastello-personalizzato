@@ -325,7 +325,7 @@ router.post('/api/run', async (req, res) => {
   if (!requireCacheReady(res)) return;
   res.setTimeout(30 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText, engagementType } = body_;
+  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
   const listDFilters = parseListDFilters(body_);
 
   const cap = captureLogs(async () => {
@@ -355,7 +355,7 @@ router.post('/api/run', async (req, res) => {
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode });
+      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: parseBoolParam(excludeTargetBooked) });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
@@ -462,6 +462,10 @@ function parseEngagementType(val) {
   return String(val || 'open').toLowerCase().trim() === 'click' ? 'click' : 'open';
 }
 
+function parseBoolParam(val) {
+  return val === true || val === 'true' || val === '1' || val === 1 || val === 'on';
+}
+
 async function getListAExclusions(targetResourceId) {
   const empty = { emailsInA: new Set() };
   if (!process.env.PLANYO_API_KEY) return empty;
@@ -516,6 +520,7 @@ router.post('/api/sms/preview/start', (req, res) => {
     const campaignId = q.campaignId;
     const targetResourceId = parseTargetResourceIdsParam(q.targetResourceId);
     const engagementType = parseEngagementType(q.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
+    const excludeTargetBooked = parseBoolParam(q.excludeTargetBooked);
     const eventIds = parseEventIdsParam(q.eventIds);
     const segments = parseSegmentsParam(q.segments);
     const listDFilters = parseListDFilters(q);
@@ -534,7 +539,8 @@ router.post('/api/sms/preview/start', (req, res) => {
           eventIds,
           segments: segments || ['A', 'B', 'C'],
           listDFilters,
-          engagementType
+          engagementType,
+          excludeTargetBooked
         });
         const job = previewJobs.get(jobId);
         if (job) {
@@ -575,6 +581,7 @@ router.get('/api/sms/preview', async (req, res) => {
     const campaignId = req.query.campaignId;
     const targetResourceId = parseTargetResourceIdsParam(req.query.targetResourceId);
     const engagementType = parseEngagementType(req.query.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
+    const excludeTargetBooked = parseBoolParam(req.query.excludeTargetBooked);
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
@@ -587,7 +594,8 @@ router.get('/api/sms/preview', async (req, res) => {
       eventIds,
       segments: segments || ['A', 'B', 'C'],
       listDFilters,
-      engagementType
+      engagementType,
+      excludeTargetBooked
     });
     res.json({ success: true, ...result });
   } catch (err) {
