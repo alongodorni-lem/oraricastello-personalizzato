@@ -314,8 +314,8 @@
       <p class="hint" style="margin-bottom: 0.75rem;">Dopo "Calcola contatti", imposta il testo e avvia l'invio reale o simulato.</p>
       <div class="form-group">
         <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
-        <textarea id="smsText" rows="3" maxlength="160" placeholder="Lascia vuoto per usare il testo predefinito della lista"></textarea>
-        <p class="hint">Massimo 160 caratteri. Se vuoto, viene usato il testo predefinito.</p>
+        <textarea id="smsText" rows="3" maxlength="160" placeholder="Scrivi qui il messaggio SMS da inviare"></textarea>
+        <p class="hint">Massimo 160 caratteri.</p>
       </div>
       <div class="form-group">
         <label>Invio prova</label>
@@ -571,8 +571,13 @@
       const out = document.getElementById('runOutput');
       const audience = getSmsAudienceSelection();
       const segs = audience.segments;
+      const smsText = document.getElementById('smsText').value.trim();
       if (!segs.length) {
         out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Da inserire in lista".</div>';
+        return;
+      }
+      if (!smsText) {
+        out.innerHTML = '<div class="error">Scrivi prima il testo SMS da inviare.</div>';
         return;
       }
       if (!confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
@@ -602,7 +607,7 @@
             excludeTargetBooked: audience.excludeTargetBooked,
             engagementType: getEngagementType(),
             targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
-            smsText: document.getElementById('smsText').value.trim() || undefined,
+            smsText,
             ...getListDFilters(true)
           }),
           signal: controller.signal
@@ -631,9 +636,14 @@
 
     document.getElementById('btnTest').onclick = async () => {
       const phone = document.getElementById('testPhone').value.trim();
+      const smsText = document.getElementById('smsText')?.value?.trim() || '';
       const out = document.getElementById('testOutput');
       if (!phone) {
         out.innerHTML = '<div class="error">Inserisci un numero di telefono.</div>';
+        return;
+      }
+      if (!smsText) {
+        out.innerHTML = '<div class="error">Scrivi prima il testo SMS per l\'invio di prova.</div>';
         return;
       }
       const btn = document.getElementById('btnTest');
@@ -645,7 +655,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             phone,
-            smsText: document.getElementById('smsText')?.value?.trim() || undefined
+            smsText
           })
         });
         const d = await r.json();

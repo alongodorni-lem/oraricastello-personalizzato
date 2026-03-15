@@ -360,6 +360,10 @@ router.post('/api/run', async (req, res) => {
   res.setTimeout(30 * 60 * 1000);
   const body_ = req.body || {};
   const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
+  const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
+  if (!customSmsText) {
+    return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
+  }
   const listDFilters = parseListDFilters(body_);
   const excludeTarget = parseBoolParam(excludeTargetBooked);
   const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
@@ -388,7 +392,6 @@ router.post('/api/run', async (req, res) => {
 
     const evIds = parseEventIdsParam(eventIds);
 
-    const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
     const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     runAbortRequested = false;
     const abortCheck = () => runAbortRequested;
@@ -419,10 +422,13 @@ router.post('/api/test', async (req, res) => {
   if (!phone || !String(phone).replace(/\D/g, '').length) {
     return res.status(400).json({ success: false, error: 'Numero telefono richiesto' });
   }
+  const smsText = (typeof customText === 'string' && customText.trim()) ? customText.trim().slice(0, 160) : '';
+  if (!smsText) {
+    return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
+  }
   try {
-    const baseText = (typeof customText === 'string' && customText.trim()) ? customText.trim().slice(0, 160) : config.smsTexts.listB;
     const suffix = ' [' + Date.now().toString(36).slice(-6) + ']';
-    const text = baseText.length + suffix.length <= 160 ? baseText + suffix : baseText.slice(0, 160 - suffix.length) + suffix;
+    const text = smsText.length + suffix.length <= 160 ? smsText + suffix : smsText.slice(0, 160 - suffix.length) + suffix;
     const result = await smshosting.sendSms(phone, text);
     res.json({
       success: result.success,

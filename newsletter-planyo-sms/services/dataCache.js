@@ -323,9 +323,9 @@ async function runUpdatePrenotazioni() {
     }
 
     const raw = await planyoReportCsv.fetchAndParseCsv(csvUrl);
-    const uniqueByEmail = planyoReportCsv.dedupeByEmail(raw);
-    savePlanyoCache({ updatedAt: now, contacts: uniqueByEmail });
-    result.planyoContacts = uniqueByEmail.length;
+    savePlanyoCache({ updatedAt: now, contacts: raw });
+    const uniqueEmails = new Set(raw.map((r) => String(r?.email || '').toLowerCase().trim()).filter(Boolean));
+    result.planyoContacts = uniqueEmails.size;
     result.success = true;
   } catch (err) {
     result.error = err.message;
@@ -402,13 +402,22 @@ function getCacheStatus() {
     const clickCount = Object.keys(mc.campaignEngagements.click || {}).length;
     return Math.max(openCount, clickCount);
   })();
+  const planyoUniqueEmails = (() => {
+    const rows = Array.isArray(pc?.contacts) ? pc.contacts : [];
+    const set = new Set();
+    for (const r of rows) {
+      const email = String(r?.email || '').toLowerCase().trim();
+      if (email) set.add(email);
+    }
+    return set.size;
+  })();
   return {
     mailchimpUpdatedAt: mc.updatedAt || null,
     mailchimpNextRefreshAt: mc.nextRefreshAt || null,
     planyoUpdatedAt: pc?.updatedAt || null,
     mailchimpCampaigns: campaignsCount,
     mailchimpContacts: mc.contacts ? Object.keys(mc.contacts).length : 0,
-    planyoContacts: pc?.contacts?.length || 0
+    planyoContacts: planyoUniqueEmails
   };
 }
 
