@@ -365,7 +365,8 @@ router.post('/api/run', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
   }
   const listDFilters = parseListDFilters(body_);
-  const excludeTarget = parseBoolParam(excludeTargetBooked);
+  const forceReportOnly = !!(listDFilters && listDFilters.eventNameContains);
+  const excludeTarget = forceReportOnly ? false : parseBoolParam(excludeTargetBooked);
   const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
   try {
     await validateExcludeTargetSetup(excludeTarget, targetId);
@@ -374,7 +375,7 @@ router.post('/api/run', async (req, res) => {
   }
 
   const cap = captureLogs(async () => {
-    const seg = Array.isArray(segments) ? segments : [segments];
+    const seg = forceReportOnly ? ['D'] : (Array.isArray(segments) ? segments : [segments]);
     const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D'].includes(String(s).toUpperCase())) : null;
     const onlyD = segFilter && segFilter.length === 1 && segFilter[0].toUpperCase() === 'D';
 
@@ -398,7 +399,7 @@ router.post('/api/run', async (req, res) => {
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: excludeTarget });
+      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: forceReportOnly ? null : evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: excludeTarget });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
@@ -582,11 +583,13 @@ router.post('/api/sms/preview/start', async (req, res) => {
     const eventIds = parseEventIdsParam(q.eventIds);
     const segments = parseSegmentsParam(q.segments);
     const listDFilters = parseListDFilters(q);
+    const forceReportOnly = !!(listDFilters && listDFilters.eventNameContains);
 
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
-    await validateExcludeTargetSetup(excludeTargetBooked, targetId);
+    const effectiveExcludeTarget = forceReportOnly ? false : excludeTargetBooked;
+    await validateExcludeTargetSetup(effectiveExcludeTarget, targetId);
     const jobId = getJobId();
     previewJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
     cleanupOldJobs();
@@ -595,11 +598,11 @@ router.post('/api/sms/preview/start', async (req, res) => {
       try {
         const result = await getSmsPreview(cid, {
           targetResourceId: targetId,
-          eventIds,
-          segments: segments || ['A', 'B', 'C'],
+          eventIds: forceReportOnly ? null : eventIds,
+          segments: forceReportOnly ? ['D'] : (segments || ['A', 'B', 'C']),
           listDFilters,
           engagementType,
-          excludeTargetBooked
+          excludeTargetBooked: effectiveExcludeTarget
         });
         const job = previewJobs.get(jobId);
         if (job) {
@@ -643,18 +646,20 @@ router.get('/api/sms/preview', async (req, res) => {
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
+    const forceReportOnly = !!(listDFilters && listDFilters.eventNameContains);
 
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
-    await validateExcludeTargetSetup(excludeTargetBooked, targetId);
+    const effectiveExcludeTarget = forceReportOnly ? false : excludeTargetBooked;
+    await validateExcludeTargetSetup(effectiveExcludeTarget, targetId);
     const result = await getSmsPreview(cid, {
       targetResourceId: targetId,
-      eventIds,
-      segments: segments || ['A', 'B', 'C'],
+      eventIds: forceReportOnly ? null : eventIds,
+      segments: forceReportOnly ? ['D'] : (segments || ['A', 'B', 'C']),
       listDFilters,
       engagementType,
-      excludeTargetBooked
+      excludeTargetBooked: effectiveExcludeTarget
     });
     res.json({ success: true, ...result });
   } catch (err) {

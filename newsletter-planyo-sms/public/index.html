@@ -489,10 +489,15 @@
     function getEngagementType() { return 'open'; }
     function getSmsAudienceSelection() {
       const src = Array.from(document.querySelectorAll('input[name="smsSource"]:checked')).map(c => c.value);
-      const includeNewsletter = src.includes('newsletter');
-      const includePrenotazioni = src.includes('prenotazioni');
-      const includeReport = src.includes('report');
-      const excludeTargetBooked = excludeTargetBookedActive;
+      const includeNewsletterRaw = src.includes('newsletter');
+      const includePrenotazioniRaw = src.includes('prenotazioni');
+      const includeReportRaw = src.includes('report');
+      const listDEventNameContains = (document.getElementById('listDEventNameContains')?.value || '').trim();
+      const forceReportOnly = !!listDEventNameContains;
+      const includeNewsletter = forceReportOnly ? false : includeNewsletterRaw;
+      const includePrenotazioni = forceReportOnly ? false : includePrenotazioniRaw;
+      const includeReport = forceReportOnly ? true : includeReportRaw;
+      const excludeTargetBooked = forceReportOnly ? false : excludeTargetBookedActive;
       const segments = [];
       if (includePrenotazioni) segments.push(excludeTargetBooked ? 'B' : 'A', 'B');
       if (includeNewsletter) segments.push('C');
@@ -501,6 +506,7 @@
         includeNewsletter,
         includePrenotazioni,
         includeReport,
+        forceReportOnly,
         excludeTargetBooked,
         segments: [...new Set(segments)]
       };
