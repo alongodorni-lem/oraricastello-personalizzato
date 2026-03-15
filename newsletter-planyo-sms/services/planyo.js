@@ -288,7 +288,7 @@ function parseBoolLike(v) {
 }
 
 function inferPublishedFlag(obj) {
-  if (!obj || typeof obj !== 'object') return true;
+  if (!obj || typeof obj !== 'object') return false;
   const boolKeys = ['published', 'is_published', 'isPublished', 'active', 'enabled', 'visible'];
   for (const k of boolKeys) {
     if (Object.prototype.hasOwnProperty.call(obj, k)) {
@@ -300,36 +300,44 @@ function inferPublishedFlag(obj) {
     if (['inactive', 'disabled', 'hidden', 'deleted', 'archived', 'draft'].includes(status)) return false;
     return true;
   }
+  // Se il flag non esiste, assumiamo che l'elemento sia pubblicato
+  // solo quando è una risorsa valida (id+nome) e arriva dal list_resources.
   return true;
 }
 
-function collectResourceEntries(value, out = [], depth = 0, hintedId = null) {
-  if (!value || depth > 6) return out;
+function readResourceObject(obj, hintedId = null) {
+  if (!obj || typeof obj !== 'object') return null;
+  const idDirect = parseInt(String(obj.id ?? obj.resource_id ?? obj.resourceId ?? '').trim(), 10);
+  const idHint = Number.isInteger(hintedId) && hintedId > 0 ? hintedId : NaN;
+  const id = !isNaN(idDirect) && idDirect > 0 ? idDirect : idHint;
+  const name = String(obj.name ?? obj.resource_name ?? obj.title ?? obj.label ?? '').trim();
+  if (!id || !name) return null;
+  return { id, name, published: inferPublishedFlag(obj) };
+}
+
+function collectResourceEntries(value, out = [], depth = 0) {
+  if (!value || depth > 5) return out;
   if (Array.isArray(value)) {
-    value.forEach((x) => collectResourceEntries(x, out, depth + 1, hintedId));
-    return out;
-  }
-  if (typeof value === 'string') {
-    const id = Number.isInteger(hintedId) && hintedId > 0 ? hintedId : null;
-    const name = String(value || '').trim();
-    if (id && name) out.push({ id, name, published: true });
+    value.forEach((x) => collectResourceEntries(x, out, depth + 1));
     return out;
   }
   if (typeof value !== 'object') return out;
 
-  const idDirect = parseInt(String(value.id ?? value.resource_id ?? value.resourceId ?? '').trim(), 10);
-  const id = (!isNaN(idDirect) && idDirect > 0)
-    ? idDirect
-    : (Number.isInteger(hintedId) && hintedId > 0 ? hintedId : NaN);
-  const name = String(value.name ?? value.resource_name ?? value.title ?? value.label ?? '').trim();
-  if (!isNaN(id) && id > 0 && name) {
-    out.push({ id, name, published: inferPublishedFlag(value) });
-  }
-  Object.keys(value).forEach((k) => {
+  const direct = readResourceObject(value);
+  if (direct) out.push(direct);
+
+  for (const k of Object.keys(value)) {
+    const child = value[k];
     const keyNum = parseInt(String(k || '').trim(), 10);
-    const nextHint = (!isNaN(keyNum) && keyNum > 0) ? keyNum : id;
-    collectResourceEntries(value[k], out, depth + 1, nextHint);
-  });
+    if (!isNaN(keyNum) && keyNum > 0 && child && typeof child === 'object' && !Array.isArray(child)) {
+      const byKey = readResourceObject(child, keyNum);
+      if (byKey) out.push(byKey);
+    }
+    // Visita solo sotto-oggetti/array, evitando stringhe annidate (orari/date).
+    if (child && (Array.isArray(child) || typeof child === 'object')) {
+      collectResourceEntries(child, out, depth + 1);
+    }
+  }
   return out;
 }
 
@@ -357,15 +365,9 @@ async function getPublishedResources() {
     .filter((r) => r.published)
     .map((r) => ({ id: r.id, name: r.name }))
     .sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
-  // Fallback: alcune installazioni Planyo non espongono chiaramente il flag "published".
-  // Se il filtro published riduce troppo i risultati, mostra tutte le risorse con id+nome.
-  const allNamed = [...byId.values()]
-    .map((r) => ({ id: r.id, name: r.name }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
-  const finalList = resources.length <= 1 && allNamed.length > resources.length ? allNamed : resources;
-  resourcesListCache = finalList;
+  resourcesListCache = resources;
   resourcesListCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
-  return finalList;
+  return resources;
 }
 
 async function validateTargetResourceIds(targetResourceId) {
