@@ -341,11 +341,92 @@ function collectResourceEntries(value, out = [], depth = 0) {
   return out;
 }
 
+function cleanResourceName(name) {
+  return String(name || '').replace(/\s+/g, ' ').trim();
+}
+
+function looksLikeRealResourceName(name) {
+  const n = cleanResourceName(name);
+  if (!n) return false;
+  // Esclude stringhe che sembrano solo slot orari separati da virgole.
+  const noSpaces = n.replace(/\s+/g, '');
+  if (/^(\d{1,2}:\d{2},?)+$/.test(noSpaces)) return false;
+  return true;
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+async function fetchPublishedResourcesFromPublicPage(siteId) {
+  const endpoint = 'https://www.planyo.com/rest/ulap-jsonp.php';
+  const { data } = await axios.get(endpoint, {
+    params: {
+      ulap_url: 'https://www.planyo.com/rest/planyo-reservations.php',
+      mode: 'display_resource_list_code',
+      site_id: siteId,
+      sort: 'name',
+      tz_offset: 0,
+      html_mode: 1,
+      modver: '2.7'
+    },
+    responseType: 'text',
+    timeout: 30000
+  });
+
+  const raw = String(data || '').trim();
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace <= firstBrace) return [];
+
+  let payload = null;
+  try {
+    payload = JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+  } catch (_) {
+    return [];
+  }
+
+  const html = String(payload?.html || '');
+  if (!html) return [];
+
+  const out = [];
+  const seen = new Set();
+  const re = /about-resource\.php\?[^"'<>]*resource_id=(\d+)[^"'<>]*">([^<]+)</gi;
+  let m = null;
+  while ((m = re.exec(html))) {
+    const id = Number(m[1]);
+    const name = cleanResourceName(decodeHtmlEntities(m[2]));
+    if (!Number.isInteger(id) || id <= 0) continue;
+    if (!looksLikeRealResourceName(name)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name });
+  }
+
+  return out.sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
+}
+
 async function getPublishedResources() {
   if (resourcesListCache && Date.now() < resourcesListCacheExpiry) {
     return resourcesListCache;
   }
   const siteId = process.env.PLANYO_SITE_ID || '8895';
+  try {
+    const publishedFromPage = await fetchPublishedResourcesFromPublicPage(siteId);
+    if (publishedFromPage.length > 0) {
+      resourcesListCache = publishedFromPage;
+      resourcesListCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
+      return publishedFromPage;
+    }
+  } catch (_) {
+    // Fallback sotto: list_resources API.
+  }
+
   const data = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2 });
   const entries = collectResourceEntries(data);
   const byId = new Map();
@@ -363,11 +444,12 @@ async function getPublishedResources() {
   }
   const resources = [...byId.values()]
     .filter((r) => r.published)
-    .map((r) => ({ id: r.id, name: r.name }))
+    .map((r) => ({ id: r.id, name: cleanResourceName(r.name) }))
     .sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
-  resourcesListCache = resources;
+
+  resourcesListCache = resources.filter((r) => looksLikeRealResourceName(r.name));
   resourcesListCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
-  return resources;
+  return resourcesListCache;
 }
 
 async function validateTargetResourceIds(targetResourceId) {
