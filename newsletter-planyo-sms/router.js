@@ -973,7 +973,6 @@ router.post('/api/email/test', async (req, res) => {
 let emailAbortRequested = false;
 
 router.post('/api/email/send', async (req, res) => {
-  if (!requireCacheReady(res)) return;
   res.setTimeout(60 * 60 * 1000);
   const body_ = req.body || {};
   const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody, engagementType, excludeTargetBooked } = body_;
