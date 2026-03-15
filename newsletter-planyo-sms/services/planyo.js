@@ -303,20 +303,33 @@ function inferPublishedFlag(obj) {
   return true;
 }
 
-function collectResourceEntries(value, out = [], depth = 0) {
+function collectResourceEntries(value, out = [], depth = 0, hintedId = null) {
   if (!value || depth > 6) return out;
   if (Array.isArray(value)) {
-    value.forEach((x) => collectResourceEntries(x, out, depth + 1));
+    value.forEach((x) => collectResourceEntries(x, out, depth + 1, hintedId));
+    return out;
+  }
+  if (typeof value === 'string') {
+    const id = Number.isInteger(hintedId) && hintedId > 0 ? hintedId : null;
+    const name = String(value || '').trim();
+    if (id && name) out.push({ id, name, published: true });
     return out;
   }
   if (typeof value !== 'object') return out;
 
-  const id = parseInt(String(value.id ?? value.resource_id ?? value.resourceId ?? '').trim(), 10);
+  const idDirect = parseInt(String(value.id ?? value.resource_id ?? value.resourceId ?? '').trim(), 10);
+  const id = (!isNaN(idDirect) && idDirect > 0)
+    ? idDirect
+    : (Number.isInteger(hintedId) && hintedId > 0 ? hintedId : NaN);
   const name = String(value.name ?? value.resource_name ?? value.title ?? value.label ?? '').trim();
   if (!isNaN(id) && id > 0 && name) {
     out.push({ id, name, published: inferPublishedFlag(value) });
   }
-  Object.keys(value).forEach((k) => collectResourceEntries(value[k], out, depth + 1));
+  Object.keys(value).forEach((k) => {
+    const keyNum = parseInt(String(k || '').trim(), 10);
+    const nextHint = (!isNaN(keyNum) && keyNum > 0) ? keyNum : id;
+    collectResourceEntries(value[k], out, depth + 1, nextHint);
+  });
   return out;
 }
 
@@ -344,9 +357,15 @@ async function getPublishedResources() {
     .filter((r) => r.published)
     .map((r) => ({ id: r.id, name: r.name }))
     .sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
-  resourcesListCache = resources;
+  // Fallback: alcune installazioni Planyo non espongono chiaramente il flag "published".
+  // Se il filtro published riduce troppo i risultati, mostra tutte le risorse con id+nome.
+  const allNamed = [...byId.values()]
+    .map((r) => ({ id: r.id, name: r.name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
+  const finalList = resources.length <= 1 && allNamed.length > resources.length ? allNamed : resources;
+  resourcesListCache = finalList;
   resourcesListCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
-  return resources;
+  return finalList;
 }
 
 async function validateTargetResourceIds(targetResourceId) {
