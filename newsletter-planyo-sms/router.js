@@ -501,13 +501,10 @@ function normalizeRegistryRows(rows, fallbackSubject = '', fallbackBody = '') {
       cognome: sanitizeRegistryValue(raw?.cognome),
       email,
       telefono: sanitizeRegistryValue(raw?.telefono),
-      oggetto_email: sanitizeRegistryValue(raw?.oggetto_email || fallbackSubject),
-      contenuto_email: sanitizeRegistryValue(raw?.contenuto_email || fallbackBody),
-      data_invio_sms: sanitizeRegistryValue(raw?.data_invio_sms),
       data_invio_email: sanitizeRegistryValue(raw?.data_invio_email),
-      stato_invio_email: sanitizeRegistryValue(raw?.stato_invio_email),
-      errore_invio_email: sanitizeRegistryValue(raw?.errore_invio_email),
-      ultimo_aggiornamento: sanitizeRegistryValue(raw?.ultimo_aggiornamento)
+      // fallback usati solo per retrocompatibilità (non salvati nel nuovo formato)
+      _oggetto_email: sanitizeRegistryValue(raw?.oggetto_email || fallbackSubject),
+      _contenuto_email: sanitizeRegistryValue(raw?.contenuto_email || fallbackBody)
     });
   }
   return out;
@@ -526,34 +523,32 @@ function buildRegistryRowsFromData(data, subject, body, sentSet = new Set()) {
       cognome: sanitizeRegistryValue(r?.cognome),
       email,
       telefono: sanitizeRegistryValue(r?.telefono),
-      oggetto_email: sanitizeRegistryValue(subject),
-      contenuto_email: sanitizeRegistryValue(body),
-      data_invio_sms: sanitizeRegistryValue(r?.data_invio_sms),
-      data_invio_email: alreadySent ? sanitizeRegistryValue(r?.data_invio_email) : '',
-      stato_invio_email: alreadySent ? 'inviata' : '',
-      errore_invio_email: '',
-      ultimo_aggiornamento: ''
+      data_invio_email: alreadySent ? toRegistryTimestamp() : '',
+      _oggetto_email: sanitizeRegistryValue(subject),
+      _contenuto_email: sanitizeRegistryValue(body)
     });
   }
   return rows;
 }
 
-function registryRowsToCsv(rows) {
-  const header = 'nome,cognome,email,telefono,oggetto_email,contenuto_email,data_invio_sms,data_invio_email,stato_invio_email,errore_invio_email,ultimo_aggiornamento';
+function registryRowsToCsv(rows, subject = '', body = '') {
+  const subjectB64 = Buffer.from(String(subject || ''), 'utf8').toString('base64');
+  const bodyB64 = Buffer.from(String(body || ''), 'utf8').toString('base64');
+  const meta = [
+    '# REGISTRO_INVII_EMAIL',
+    '# OGGETTO_EMAIL_BASE64:' + subjectB64,
+    '# CONTENUTO_EMAIL_BASE64:' + bodyB64,
+    ''
+  ].join('\n');
+  const header = 'nome,cognome,email,telefono,data_invio_email';
   const lines = (rows || []).map((r) => [
     escapeCsv(r.nome),
     escapeCsv(r.cognome),
     escapeCsv(r.email),
     escapeCsv(r.telefono),
-    escapeCsv(r.oggetto_email),
-    escapeCsv(r.contenuto_email),
-    escapeCsv(r.data_invio_sms),
-    escapeCsv(r.data_invio_email),
-    escapeCsv(r.stato_invio_email),
-    escapeCsv(r.errore_invio_email),
-    escapeCsv(r.ultimo_aggiornamento)
+    escapeCsv(r.data_invio_email)
   ].join(','));
-  return '\uFEFF' + header + '\n' + lines.join('\n');
+  return '\uFEFF' + meta + '\n' + header + '\n' + lines.join('\n');
 }
 
 function parseSegmentsParam(val) {
@@ -845,7 +840,7 @@ router.get('/api/email/export', async (req, res) => {
     let filename;
     if (registryMode) {
       const registryRows = buildRegistryRowsFromData(data, subject, emailBody, new Set());
-      csv = registryRowsToCsv(registryRows);
+      csv = registryRowsToCsv(registryRows, subject, emailBody);
       filename = 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv';
     } else if (cleanFields) {
       const header = 'nome,cognome,email,indirizzo';
@@ -1068,7 +1063,7 @@ router.post('/api/email/send', async (req, res) => {
       total: toSend.length,
       batchSent: sentSet.size + successfullySent.length,
       batchRemaining: pendingData.length - successfullySent.length,
-      registryCsv: registryRowsToCsv(registryRows),
+      registryCsv: registryRowsToCsv(registryRows, subject, emailBody),
       registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
     };
   });
@@ -1081,10 +1076,15 @@ router.post('/api/email/send-from-registry', async (req, res) => {
   res.setTimeout(60 * 60 * 1000);
   try {
     const body = req.body || {};
-    const rows = normalizeRegistryRows(body.rows || []);
+    const subject = String(body.subject || '').trim();
+    const emailText = String(body.body || '');
+    const rows = normalizeRegistryRows(body.rows || [], subject, emailText);
     const limit = Math.min(Math.max(parseInt(String(body.limit), 10) || 100, 1), 500);
     if (!rows.length) {
       return res.status(400).json({ success: false, error: 'Registro vuoto o non valido' });
+    }
+    if (!subject || !emailText.trim()) {
+      return res.status(400).json({ success: false, error: 'Oggetto o contenuto email mancanti nel registro' });
     }
 
     const limitInfo = emailService.checkDailyLimit();
@@ -1096,8 +1096,7 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     }
     const maxToSend = Math.min(limit, limitInfo.remaining);
     const pending = rows.filter((r) => {
-      const st = String(r.stato_invio_email || '').toLowerCase();
-      return st !== 'inviata';
+      return !String(r.data_invio_email || '').trim();
     }).slice(0, maxToSend);
 
     emailAbortRequested = false;
@@ -1106,27 +1105,17 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     for (const row of pending) {
       if (emailAbortRequested) break;
       try {
-        const subject = row.oggetto_email || '';
-        const text = row.contenuto_email || '';
-        if (!subject || !text) {
-          throw new Error('Oggetto o contenuto email mancanti nel registro');
-        }
         await emailService.sendPersonalizedEmail({
           to: row.email,
           subject,
-          body: text,
+          body: emailText,
           data: row
         });
         sent++;
         row.data_invio_email = toRegistryTimestamp();
-        row.stato_invio_email = 'inviata';
-        row.errore_invio_email = '';
-        row.ultimo_aggiornamento = row.data_invio_email;
       } catch (err) {
         failed++;
-        row.stato_invio_email = 'errore';
-        row.errore_invio_email = String(err.message || '').slice(0, 500);
-        row.ultimo_aggiornamento = toRegistryTimestamp();
+        // Mantiene vuota la data per consentire ritentativo nel prossimo caricamento.
       }
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -1137,8 +1126,8 @@ router.post('/api/email/send-from-registry', async (req, res) => {
         sent,
         failed,
         total: pending.length,
-        remaining: rows.filter((r) => String(r.stato_invio_email || '').toLowerCase() !== 'inviata').length,
-        registryCsv: registryRowsToCsv(rows),
+        remaining: rows.filter((r) => !String(r.data_invio_email || '').trim()).length,
+        registryCsv: registryRowsToCsv(rows, subject, emailText),
         registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
       },
       aborted: emailAbortRequested

@@ -384,6 +384,10 @@
           <label>Registro invii email (CSV)</label>
           <input type="file" id="emailRegistryFile" accept=".csv,text/csv">
           <p class="hint">Carica un file REGISTRO_INVII_EMAIL per continuare invii in giorni successivi senza dipendere dai filtri.</p>
+          <div class="actions" style="margin-top:0.5rem;">
+            <button type="button" class="btn btn-secondary" id="btnConfirmRegistry">CONFERMA REGISTRO CARICATO</button>
+          </div>
+          <p class="hint" id="emailRegistrySummary" style="margin-top:0.5rem;"></p>
         </div>
         <div class="actions">
           <button type="button" class="btn btn-secondary" id="btnCalcEmail">CALCOLA EMAIL</button>
@@ -418,6 +422,8 @@
     let emailSendableReady = false;
     let emailTotalAudienceCount = 0;
     let loadedEmailRegistryRows = [];
+    let loadedEmailRegistryMeta = null;
+    let loadedEmailRegistryValidated = false;
 
     function showOutput(el, logs, extra) {
       let html = '';
@@ -478,6 +484,15 @@
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }, 100);
+    }
+    function decodeBase64Utf8(v) {
+      try {
+        const bin = atob(String(v || ''));
+        const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
+      } catch (_) {
+        return '';
+      }
     }
 
     function getEngagementType() { return 'open'; }
@@ -603,22 +618,38 @@
       return out;
     }
     function parseRegistryCsvToRows(csvText) {
-      const rows = parseCsvRows(csvText);
-      if (rows.length < 2) return [];
+      const raw = String(csvText || '').replace(/\r\n/g, '\n');
+      const lines = raw.split('\n');
+      let idxStart = 0;
+      let subject = '';
+      let body = '';
+      const subjectPref = '# OGGETTO_EMAIL_BASE64:';
+      const bodyPref = '# CONTENUTO_EMAIL_BASE64:';
+      while (idxStart < lines.length) {
+        const line = String(lines[idxStart] || '');
+        const trimmed = line.trim();
+        if (!trimmed) { idxStart++; continue; }
+        if (!trimmed.startsWith('#')) break;
+        if (trimmed.startsWith(subjectPref)) {
+          const v = trimmed.slice(subjectPref.length).trim();
+          subject = decodeBase64Utf8(v);
+        } else if (trimmed.startsWith(bodyPref)) {
+          const v = trimmed.slice(bodyPref.length).trim();
+          body = decodeBase64Utf8(v);
+        }
+        idxStart++;
+      }
+      const csvPart = lines.slice(idxStart).join('\n');
+      const rows = parseCsvRows(csvPart);
+      if (rows.length < 2) return { subject, body, rows: [] };
       const headers = rows[0].map((h) => String(h || '').toLowerCase().trim());
-      const col = (name) => headers.findIndex((h) => h === name);
+      const col = (name) => headers.findIndex((h) => h === name || h.includes(name));
       const idx = {
         nome: col('nome'),
         cognome: col('cognome'),
         email: col('email'),
         telefono: col('telefono'),
-        oggetto_email: col('oggetto_email'),
-        contenuto_email: col('contenuto_email'),
-        data_invio_sms: col('data_invio_sms'),
-        data_invio_email: col('data_invio_email'),
-        stato_invio_email: col('stato_invio_email'),
-        errore_invio_email: col('errore_invio_email'),
-        ultimo_aggiornamento: col('ultimo_aggiornamento')
+        data_invio_email: col('data_invio_email')
       };
       if (idx.email < 0) throw new Error('Colonna email non trovata nel registro');
       const out = [];
@@ -635,16 +666,10 @@
           cognome: get('cognome'),
           email,
           telefono: get('telefono'),
-          oggetto_email: get('oggetto_email'),
-          contenuto_email: get('contenuto_email'),
-          data_invio_sms: get('data_invio_sms'),
-          data_invio_email: get('data_invio_email'),
-          stato_invio_email: get('stato_invio_email'),
-          errore_invio_email: get('errore_invio_email'),
-          ultimo_aggiornamento: get('ultimo_aggiornamento')
+          data_invio_email: get('data_invio_email')
         });
       }
-      return out;
+      return { subject, body, rows: out };
     }
 
     document.getElementById('btnRun').onclick = async () => {
@@ -1451,19 +1476,63 @@
 
     document.getElementById('emailRegistryFile').onchange = async () => {
       const out = document.getElementById('emailOutput');
+      const summary = document.getElementById('emailRegistrySummary');
       const file = document.getElementById('emailRegistryFile').files?.[0];
       if (!file) {
         loadedEmailRegistryRows = [];
+        loadedEmailRegistryMeta = null;
+        loadedEmailRegistryValidated = false;
+        if (summary) summary.textContent = '';
         return;
       }
       try {
         const text = await file.text();
-        loadedEmailRegistryRows = parseRegistryCsvToRows(text);
-        out.innerHTML = '<div class="log result-ok">Registro caricato: ' + loadedEmailRegistryRows.length + ' righe valide.</div>';
+        loadedEmailRegistryMeta = parseRegistryCsvToRows(text);
+        loadedEmailRegistryRows = loadedEmailRegistryMeta.rows || [];
+        loadedEmailRegistryValidated = false;
+        if (summary) {
+          summary.textContent = 'File caricato. Clicca "CONFERMA REGISTRO CARICATO" per validare e compilare oggetto/testo.';
+          summary.style.color = '';
+        }
+        out.innerHTML = '<div class="log result-ok">Registro caricato: ' + loadedEmailRegistryRows.length + ' contatti. In attesa di conferma.</div>';
       } catch (e) {
         loadedEmailRegistryRows = [];
+        loadedEmailRegistryMeta = null;
+        loadedEmailRegistryValidated = false;
+        if (summary) {
+          summary.textContent = 'Errore lettura registro.';
+          summary.style.color = 'var(--danger)';
+        }
         out.innerHTML = '<div class="error">Errore caricamento registro: ' + escapeHtml(e.message) + '</div>';
       }
+    };
+
+    document.getElementById('btnConfirmRegistry').onclick = async () => {
+      const out = document.getElementById('emailOutput');
+      const summary = document.getElementById('emailRegistrySummary');
+      if (!loadedEmailRegistryMeta || !Array.isArray(loadedEmailRegistryMeta.rows) || !loadedEmailRegistryMeta.rows.length) {
+        out.innerHTML = '<div class="error">Carica prima un file REGISTRO_INVII_EMAIL valido.</div>';
+        return;
+      }
+      const subject = String(loadedEmailRegistryMeta.subject || '');
+      const body = String(loadedEmailRegistryMeta.body || '');
+      if (!subject.trim() || !body.trim()) {
+        out.innerHTML = '<div class="error">Nel registro mancano oggetto o contenuto email.</div>';
+        return;
+      }
+      document.getElementById('emailSubject').value = subject;
+      document.getElementById('emailBody').value = body;
+      scheduleEmailDraftSave();
+      loadedEmailRegistryRows = loadedEmailRegistryMeta.rows;
+      loadedEmailRegistryValidated = true;
+      const total = loadedEmailRegistryRows.length;
+      const sent = loadedEmailRegistryRows.filter((r) => String(r.data_invio_email || '').trim()).length;
+      const pending = Math.max(0, total - sent);
+      if (summary) {
+        summary.textContent = 'Registro confermato | contatti: ' + total + ' | email inviate: ' + sent + ' | email ancora da inviare: ' + pending;
+        summary.style.color = 'var(--success)';
+      }
+      out.innerHTML = '<div class="log result-ok">Registro confermato. Oggetto e contenuto email compilati automaticamente.</div>';
     };
 
     document.getElementById('btnSendFromRegistry').onclick = async () => {
@@ -1473,6 +1542,12 @@
         out.innerHTML = '<div class="error">Carica prima un file REGISTRO_INVII_EMAIL.</div>';
         return;
       }
+      if (!loadedEmailRegistryValidated) {
+        out.innerHTML = '<div class="error">Prima clicca "CONFERMA REGISTRO CARICATO".</div>';
+        return;
+      }
+      const subject = document.getElementById('emailSubject').value;
+      const body = document.getElementById('emailBody').value;
       const limitCap = Math.min(selectedEmailLimit, 500);
       if (!confirm('Confermi INVIA EMAIL DA REGISTRO? Verranno inviate fino a ' + limitCap + ' email dal registro caricato.')) return;
       btn.disabled = true;
@@ -1483,6 +1558,8 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             rows: loadedEmailRegistryRows,
+            subject,
+            body,
             limit: selectedEmailLimit
           })
         });
@@ -1494,7 +1571,17 @@
         if (d.result?.registryCsv) {
           const fn = d.result.registryFilename || ('REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv');
           downloadCsvFile(fn, d.result.registryCsv);
-          try { loadedEmailRegistryRows = parseRegistryCsvToRows(d.result.registryCsv); } catch (_) {}
+          try {
+            loadedEmailRegistryMeta = parseRegistryCsvToRows(d.result.registryCsv);
+            loadedEmailRegistryRows = loadedEmailRegistryMeta.rows || [];
+            const summary = document.getElementById('emailRegistrySummary');
+            if (summary) {
+              const total = loadedEmailRegistryRows.length;
+              const sentCount = loadedEmailRegistryRows.filter((r) => String(r.data_invio_email || '').trim()).length;
+              summary.textContent = 'Registro aggiornato | contatti: ' + total + ' | email inviate: ' + sentCount + ' | email ancora da inviare: ' + (total - sentCount);
+              summary.style.color = 'var(--success)';
+            }
+          } catch (_) {}
         }
       } catch (e) {
         out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
