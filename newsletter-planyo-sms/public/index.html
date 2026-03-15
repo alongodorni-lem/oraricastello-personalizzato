@@ -238,7 +238,7 @@
     <p class="subtitle">Invio SMS e email segmentate da base dati CSV + prenotazioni Planyo</p>
     <div class="tab-bar">
       <button type="button" class="tab-btn active" data-tab="sms">Newsletter SMS</button>
-      <button type="button" class="tab-btn" data-tab="email">NEWSLETTER EMAIL</button>
+      <button type="button" class="tab-btn" data-tab="email">INVIO EMAIL</button>
     </div>
 
     <!-- Tab SMS -->
@@ -343,58 +343,8 @@
     <div id="tabEmail" class="tab-panel">
       <div class="card">
         <h2>Newsletter EMAIL</h2>
-      <p class="hint" style="margin-bottom: 1rem;">Esporta CSV, filtra per evento, invia email personalizzate via Gmail (max 500/giorno). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
-        <div class="form-group">
-          <label>Risorsa Planyo (evento target)</label>
-          <p class="hint">Usa il valore dalla tab Newsletter SMS (stesso ID risorsa)</p>
-        </div>
-        <div class="form-group">
-          <label>Filtro per nome evento (opzionale)</label>
-          <input type="text" id="emailEventFilter" placeholder="es. Castello delle Sorprese">
-          <p class="hint">Lascia vuoto per includere tutti. Filtra i destinatari per evento prenotato.</p>
-        </div>
-        <div class="form-group">
-          <label>Liste da inviare</label>
-          <div class="checkboxes">
-            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="A"> Lista A (tutti i prenotati evento target)</label>
-            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="B"> Lista B (Clienti con prenotazioni ultimi 18 mesi esclusi evento target)</label>
-            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="C"> Lista C (Utenti newsletter da CSV, esclusi evento target)</label>
-            <label class="checkbox-label"><input type="checkbox" name="emailSeg" value="D"> Lista D (Contatti da planyo report - file caricato e salvato in cache - esclusi chi in Lista A)</label>
-          </div>
-          <p class="hint">Seleziona almeno una lista. Se nessuna selezionata, vengono incluse tutte.</p>
-        </div>
-        <div class="form-group">
-          <label>ID evento Planyo (filtro prenotazioni)</label>
-          <input type="text" id="emailEventIds" placeholder="es. 236955" maxlength="80" autocomplete="off">
-          <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola.</p>
-        </div>
-        <div class="form-group" id="emailListDFilters" style="display:none;">
-          <label>Lista da report planyo</label>
-          <p class="hint" style="margin-bottom: 0.75rem;">Quando Lista D è selezionata, i dati vengono dal report CSV. Filtra per Risorsa e Stato:</p>
-          <div class="form-group">
-            <label>Nome evento contiene (colonna Risorsa)</label>
-            <input type="text" id="listDEventNameContainsEmail" placeholder="es. Grotta">
-          </div>
-          <div class="form-group">
-            <label>Stato</label>
-            <div class="checkboxes">
-              <label class="checkbox-label"><input type="checkbox" name="listDStatusEmail" value="riservato"> Riservato</label>
-              <label class="checkbox-label"><input type="checkbox" name="listDStatusEmail" value="confermato"> Confermato</label>
-              <label class="checkbox-label"><input type="checkbox" name="listDStatusEmail" value="cancellato"> Cancellato</label>
-            </div>
-            <p class="hint">Seleziona gli stati da includere. Se nessuno: tutti.</p>
-          </div>
-        </div>
-        <div class="form-group">
-          <button type="button" class="btn btn-secondary" id="btnEmailCalc">Calcola contatti</button>
-          <p class="hint" id="emailCountStatus" style="margin-top: 0.5rem;">Clicca per calcolare il totale contatti (email) che corrispondono ai criteri.</p>
-        </div>
-        <div class="form-group">
-          <label>Scarica CSV</label>
-        <div class="actions">
-          <button type="button" class="btn btn-secondary" id="btnExportCsv" disabled>Scarica CSV completo</button>
-        </div>
-        </div>
+        <p class="hint" style="margin-bottom: 1rem;">In questo tab è disponibile solo l'invio email. Pubblico, filtri e ID evento Planyo sono letti automaticamente dal tab Newsletter SMS.</p>
+        <p class="hint" id="emailAudienceHint" style="margin-bottom: 0.75rem; color: #475569;"></p>
         <div class="form-group">
           <label>Blocco destinatari (max 500/giorno)</label>
           <div class="block-btns">
@@ -510,6 +460,28 @@
         excludeTargetBooked,
         segments: [...new Set(segments)]
       };
+    }
+    function getEmailAudienceSelectionFromSms() {
+      const audience = getSmsAudienceSelection();
+      return {
+        segments: audience.segments,
+        excludeTargetBooked: audience.excludeTargetBooked,
+        targetResourceId: (document.getElementById('smsEventIds')?.value || '').trim(),
+        listDFilters: getListDFilters(true)
+      };
+    }
+    function updateEmailAudienceHint() {
+      const hint = document.getElementById('emailAudienceHint');
+      if (!hint) return;
+      const cfg = getEmailAudienceSelectionFromSms();
+      if (!cfg.segments.length) {
+        hint.textContent = 'Pubblico email non configurato: seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.';
+        hint.style.color = 'var(--danger)';
+        return;
+      }
+      const targetText = cfg.targetResourceId ? ('ID evento: ' + cfg.targetResourceId) : 'ID evento: tutte le prenotazioni';
+      hint.textContent = 'Pubblico attivo: liste ' + cfg.segments.join(', ') + ' | ' + targetText + (cfg.excludeTargetBooked ? ' | esclusione target attiva' : '');
+      hint.style.color = '#475569';
     }
 
     const isLocalhost = () => /^localhost$|^127\.|^\[::1\]$/.test(window.location.hostname);
@@ -736,16 +708,15 @@
     }
 
     function updateCacheReadyState(ready) {
-      ['btnEmailCalc'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.disabled = !ready;
-      });
       if (!ready) {
-        ['btnExportCsv', 'btnSendEmail'].forEach(id => {
+        ['btnSendEmail'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.disabled = true;
         });
         if (typeof resetEmailCalc === 'function') resetEmailCalc();
+      } else {
+        const btnSend = document.getElementById('btnSendEmail');
+        if (btnSend) btnSend.disabled = false;
       }
     }
 
@@ -966,28 +937,23 @@
       }
     }
     function resetEmailCalc() {
-      document.getElementById('emailCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti (totale email).';
-      document.getElementById('btnExportCsv').disabled = document.getElementById('btnSendEmail').disabled = true;
+      const hint = document.getElementById('emailBatchHint');
+      if (hint) hint.textContent = '';
+      const btnSend = document.getElementById('btnSendEmail');
+      if (btnSend) btnSend.disabled = false;
+      updateEmailAudienceHint();
     }
     document.getElementById('smsEventIds').oninput = () => { resetSmsCalc(); resetExcludeTargetState(); };
-    document.getElementById('emailEventIds').oninput = resetEmailCalc;
-    document.getElementById('emailEventFilter').oninput = resetEmailCalc;
     ['listDEventNameContains'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.oninput = resetSmsCalc;
     });
-    ['listDEventNameContainsEmail'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.oninput = resetEmailCalc;
-    });
-    document.querySelectorAll('input[name="listDStatus"], input[name="listDStatusEmail"]').forEach(cb => {
+    document.querySelectorAll('input[name="listDStatus"]').forEach(cb => {
       cb.onchange = () => { resetSmsCalc(); resetEmailCalc(); };
     });
     function toggleListDFilters() {
       const dSms = document.querySelector('input[name="smsSource"][value="report"]')?.checked;
-      const dEmail = document.querySelector('input[name="emailSeg"][value="D"]')?.checked;
       document.getElementById('smsListDFilters').style.display = dSms ? 'block' : 'none';
-      document.getElementById('emailListDFilters').style.display = dEmail ? 'block' : 'none';
     }
     function getListDFilters(smsTab) {
       const nameEl = smsTab ? document.getElementById('listDEventNameContains') : document.getElementById('listDEventNameContainsEmail');
@@ -1015,8 +981,9 @@
       if (emailDraftSaveTimer) clearTimeout(emailDraftSaveTimer);
       emailDraftSaveTimer = setTimeout(saveEmailDraftConfig, 500);
     }
-    document.querySelectorAll('input[name="smsSource"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); }; });
-    document.querySelectorAll('input[name="emailSeg"]').forEach((cb) => { cb.onchange = () => { toggleListDFilters(); resetEmailCalc(); }; });
+    document.querySelectorAll('input[name="smsSource"]').forEach((cb) => {
+      cb.onchange = () => { toggleListDFilters(); resetSmsCalc(); resetEmailCalc(); };
+    });
     document.getElementById('btnBuildExcludeTarget').onclick = async () => {
       const btn = document.getElementById('btnBuildExcludeTarget');
       const status = document.getElementById('excludeTargetStatus');
@@ -1024,6 +991,7 @@
       if (excludeTargetBookedActive) {
         resetExcludeTargetState();
         resetSmsCalc();
+        resetEmailCalc();
         return;
       }
       const targetValue = document.getElementById('smsEventIds').value.trim();
@@ -1045,6 +1013,7 @@
         status.innerHTML = '<strong>Esclusione evento target attiva</strong> | contatti esclusi: ' + (d.excludedContacts || 0);
         status.style.color = 'var(--success)';
         resetSmsCalc();
+        resetEmailCalc();
       } catch (e) {
         excludeTargetBookedActive = false;
         status.textContent = 'Errore: ' + e.message;
@@ -1056,7 +1025,7 @@
     };
     
     document.getElementById('emailSubject').oninput = () => {
-      if (emailContactCount > 0) updateEmailBatchHint();
+      if (smsContactCount > 0) updateEmailBatchHint();
       scheduleEmailDraftSave();
     };
     document.getElementById('emailBody').oninput = scheduleEmailDraftSave;
@@ -1065,7 +1034,6 @@
     
 
     let smsContactCount = 0;
-    let emailContactCount = 0;
 
     document.getElementById('btnSmsCalc').onclick = async () => {
       const campaignId = NEWSLETTER_SOURCE_ID;
@@ -1170,76 +1138,29 @@
       }
     };
 
-    document.getElementById('btnEmailCalc').onclick = async () => {
-      const campaignId = NEWSLETTER_SOURCE_ID;
-      const segs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
-      const status = document.getElementById('emailCountStatus');
-      const btnExport = document.getElementById('btnExportCsv');
-      const btnSend = document.getElementById('btnSendEmail');
-      status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
-      btnExport.disabled = btnSend.disabled = true;
-      try {
-        const baseParams = {
-          campaignId: campaignId || 'dummy',
-          targetResourceId: document.getElementById('emailEventIds').value.trim(),
-          engagementType: getEngagementType(),
-          limit: selectedEmailLimit,
-          segments: (segs.length ? segs : ['A','B','C','D']).join(',')
-        };
-        const evIds = document.getElementById('emailEventIds').value.trim();
-        const evFilter = document.getElementById('emailEventFilter').value.trim();
-        if (evIds) baseParams.eventIds = evIds;
-        if (evFilter) baseParams.eventFilter = evFilter;
-        Object.assign(baseParams, getListDFilters(false));
-        let d;
-        if (isLocalhost()) {
-          const q = new URLSearchParams(baseParams).toString();
-          d = await fetchJson(API + '/api/email/preview?' + q);
-        } else {
-          const startRes = await fetchJson(API + '/api/email/preview/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseParams) });
-          if (!startRes.jobId) throw new Error(startRes.error || 'Avvio fallito');
-          const jobId = startRes.jobId;
-          d = await new Promise((resolve, reject) => {
-            const poll = async () => {
-              try {
-                const r = await fetchJson(API + '/api/email/preview/status/' + jobId);
-                if (r.status === 'done') { resolve(r); return; }
-                if (r.status === 'error') { reject(new Error(r.error)); return; }
-                setTimeout(poll, 3000);
-              } catch (e) { reject(e); }
-            };
-            poll();
-          });
-        }
-        if (d.error) throw new Error(d.error);
-        emailContactCount = d.total || 0;
-        status.textContent = emailContactCount + ' contatti totali (email) corrispondono al criterio. Puoi procedere con export o invio.';
-        btnExport.disabled = btnSend.disabled = emailContactCount === 0;
-        updateEmailBatchHint();
-      } catch (e) {
-        status.textContent = 'Errore: ' + e.message;
-        btnExport.disabled = btnSend.disabled = true;
-        document.getElementById('emailBatchHint').textContent = '';
-      }
-    };
-
     async function updateEmailBatchHint() {
       const hint = document.getElementById('emailBatchHint');
-      if (emailContactCount === 0) { hint.textContent = ''; return; }
+      const cfg = getEmailAudienceSelectionFromSms();
+      if (!cfg.segments.length) { hint.textContent = ''; return; }
       try {
         const params = new URLSearchParams({
           subject: document.getElementById('emailSubject').value.trim(),
           campaignId: NEWSLETTER_SOURCE_ID,
           engagementType: getEngagementType(),
-          segments: Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value).join(',')
+          segments: cfg.segments.join(','),
+          excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0'
         });
-        const lf = getListDFilters(false);
+        if (cfg.targetResourceId) {
+          params.set('targetResourceId', cfg.targetResourceId);
+          params.set('eventIds', cfg.targetResourceId);
+        }
+        const lf = cfg.listDFilters || {};
         Object.keys(lf).forEach(k => params.set(k, lf[k]));
         const r = await fetch(API + '/api/email/batch-status?' + params);
         const d = await r.json();
         const batchSent = d.batchSent || 0;
         const remaining = d.dailyRemaining ?? 500;
-        const totalRemaining = Math.max(0, emailContactCount - batchSent);
+        const totalRemaining = Math.max(0, Math.max(0, smsContactCount) - batchSent);
         if (batchSent > 0) {
           hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. Oggi puoi inviarne altri ' + Math.min(selectedEmailLimit, remaining, totalRemaining) + ' (max 500/giorno).';
         } else {
@@ -1271,7 +1192,7 @@
         btn.classList.remove('btn-secondary');
         btn.classList.add('btn-primary');
         document.getElementById('emailLimitHint').textContent = 'Selezionato: ' + selectedEmailLimit + ' destinatari';
-        if (emailContactCount > 0) updateEmailBatchHint();
+        if (smsContactCount > 0) updateEmailBatchHint();
       };
     });
     document.querySelector('.block-btns [data-limit="100"]').click();
@@ -1309,56 +1230,6 @@
       btn.disabled = false;
     };
 
-    // Export CSV
-    document.getElementById('btnExportCsv').onclick = async () => {
-      const campaignId = NEWSLETTER_SOURCE_ID;
-      const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
-      const out = document.getElementById('emailOutput');
-      const btn = document.getElementById('btnExportCsv');
-      btn.disabled = true;
-      out.innerHTML = '<div class="log">Generazione CSV...</div>';
-      try {
-        const params = new URLSearchParams({
-          campaignId: campaignId || 'dummy',
-          targetResourceId: (document.getElementById('emailEventIds')?.value || '').trim(),
-          engagementType: getEngagementType(),
-          eventFilter: (document.getElementById('emailEventFilter')?.value || '').trim()
-        });
-        if (emailSegs.length) params.set('segments', emailSegs.join(','));
-        const evIds = (document.getElementById('emailEventIds')?.value || '').trim();
-        if (evIds) params.set('eventIds', evIds);
-        const lf = getListDFilters(false);
-        Object.keys(lf).forEach(k => params.set(k, lf[k]));
-        const r = await fetch(API + '/api/email/export?' + params);
-        if (!r.ok) {
-          let msg = 'Errore export';
-          try {
-            const d = await r.json();
-            msg = d.error || msg;
-          } catch (_) {
-            msg = 'Errore ' + r.status + ': ' + (await r.text()).slice(0, 100);
-          }
-          throw new Error(msg);
-        }
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'newsletter-email-export.csv';
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }, 100);
-        out.innerHTML = '<div class="log result-ok">CSV scaricato.</div>';
-      } catch (e) {
-        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
-      }
-      btn.disabled = emailContactCount === 0;
-    };
-
     // Send email
     document.getElementById('btnSendEmail').onclick = async () => {
       const campaignId = NEWSLETTER_SOURCE_ID;
@@ -1367,10 +1238,14 @@
       const out = document.getElementById('emailOutput');
       const btn = document.getElementById('btnSendEmail');
       const btnAbort = document.getElementById('btnEmailAbort');
-
-      const emailSegs = Array.from(document.querySelectorAll('input[name="emailSeg"]:checked')).map(c => c.value);
+      const cfg = getEmailAudienceSelectionFromSms();
+      const emailSegs = cfg.segments;
       if (!subject || !body) {
         out.innerHTML = '<div class="error">Oggetto e messaggio richiesti.</div>';
+        return;
+      }
+      if (!emailSegs.length) {
+        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.</div>';
         return;
       }
       const limitCap = Math.min(selectedEmailLimit, 500);
@@ -1395,15 +1270,15 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             campaignId,
-            targetResourceId: document.getElementById('emailEventIds').value.trim() || undefined,
-            eventFilter: document.getElementById('emailEventFilter').value.trim() || undefined,
-            eventIds: document.getElementById('emailEventIds').value.trim() || undefined,
+            targetResourceId: cfg.targetResourceId || undefined,
+            eventIds: cfg.targetResourceId || undefined,
             engagementType: getEngagementType(),
-            segments: emailSegs.length ? emailSegs : undefined,
+            segments: emailSegs,
+            excludeTargetBooked: cfg.excludeTargetBooked,
             limit: selectedEmailLimit,
             subject,
             body,
-            ...getListDFilters(false)
+            ...(cfg.listDFilters || {})
           }),
           signal: controller.signal
         });
@@ -1416,7 +1291,7 @@
             out.innerHTML += '<div class="log">Totale batch: ' + batchSent + ' inviati. Rimanenti: ' + batchRemaining + '. Domani puoi inviarne altri 500.</div>';
           }
           if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata.</div>';
-          if (emailContactCount > 0) updateEmailBatchHint();
+          if (smsContactCount > 0) updateEmailBatchHint();
         }
         if (d.error) out.innerHTML += '<div class="error">' + escapeHtml(d.error) + '</div>';
       } catch (e) {
@@ -1432,6 +1307,7 @@
     };
 
     toggleListDFilters();
+    updateEmailAudienceHint();
     loadConfig();
     fetch(API + '/api/preload-planyo').catch(() => {}); // Preload Lista A in background (API Planyo)
   </script>
