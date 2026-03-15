@@ -482,6 +482,80 @@ function escapeCsv(val) {
   return s;
 }
 
+function toRegistryTimestamp(date = new Date()) {
+  return date.toISOString().replace('T', ' ').slice(0, 19);
+}
+
+function sanitizeRegistryValue(v) {
+  return String(v ?? '').replace(/\r?\n/g, '\n').trim();
+}
+
+function normalizeRegistryRows(rows, fallbackSubject = '', fallbackBody = '') {
+  if (!Array.isArray(rows)) return [];
+  const out = [];
+  for (const raw of rows) {
+    const email = String(raw?.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) continue;
+    out.push({
+      nome: sanitizeRegistryValue(raw?.nome),
+      cognome: sanitizeRegistryValue(raw?.cognome),
+      email,
+      telefono: sanitizeRegistryValue(raw?.telefono),
+      oggetto_email: sanitizeRegistryValue(raw?.oggetto_email || fallbackSubject),
+      contenuto_email: sanitizeRegistryValue(raw?.contenuto_email || fallbackBody),
+      data_invio_sms: sanitizeRegistryValue(raw?.data_invio_sms),
+      data_invio_email: sanitizeRegistryValue(raw?.data_invio_email),
+      stato_invio_email: sanitizeRegistryValue(raw?.stato_invio_email),
+      errore_invio_email: sanitizeRegistryValue(raw?.errore_invio_email),
+      ultimo_aggiornamento: sanitizeRegistryValue(raw?.ultimo_aggiornamento)
+    });
+  }
+  return out;
+}
+
+function buildRegistryRowsFromData(data, subject, body, sentSet = new Set()) {
+  const rows = [];
+  const seen = new Set();
+  for (const r of data || []) {
+    const email = String(r?.email || '').trim().toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    const alreadySent = sentSet.has(email);
+    rows.push({
+      nome: sanitizeRegistryValue(r?.nome),
+      cognome: sanitizeRegistryValue(r?.cognome),
+      email,
+      telefono: sanitizeRegistryValue(r?.telefono),
+      oggetto_email: sanitizeRegistryValue(subject),
+      contenuto_email: sanitizeRegistryValue(body),
+      data_invio_sms: sanitizeRegistryValue(r?.data_invio_sms),
+      data_invio_email: alreadySent ? sanitizeRegistryValue(r?.data_invio_email) : '',
+      stato_invio_email: alreadySent ? 'inviata' : '',
+      errore_invio_email: '',
+      ultimo_aggiornamento: ''
+    });
+  }
+  return rows;
+}
+
+function registryRowsToCsv(rows) {
+  const header = 'nome,cognome,email,telefono,oggetto_email,contenuto_email,data_invio_sms,data_invio_email,stato_invio_email,errore_invio_email,ultimo_aggiornamento';
+  const lines = (rows || []).map((r) => [
+    escapeCsv(r.nome),
+    escapeCsv(r.cognome),
+    escapeCsv(r.email),
+    escapeCsv(r.telefono),
+    escapeCsv(r.oggetto_email),
+    escapeCsv(r.contenuto_email),
+    escapeCsv(r.data_invio_sms),
+    escapeCsv(r.data_invio_email),
+    escapeCsv(r.stato_invio_email),
+    escapeCsv(r.errore_invio_email),
+    escapeCsv(r.ultimo_aggiornamento)
+  ].join(','));
+  return '\uFEFF' + header + '\n' + lines.join('\n');
+}
+
 function parseSegmentsParam(val) {
   if (!val) return null;
   const arr = Array.isArray(val) ? val : (typeof val === 'string' ? val.split(',') : []);
@@ -685,6 +759,7 @@ router.post('/api/email/preview/start', (req, res) => {
     const eventIds = parseEventIdsParam(q.eventIds);
     const segments = parseSegmentsParam(q.segments);
     const listDFilters = parseListDFilters(q);
+    const excludeTargetBooked = parseBoolParam(q.excludeTargetBooked);
     const limit = parseInt(q.limit || '100', 10);
 
     const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
@@ -697,7 +772,7 @@ router.post('/api/email/preview/start', (req, res) => {
 
     setImmediate(async () => {
       try {
-        const excludeListA = await getListAExclusions(targetId);
+        const excludeListA = excludeTargetBooked ? await getListAExclusions(targetId) : { emailsInA: new Set() };
         let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
         data = filterByEventIds(data, eventIds);
         data = filterBySegment(data, segments);
@@ -750,26 +825,42 @@ router.get('/api/email/export', async (req, res) => {
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
+    const excludeTargetBooked = parseBoolParam(req.query.excludeTargetBooked);
+    const basicFields = parseBoolParam(req.query.basicFields);
+    const registryMode = parseBoolParam(req.query.registry);
+    const subject = String(req.query.subject || '').trim();
+    const emailBody = String(req.query.body || '').trim();
 
     const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const targetId = targetResourceId ?? getConfiguredTargetResourceId();
-    const excludeListA = await getListAExclusions(targetId);
+    const excludeListA = excludeTargetBooked ? await getListAExclusions(targetId) : { emailsInA: new Set() };
     let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
     data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
 
-    const header = 'nome,cognome,email,telefono,evento,segment';
-    const rows = data.map((r) =>
-      [escapeCsv(r.nome), escapeCsv(r.cognome), escapeCsv(r.email), escapeCsv(r.telefono), escapeCsv(r.eventoPrenotato), escapeCsv(r.segment)].join(',')
-    );
-    const csv = '\uFEFF' + header + '\n' + rows.join('\n');
+    let csv;
+    let filename;
+    if (registryMode) {
+      const registryRows = buildRegistryRowsFromData(data, subject, emailBody, new Set());
+      csv = registryRowsToCsv(registryRows);
+      filename = 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv';
+    } else {
+      const header = basicFields ? 'nome,cognome,email,telefono' : 'nome,cognome,email,telefono,evento,segment';
+      const rows = data.map((r) => {
+        const base = [escapeCsv(r.nome), escapeCsv(r.cognome), escapeCsv(r.email), escapeCsv(r.telefono)];
+        if (basicFields) return base.join(',');
+        return [...base, escapeCsv(r.eventoPrenotato), escapeCsv(r.segment)].join(',');
+      });
+      csv = '\uFEFF' + header + '\n' + rows.join('\n');
+      filename = 'newsletter-email-export.csv';
+    }
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="newsletter-email-export.csv"');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
     res.send(csv);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -787,13 +878,14 @@ router.get('/api/email/preview', async (req, res) => {
     const eventIds = parseEventIdsParam(req.query.eventIds);
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
+    const excludeTargetBooked = parseBoolParam(req.query.excludeTargetBooked);
     const limit = parseInt(req.query.limit || '100', 10);
 
     const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const targetId = targetResourceId ?? getConfiguredTargetResourceId();
-    const excludeListA = await getListAExclusions(targetId);
+    const excludeListA = excludeTargetBooked ? await getListAExclusions(targetId) : { emailsInA: new Set() };
     let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
@@ -881,7 +973,7 @@ router.post('/api/email/send', async (req, res) => {
   if (!requireCacheReady(res)) return;
   res.setTimeout(60 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody, engagementType } = body_;
+  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody, engagementType, excludeTargetBooked } = body_;
   const listDFilters = parseListDFilters(body_);
   const segFilter = parseSegmentsParam(segments);
   const evIds = parseEventIdsParam(eventIds);
@@ -917,14 +1009,15 @@ router.post('/api/email/send', async (req, res) => {
   const cap = captureLogs(async () => {
     const targetId = targetResourceId != null ? targetResourceId : getConfiguredTargetResourceId();
     const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
-    const excludeListA = await getListAExclusions(targetId);
+    const excludeListA = parseBoolParam(excludeTargetBooked) ? await getListAExclusions(targetId) : { emailsInA: new Set() };
     let data = onlyD ? [] : await buildEmailListData(campaignId || dataCache.UPLOADED_CAMPAIGN_ID, { targetResourceId: targetId, engagementType: mode });
     data = filterByEventIds(data, evIds);
     data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
     data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
-    data = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()));
-    const toSend = takeBlock(data, maxToSend);
+    const registryRows = buildRegistryRowsFromData(data, subject, emailBody, sentSet);
+    const pendingData = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()));
+    const toSend = takeBlock(pendingData, maxToSend);
 
     emailAbortRequested = false;
     let sent = 0;
@@ -942,10 +1035,23 @@ router.post('/api/email/send', async (req, res) => {
         });
         sent++;
         successfullySent.push(row.email);
+        const rr = registryRows.find((x) => x.email === String(row.email || '').toLowerCase());
+        if (rr) {
+          rr.data_invio_email = toRegistryTimestamp();
+          rr.stato_invio_email = 'inviata';
+          rr.errore_invio_email = '';
+          rr.ultimo_aggiornamento = rr.data_invio_email;
+        }
         if (sent % 50 === 0) console.log('[Email] Inviati:', sent);
       } catch (err) {
         failed++;
         console.error('[Email] Errore per', row.email, err.message);
+        const rr = registryRows.find((x) => x.email === String(row.email || '').toLowerCase());
+        if (rr) {
+          rr.stato_invio_email = 'errore';
+          rr.errore_invio_email = String(err.message || '').slice(0, 500);
+          rr.ultimo_aggiornamento = toRegistryTimestamp();
+        }
       }
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -959,12 +1065,85 @@ router.post('/api/email/send', async (req, res) => {
       failed,
       total: toSend.length,
       batchSent: sentSet.size + successfullySent.length,
-      batchRemaining: data.length - successfullySent.length
+      batchRemaining: pendingData.length - successfullySent.length,
+      registryCsv: registryRowsToCsv(registryRows),
+      registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
     };
   });
 
   const out = await cap.run();
   res.json({ ...out, aborted: emailAbortRequested });
+});
+
+router.post('/api/email/send-from-registry', async (req, res) => {
+  res.setTimeout(60 * 60 * 1000);
+  try {
+    const body = req.body || {};
+    const rows = normalizeRegistryRows(body.rows || []);
+    const limit = Math.min(Math.max(parseInt(String(body.limit), 10) || 100, 1), 500);
+    if (!rows.length) {
+      return res.status(400).json({ success: false, error: 'Registro vuoto o non valido' });
+    }
+
+    const limitInfo = emailService.checkDailyLimit();
+    if (limitInfo.remaining <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Limite giornaliero raggiunto (500/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
+      });
+    }
+    const maxToSend = Math.min(limit, limitInfo.remaining);
+    const pending = rows.filter((r) => {
+      const st = String(r.stato_invio_email || '').toLowerCase();
+      return st !== 'inviata';
+    }).slice(0, maxToSend);
+
+    emailAbortRequested = false;
+    let sent = 0;
+    let failed = 0;
+    for (const row of pending) {
+      if (emailAbortRequested) break;
+      try {
+        const subject = row.oggetto_email || '';
+        const text = row.contenuto_email || '';
+        if (!subject || !text) {
+          throw new Error('Oggetto o contenuto email mancanti nel registro');
+        }
+        await emailService.sendPersonalizedEmail({
+          to: row.email,
+          subject,
+          body: text,
+          data: row
+        });
+        sent++;
+        row.data_invio_email = toRegistryTimestamp();
+        row.stato_invio_email = 'inviata';
+        row.errore_invio_email = '';
+        row.ultimo_aggiornamento = row.data_invio_email;
+      } catch (err) {
+        failed++;
+        row.stato_invio_email = 'errore';
+        row.errore_invio_email = String(err.message || '').slice(0, 500);
+        row.ultimo_aggiornamento = toRegistryTimestamp();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    return res.json({
+      success: true,
+      result: {
+        sent,
+        failed,
+        total: pending.length,
+        remaining: rows.filter((r) => String(r.stato_invio_email || '').toLowerCase() !== 'inviata').length,
+        registryCsv: registryRowsToCsv(rows),
+        registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
+      },
+      aborted: emailAbortRequested
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post('/api/email/abort', (_req, res) => {

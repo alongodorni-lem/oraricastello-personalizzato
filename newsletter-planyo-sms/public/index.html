@@ -380,10 +380,19 @@
           </div>
           <div class="output" id="emailTestOutput" style="margin-top: 0.5rem;"></div>
         </div>
+        <div class="form-group">
+          <label>Registro invii email (CSV)</label>
+          <input type="file" id="emailRegistryFile" accept=".csv,text/csv">
+          <p class="hint">Carica un file REGISTRO_INVII_EMAIL per continuare invii in giorni successivi senza dipendere dai filtri.</p>
+        </div>
         <div class="actions">
+          <button type="button" class="btn btn-secondary" id="btnCalcEmail">CALCOLA EMAIL</button>
+          <button type="button" class="btn btn-secondary" id="btnExportCsv">SCARICA REGISTRO CSV</button>
+          <button type="button" class="btn btn-secondary" id="btnSendFromRegistry">INVIA EMAIL DA REGISTRO</button>
           <button type="button" class="btn btn-primary" id="btnSendEmail" disabled>Invia email</button>
           <button type="button" class="btn btn-danger" id="btnEmailAbort" style="display:none;">Interrompi invio</button>
         </div>
+        <p class="hint" id="emailSendableStatus" style="margin-top: 0.5rem;">Calcola EMAIL per vedere quante email verrebbero inviate con i criteri selezionati.</p>
         <p class="hint" id="emailAbortHint" style="display:none; margin-top: 0.5rem;">Durante l'invio puoi cliccare "Interrompi invio" per fermare il processo.</p>
         <div class="output" id="emailOutput"></div>
       </div>
@@ -404,6 +413,11 @@
     let excludeTargetBookedActive = false;
     let smsSendableCount = 0;
     let smsSendableReady = false;
+    let emailSendableCount = 0;
+    let emailSendableReady = false;
+    let emailTotalAudienceCount = 0;
+    let emailCacheReady = false;
+    let loadedEmailRegistryRows = [];
 
     function showOutput(el, logs, extra) {
       let html = '';
@@ -429,11 +443,39 @@
       }
       if (btnRun) btnRun.disabled = true;
     }
+    function resetEmailSendable(forceMessage) {
+      emailTotalAudienceCount = 0;
+      emailSendableCount = 0;
+      emailSendableReady = false;
+      const status = document.getElementById('emailSendableStatus');
+      const btnSend = document.getElementById('btnSendEmail');
+      const btnExport = document.getElementById('btnExportCsv');
+      if (status) {
+        status.textContent = forceMessage || 'Calcola EMAIL per vedere quante email verrebbero inviate con i criteri selezionati.';
+        status.style.color = '';
+      }
+      if (btnSend) btnSend.disabled = true;
+      if (btnExport) btnExport.disabled = true;
+    }
 
     function escapeHtml(s) {
       const d = document.createElement('div');
       d.textContent = s;
       return d.innerHTML;
+    }
+    function downloadCsvFile(filename, csvContent) {
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
     }
 
     function getEngagementType() { return 'open'; }
@@ -554,6 +596,50 @@
           nome: get(idxNome),
           cognome: get(idxCognome),
           telefono: get(idxTelefono) || get(idxAltTelefono)
+        });
+      }
+      return out;
+    }
+    function parseRegistryCsvToRows(csvText) {
+      const rows = parseCsvRows(csvText);
+      if (rows.length < 2) return [];
+      const headers = rows[0].map((h) => String(h || '').toLowerCase().trim());
+      const col = (name) => headers.findIndex((h) => h === name);
+      const idx = {
+        nome: col('nome'),
+        cognome: col('cognome'),
+        email: col('email'),
+        telefono: col('telefono'),
+        oggetto_email: col('oggetto_email'),
+        contenuto_email: col('contenuto_email'),
+        data_invio_sms: col('data_invio_sms'),
+        data_invio_email: col('data_invio_email'),
+        stato_invio_email: col('stato_invio_email'),
+        errore_invio_email: col('errore_invio_email'),
+        ultimo_aggiornamento: col('ultimo_aggiornamento')
+      };
+      if (idx.email < 0) throw new Error('Colonna email non trovata nel registro');
+      const out = [];
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const get = (key) => {
+          const p = idx[key];
+          return (p >= 0 && row[p] !== undefined) ? String(row[p] || '').trim() : '';
+        };
+        const email = get('email').toLowerCase();
+        if (!email || !email.includes('@')) continue;
+        out.push({
+          nome: get('nome'),
+          cognome: get('cognome'),
+          email,
+          telefono: get('telefono'),
+          oggetto_email: get('oggetto_email'),
+          contenuto_email: get('contenuto_email'),
+          data_invio_sms: get('data_invio_sms'),
+          data_invio_email: get('data_invio_email'),
+          stato_invio_email: get('stato_invio_email'),
+          errore_invio_email: get('errore_invio_email'),
+          ultimo_aggiornamento: get('ultimo_aggiornamento')
         });
       }
       return out;
@@ -697,6 +783,7 @@
       }
 
       const ready = cacheStatus && cacheStatus.mailchimpUpdatedAt && cacheStatus.planyoUpdatedAt;
+      emailCacheReady = !!ready;
       if (ready) {
         hint.textContent = 'Dati pronti. Puoi procedere con calcolo contatti, invio SMS, invio Newsletter e scaricamento CSV.';
         hint.style.color = 'var(--success)';
@@ -709,14 +796,16 @@
 
     function updateCacheReadyState(ready) {
       if (!ready) {
-        ['btnSendEmail'].forEach(id => {
+        ['btnSendEmail', 'btnCalcEmail', 'btnExportCsv'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.disabled = true;
         });
-        if (typeof resetEmailCalc === 'function') resetEmailCalc();
       } else {
-        const btnSend = document.getElementById('btnSendEmail');
-        if (btnSend) btnSend.disabled = false;
+        const btnCalc = document.getElementById('btnCalcEmail');
+        if (btnCalc) btnCalc.disabled = false;
+      }
+      if (typeof resetEmailCalc === 'function') {
+        resetEmailCalc();
       }
     }
 
@@ -750,6 +839,8 @@
       const btnEmailCalc = document.getElementById('btnEmailCalc');
       const btnExportCsv = document.getElementById('btnExportCsv');
       const btnSendEmail = document.getElementById('btnSendEmail');
+      const btnCalcEmail = document.getElementById('btnCalcEmail');
+      const btnSendFromRegistry = document.getElementById('btnSendFromRegistry');
       const btnTest = document.getElementById('btnTest');
       const btnCalcSms = document.getElementById('btnCalcSms');
       if (btnSmsCalc) btnSmsCalc.disabled = busy;
@@ -757,6 +848,8 @@
       if (btnEmailCalc) btnEmailCalc.disabled = busy;
       if (btnExportCsv && busy) btnExportCsv.disabled = true;
       if (btnSendEmail && busy) btnSendEmail.disabled = true;
+      if (btnCalcEmail) btnCalcEmail.disabled = busy || !emailCacheReady;
+      if (btnSendFromRegistry) btnSendFromRegistry.disabled = busy;
       if (btnTest) btnTest.disabled = busy;
       if (btnCalcSms) btnCalcSms.disabled = busy;
     }
@@ -939,14 +1032,13 @@
     function resetEmailCalc() {
       const hint = document.getElementById('emailBatchHint');
       if (hint) hint.textContent = '';
-      const btnSend = document.getElementById('btnSendEmail');
-      if (btnSend) btnSend.disabled = false;
+      resetEmailSendable('Criteri modificati: clicca "CALCOLA EMAIL" prima dell\'invio.');
       updateEmailAudienceHint();
     }
-    document.getElementById('smsEventIds').oninput = () => { resetSmsCalc(); resetExcludeTargetState(); };
+    document.getElementById('smsEventIds').oninput = () => { resetSmsCalc(); resetExcludeTargetState(); resetEmailCalc(); };
     ['listDEventNameContains'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.oninput = resetSmsCalc;
+      if (el) el.oninput = () => { resetSmsCalc(); resetEmailCalc(); };
     });
     document.querySelectorAll('input[name="listDStatus"]').forEach(cb => {
       cb.onchange = () => { resetSmsCalc(); resetEmailCalc(); };
@@ -956,9 +1048,9 @@
       document.getElementById('smsListDFilters').style.display = dSms ? 'block' : 'none';
     }
     function getListDFilters(smsTab) {
-      const nameEl = smsTab ? document.getElementById('listDEventNameContains') : document.getElementById('listDEventNameContainsEmail');
-      const statusName = smsTab ? 'listDStatus' : 'listDStatusEmail';
-      const statuses = Array.from(document.querySelectorAll(`input[name="${statusName}"]:checked`)).map(c => c.value);
+      const nameEl = smsTab ? document.getElementById('listDEventNameContains') : null;
+      const statusName = smsTab ? 'listDStatus' : '';
+      const statuses = statusName ? Array.from(document.querySelectorAll(`input[name="${statusName}"]:checked`)).map(c => c.value) : [];
       const obj = {};
       if (nameEl?.value?.trim()) obj.listDEventNameContains = nameEl.value.trim();
       if (statuses.length) obj.listDStatuses = statuses.join(',');
@@ -1025,10 +1117,14 @@
     };
     
     document.getElementById('emailSubject').oninput = () => {
-      if (smsContactCount > 0) updateEmailBatchHint();
+      if (emailSendableReady && emailSendableCount > 0) updateEmailBatchHint();
+      resetEmailSendable('Oggetto modificato: ricalcola EMAIL prima dell\'invio.');
       scheduleEmailDraftSave();
     };
-    document.getElementById('emailBody').oninput = scheduleEmailDraftSave;
+    document.getElementById('emailBody').oninput = () => {
+      resetEmailSendable('Messaggio modificato: ricalcola EMAIL prima dell\'invio.');
+      scheduleEmailDraftSave();
+    };
     document.getElementById('emailSubject').onblur = saveEmailDraftConfig;
     document.getElementById('emailBody').onblur = saveEmailDraftConfig;
     
@@ -1138,6 +1234,76 @@
       }
     };
 
+    document.getElementById('btnCalcEmail').onclick = async () => {
+      const cfg = getEmailAudienceSelectionFromSms();
+      const status = document.getElementById('emailSendableStatus');
+      const btnCalc = document.getElementById('btnCalcEmail');
+      const out = document.getElementById('emailOutput');
+      if (!cfg.segments.length) {
+        resetEmailSendable('Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.');
+        return;
+      }
+      btnCalc.disabled = true;
+      status.textContent = 'Calcolo EMAIL in corso...';
+      status.style.color = '';
+      try {
+        const baseParams = {
+          campaignId: NEWSLETTER_SOURCE_ID,
+          targetResourceId: cfg.targetResourceId,
+          engagementType: getEngagementType(),
+          limit: selectedEmailLimit,
+          segments: cfg.segments.join(','),
+          excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0'
+        };
+        Object.assign(baseParams, cfg.listDFilters || {});
+        let d;
+        if (isLocalhost()) {
+          const q = new URLSearchParams(baseParams).toString();
+          d = await fetchJson(API + '/api/email/preview?' + q);
+        } else {
+          const startRes = await fetchJson(API + '/api/email/preview/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(baseParams)
+          });
+          if (!startRes.jobId) throw new Error(startRes.error || 'Avvio calcolo fallito');
+          const jobId = startRes.jobId;
+          d = await new Promise((resolve, reject) => {
+            const poll = async () => {
+              try {
+                const r = await fetchJson(API + '/api/email/preview/status/' + jobId);
+                if (r.status === 'done') { resolve(r); return; }
+                if (r.status === 'error') { reject(new Error(r.error)); return; }
+                setTimeout(poll, 3000);
+              } catch (e) { reject(e); }
+            };
+            poll();
+          });
+        }
+        if (d.error) throw new Error(d.error);
+        const total = Number(d.total || 0);
+        emailTotalAudienceCount = total;
+        const dailyRemaining = Number(d.dailyLimit?.remaining ?? 500);
+        emailSendableCount = Math.max(0, Math.min(total, selectedEmailLimit, dailyRemaining));
+        emailSendableReady = emailSendableCount > 0;
+        status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + selectedEmailLimit + ', residuo giornaliero ' + dailyRemaining + ').';
+        status.style.color = emailSendableReady ? 'var(--success)' : 'var(--danger)';
+        document.getElementById('btnSendEmail').disabled = !emailSendableReady;
+        document.getElementById('btnExportCsv').disabled = !emailSendableReady;
+        if (emailSendableReady) updateEmailBatchHint();
+      } catch (e) {
+        emailSendableReady = false;
+        emailSendableCount = 0;
+        status.textContent = 'Errore: ' + e.message;
+        status.style.color = 'var(--danger)';
+        document.getElementById('btnSendEmail').disabled = true;
+        document.getElementById('btnExportCsv').disabled = true;
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
+      } finally {
+        btnCalc.disabled = false;
+      }
+    };
+
     async function updateEmailBatchHint() {
       const hint = document.getElementById('emailBatchHint');
       const cfg = getEmailAudienceSelectionFromSms();
@@ -1160,7 +1326,7 @@
         const d = await r.json();
         const batchSent = d.batchSent || 0;
         const remaining = d.dailyRemaining ?? 500;
-        const totalRemaining = Math.max(0, Math.max(0, smsContactCount) - batchSent);
+        const totalRemaining = Math.max(0, emailTotalAudienceCount - batchSent);
         if (batchSent > 0) {
           hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. Oggi puoi inviarne altri ' + Math.min(selectedEmailLimit, remaining, totalRemaining) + ' (max 500/giorno).';
         } else {
@@ -1192,7 +1358,8 @@
         btn.classList.remove('btn-secondary');
         btn.classList.add('btn-primary');
         document.getElementById('emailLimitHint').textContent = 'Selezionato: ' + selectedEmailLimit + ' destinatari';
-        if (smsContactCount > 0) updateEmailBatchHint();
+        resetEmailSendable('Blocco destinatari modificato: ricalcola EMAIL prima dell\'invio.');
+        if (emailSendableReady && emailSendableCount > 0) updateEmailBatchHint();
       };
     });
     document.querySelector('.block-btns [data-limit="100"]').click();
@@ -1230,6 +1397,112 @@
       btn.disabled = false;
     };
 
+    document.getElementById('emailRegistryFile').onchange = async () => {
+      const out = document.getElementById('emailOutput');
+      const file = document.getElementById('emailRegistryFile').files?.[0];
+      if (!file) {
+        loadedEmailRegistryRows = [];
+        return;
+      }
+      try {
+        const text = await file.text();
+        loadedEmailRegistryRows = parseRegistryCsvToRows(text);
+        out.innerHTML = '<div class="log result-ok">Registro caricato: ' + loadedEmailRegistryRows.length + ' righe valide.</div>';
+      } catch (e) {
+        loadedEmailRegistryRows = [];
+        out.innerHTML = '<div class="error">Errore caricamento registro: ' + escapeHtml(e.message) + '</div>';
+      }
+    };
+
+    document.getElementById('btnSendFromRegistry').onclick = async () => {
+      const out = document.getElementById('emailOutput');
+      const btn = document.getElementById('btnSendFromRegistry');
+      if (!loadedEmailRegistryRows.length) {
+        out.innerHTML = '<div class="error">Carica prima un file REGISTRO_INVII_EMAIL.</div>';
+        return;
+      }
+      const limitCap = Math.min(selectedEmailLimit, 500);
+      if (!confirm('Confermi INVIA EMAIL DA REGISTRO? Verranno inviate fino a ' + limitCap + ' email dal registro caricato.')) return;
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Invio da registro in corso...</div>';
+      try {
+        const d = await fetchJson(API + '/api/email/send-from-registry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rows: loadedEmailRegistryRows,
+            limit: selectedEmailLimit
+          })
+        });
+        if (!d.success) throw new Error(d.error || 'Invio da registro fallito');
+        const sent = d.result?.sent || 0;
+        const failed = d.result?.failed || 0;
+        const remaining = d.result?.remaining || 0;
+        out.innerHTML = '<div class="log result-ok">Invio da registro completato. Inviate: ' + sent + (failed ? (' | Fallite: ' + failed) : '') + ' | Rimanenti: ' + remaining + '.</div>';
+        if (d.result?.registryCsv) {
+          const fn = d.result.registryFilename || ('REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv');
+          downloadCsvFile(fn, d.result.registryCsv);
+          try { loadedEmailRegistryRows = parseRegistryCsvToRows(d.result.registryCsv); } catch (_) {}
+        }
+      } catch (e) {
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    // Export REGISTRO CSV (nome,cognome,email,telefono + tracking invii)
+    document.getElementById('btnExportCsv').onclick = async () => {
+      const cfg = getEmailAudienceSelectionFromSms();
+      const out = document.getElementById('emailOutput');
+      const btn = document.getElementById('btnExportCsv');
+      if (!cfg.segments.length) {
+        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.</div>';
+        return;
+      }
+      if (!emailSendableReady || emailSendableCount <= 0) {
+        out.innerHTML = '<div class="error">Prima clicca "CALCOLA EMAIL" per validare il pubblico da esportare.</div>';
+        return;
+      }
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Generazione registro CSV in corso...</div>';
+      try {
+        const params = new URLSearchParams({
+          campaignId: NEWSLETTER_SOURCE_ID,
+          engagementType: getEngagementType(),
+          segments: cfg.segments.join(','),
+          excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0',
+          registry: '1',
+          subject: document.getElementById('emailSubject').value.trim(),
+          body: document.getElementById('emailBody').value
+        });
+        if (cfg.targetResourceId) {
+          params.set('targetResourceId', cfg.targetResourceId);
+          params.set('eventIds', cfg.targetResourceId);
+        }
+        const lf = cfg.listDFilters || {};
+        Object.keys(lf).forEach((k) => params.set(k, lf[k]));
+
+        const r = await fetch(API + '/api/email/export?' + params.toString());
+        if (!r.ok) {
+          let msg = 'Errore export CSV';
+          try {
+            const d = await r.json();
+            msg = d.error || msg;
+          } catch (_) {}
+          throw new Error(msg);
+        }
+        const csvText = await r.text();
+        const fn = 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv';
+        downloadCsvFile(fn, csvText);
+        out.innerHTML = '<div class="log result-ok">Registro CSV scaricato con successo.</div>';
+      } catch (e) {
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
     // Send email
     document.getElementById('btnSendEmail').onclick = async () => {
       const campaignId = NEWSLETTER_SOURCE_ID;
@@ -1246,6 +1519,10 @@
       }
       if (!emailSegs.length) {
         out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.</div>';
+        return;
+      }
+      if (!emailSendableReady || emailSendableCount <= 0) {
+        out.innerHTML = '<div class="error">Prima devi cliccare "CALCOLA EMAIL" e ottenere un valore maggiore di zero.</div>';
         return;
       }
       const limitCap = Math.min(selectedEmailLimit, 500);
@@ -1291,7 +1568,12 @@
             out.innerHTML += '<div class="log">Totale batch: ' + batchSent + ' inviati. Rimanenti: ' + batchRemaining + '. Domani puoi inviarne altri 500.</div>';
           }
           if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata.</div>';
-          if (smsContactCount > 0) updateEmailBatchHint();
+          resetEmailSendable('Invio completato: clicca "CALCOLA EMAIL" per eventuale nuovo invio.');
+          updateEmailBatchHint();
+          if (d.result.registryCsv) {
+            const fn = d.result.registryFilename || ('REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv');
+            downloadCsvFile(fn, d.result.registryCsv);
+          }
         }
         if (d.error) out.innerHTML += '<div class="error">' + escapeHtml(d.error) + '</div>';
       } catch (e) {
