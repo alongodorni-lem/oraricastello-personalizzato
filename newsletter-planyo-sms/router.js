@@ -510,7 +510,7 @@ function normalizeRegistryRows(rows, fallbackSubject = '', fallbackBody = '') {
   return out;
 }
 
-function buildRegistryRowsFromData(data, subject, body, sentSet = new Set()) {
+function buildRegistryRowsFromData(data, subject, body, sentSet = new Set(), sentMap = new Map()) {
   const rows = [];
   const seen = new Set();
   for (const r of data || []) {
@@ -518,12 +518,13 @@ function buildRegistryRowsFromData(data, subject, body, sentSet = new Set()) {
     if (!email || seen.has(email)) continue;
     seen.add(email);
     const alreadySent = sentSet.has(email);
+    const sentAt = alreadySent ? String(sentMap.get(email) || '').trim() : '';
     rows.push({
       nome: sanitizeRegistryValue(r?.nome),
       cognome: sanitizeRegistryValue(r?.cognome),
       email,
       telefono: sanitizeRegistryValue(r?.telefono),
-      data_invio_email: alreadySent ? toRegistryTimestamp() : '',
+      data_invio_email: sentAt,
       _oggetto_email: sanitizeRegistryValue(subject),
       _contenuto_email: sanitizeRegistryValue(body)
     });
@@ -1001,6 +1002,7 @@ router.post('/api/email/send', async (req, res) => {
     listDStatuses: listDFilters.statuses?.join(',')
   });
   const sentSet = emailService.getSentForBatch(batchId);
+  const sentMap = emailService.getSentMapForBatch(batchId);
   const maxToSend = Math.min(limitNum, limitInfo.remaining);
 
   const cap = captureLogs(async () => {
@@ -1012,7 +1014,7 @@ router.post('/api/email/send', async (req, res) => {
     data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
     data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
-    const registryRows = buildRegistryRowsFromData(data, subject, emailBody, sentSet);
+    const registryRows = buildRegistryRowsFromData(data, subject, emailBody, sentSet, sentMap);
     const pendingData = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()));
     const toSend = takeBlock(pendingData, maxToSend);
 
@@ -1020,6 +1022,7 @@ router.post('/api/email/send', async (req, res) => {
     let sent = 0;
     let failed = 0;
     const successfullySent = [];
+    const sentAtByEmail = {};
 
     for (const row of toSend) {
       if (emailAbortRequested) break;
@@ -1032,29 +1035,21 @@ router.post('/api/email/send', async (req, res) => {
         });
         sent++;
         successfullySent.push(row.email);
+        sentAtByEmail[String(row.email || '').toLowerCase()] = toRegistryTimestamp();
         const rr = registryRows.find((x) => x.email === String(row.email || '').toLowerCase());
         if (rr) {
-          rr.data_invio_email = toRegistryTimestamp();
-          rr.stato_invio_email = 'inviata';
-          rr.errore_invio_email = '';
-          rr.ultimo_aggiornamento = rr.data_invio_email;
+          rr.data_invio_email = sentAtByEmail[String(row.email || '').toLowerCase()];
         }
         if (sent % 50 === 0) console.log('[Email] Inviati:', sent);
       } catch (err) {
         failed++;
         console.error('[Email] Errore per', row.email, err.message);
-        const rr = registryRows.find((x) => x.email === String(row.email || '').toLowerCase());
-        if (rr) {
-          rr.stato_invio_email = 'errore';
-          rr.errore_invio_email = String(err.message || '').slice(0, 500);
-          rr.ultimo_aggiornamento = toRegistryTimestamp();
-        }
       }
       await new Promise((r) => setTimeout(r, 200));
     }
 
     if (successfullySent.length > 0) {
-      emailService.addSentToBatch(batchId, successfullySent, subject);
+      emailService.addSentToBatch(batchId, successfullySent, subject, sentAtByEmail);
     }
 
     return {

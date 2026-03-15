@@ -135,24 +135,67 @@ function saveBatches(batches) {
  * Restituisce Set di email già inviate per questo batch
  */
 function getSentForBatch(batchId) {
-  const batches = loadBatches();
-  const batch = batches[batchId];
-  return new Set(batch?.sent || []);
+  const map = getSentMapForBatch(batchId);
+  return new Set([...map.keys()]);
 }
 
 /**
  * Aggiunge email inviate al batch
  */
-function addSentToBatch(batchId, emails, subject = '') {
+function addSentToBatch(batchId, emails, subject = '', sentAtByEmail = {}) {
   const batches = loadBatches();
   if (!batches[batchId]) {
-    batches[batchId] = { sent: [], subject: subject.slice(0, 80), created: new Date().toISOString() };
+    batches[batchId] = { sent: [], sentMap: {}, subject: subject.slice(0, 80), created: new Date().toISOString() };
   }
-  const existing = new Set(batches[batchId].sent);
-  emails.forEach((e) => existing.add(e.toLowerCase()));
-  batches[batchId].sent = [...existing];
+  const batch = batches[batchId];
+  const currentMap = {};
+  if (batch.sentMap && typeof batch.sentMap === 'object') {
+    for (const k of Object.keys(batch.sentMap)) {
+      currentMap[String(k).toLowerCase()] = batch.sentMap[k];
+    }
+  }
+  if (Array.isArray(batch.sent)) {
+    batch.sent.forEach((e) => {
+      const key = String(e || '').toLowerCase();
+      if (key && !currentMap[key]) currentMap[key] = '';
+    });
+  }
+  const nowIso = new Date().toISOString();
+  emails.forEach((e) => {
+    const key = String(e || '').toLowerCase();
+    if (!key) return;
+    if (currentMap[key]) return; // conserva timestamp storico
+    currentMap[key] = sentAtByEmail[key] || nowIso;
+  });
+  batch.sentMap = currentMap;
+  batch.sent = Object.keys(currentMap);
   batches[batchId].updated = new Date().toISOString();
   saveBatches(batches);
+}
+
+/**
+ * Restituisce mappa email->timestamp invio per batch
+ */
+function getSentMapForBatch(batchId) {
+  const batches = loadBatches();
+  const batch = batches[batchId];
+  if (!batch) return new Map();
+  const map = new Map();
+  if (batch.sentMap && typeof batch.sentMap === 'object') {
+    for (const k of Object.keys(batch.sentMap)) {
+      const key = String(k || '').toLowerCase();
+      if (!key) continue;
+      map.set(key, String(batch.sentMap[k] || ''));
+    }
+  }
+  if (Array.isArray(batch.sent)) {
+    batch.sent.forEach((e) => {
+      const key = String(e || '').toLowerCase();
+      if (!key) return;
+      if (!map.has(key)) map.set(key, '');
+    });
+  }
+  return map;
 }
 
 /**
@@ -183,6 +226,7 @@ module.exports = {
   getTodaySentCount,
   getBatchId,
   getSentForBatch,
+  getSentMapForBatch,
   addSentToBatch,
   DAILY_LIMIT
 };

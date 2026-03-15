@@ -1144,11 +1144,19 @@
     };
     
     document.getElementById('emailSubject').oninput = () => {
+      if (loadedEmailRegistryValidated) {
+        scheduleEmailDraftSave();
+        return;
+      }
       if (emailSendableReady && emailSendableCount > 0) updateEmailBatchHint();
       resetEmailSendable('Oggetto modificato: ricalcola EMAIL prima dell\'invio.');
       scheduleEmailDraftSave();
     };
     document.getElementById('emailBody').oninput = () => {
+      if (loadedEmailRegistryValidated) {
+        scheduleEmailDraftSave();
+        return;
+      }
       resetEmailSendable('Messaggio modificato: ricalcola EMAIL prima dell\'invio.');
       scheduleEmailDraftSave();
     };
@@ -1520,11 +1528,11 @@
         out.innerHTML = '<div class="error">Nel registro mancano oggetto o contenuto email.</div>';
         return;
       }
+      loadedEmailRegistryValidated = true;
+      loadedEmailRegistryRows = loadedEmailRegistryMeta.rows;
       document.getElementById('emailSubject').value = subject;
       document.getElementById('emailBody').value = body;
       scheduleEmailDraftSave();
-      loadedEmailRegistryRows = loadedEmailRegistryMeta.rows;
-      loadedEmailRegistryValidated = true;
       const total = loadedEmailRegistryRows.length;
       const sent = loadedEmailRegistryRows.filter((r) => String(r.data_invio_email || '').trim()).length;
       const pending = Math.max(0, total - sent);
