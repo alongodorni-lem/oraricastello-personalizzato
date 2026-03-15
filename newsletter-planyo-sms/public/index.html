@@ -387,6 +387,7 @@
         </div>
         <div class="actions">
           <button type="button" class="btn btn-secondary" id="btnCalcEmail">CALCOLA EMAIL</button>
+          <button type="button" class="btn btn-secondary" id="btnExportCleanCsv">SCARICA CSV CONTATTI</button>
           <button type="button" class="btn btn-secondary" id="btnExportCsv">SCARICA REGISTRO CSV</button>
           <button type="button" class="btn btn-secondary" id="btnSendFromRegistry">INVIA EMAIL DA REGISTRO</button>
           <button type="button" class="btn btn-primary" id="btnSendEmail" disabled>Invia email</button>
@@ -416,7 +417,6 @@
     let emailSendableCount = 0;
     let emailSendableReady = false;
     let emailTotalAudienceCount = 0;
-    let emailCacheReady = false;
     let loadedEmailRegistryRows = [];
 
     function showOutput(el, logs, extra) {
@@ -450,12 +450,14 @@
       const status = document.getElementById('emailSendableStatus');
       const btnSend = document.getElementById('btnSendEmail');
       const btnExport = document.getElementById('btnExportCsv');
+      const btnExportClean = document.getElementById('btnExportCleanCsv');
       if (status) {
         status.textContent = forceMessage || 'Calcola EMAIL per vedere quante email verrebbero inviate con i criteri selezionati.';
         status.style.color = '';
       }
       if (btnSend) btnSend.disabled = true;
       if (btnExport) btnExport.disabled = true;
+      if (btnExportClean) btnExportClean.disabled = true;
     }
 
     function escapeHtml(s) {
@@ -783,7 +785,6 @@
       }
 
       const ready = cacheStatus && cacheStatus.mailchimpUpdatedAt && cacheStatus.planyoUpdatedAt;
-      emailCacheReady = !!ready;
       if (ready) {
         hint.textContent = 'Dati pronti. Puoi procedere con calcolo contatti, invio SMS, invio Newsletter e scaricamento CSV.';
         hint.style.color = 'var(--success)';
@@ -796,14 +797,13 @@
 
     function updateCacheReadyState(ready) {
       if (!ready) {
-        ['btnSendEmail', 'btnCalcEmail', 'btnExportCsv'].forEach(id => {
+        ['btnSendEmail', 'btnExportCsv', 'btnExportCleanCsv'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.disabled = true;
         });
-      } else {
-        const btnCalc = document.getElementById('btnCalcEmail');
-        if (btnCalc) btnCalc.disabled = false;
       }
+      const btnCalc = document.getElementById('btnCalcEmail');
+      if (btnCalc) btnCalc.disabled = false;
       if (typeof resetEmailCalc === 'function') {
         resetEmailCalc();
       }
@@ -838,6 +838,7 @@
       const btnRun = document.getElementById('btnRun');
       const btnEmailCalc = document.getElementById('btnEmailCalc');
       const btnExportCsv = document.getElementById('btnExportCsv');
+      const btnExportCleanCsv = document.getElementById('btnExportCleanCsv');
       const btnSendEmail = document.getElementById('btnSendEmail');
       const btnCalcEmail = document.getElementById('btnCalcEmail');
       const btnSendFromRegistry = document.getElementById('btnSendFromRegistry');
@@ -847,8 +848,9 @@
       if (btnRun && busy) btnRun.disabled = true;
       if (btnEmailCalc) btnEmailCalc.disabled = busy;
       if (btnExportCsv && busy) btnExportCsv.disabled = true;
+      if (btnExportCleanCsv && busy) btnExportCleanCsv.disabled = true;
       if (btnSendEmail && busy) btnSendEmail.disabled = true;
-      if (btnCalcEmail) btnCalcEmail.disabled = busy || !emailCacheReady;
+      if (btnCalcEmail) btnCalcEmail.disabled = busy;
       if (btnSendFromRegistry) btnSendFromRegistry.disabled = busy;
       if (btnTest) btnTest.disabled = busy;
       if (btnCalcSms) btnCalcSms.disabled = busy;
@@ -1290,6 +1292,7 @@
         status.style.color = emailSendableReady ? 'var(--success)' : 'var(--danger)';
         document.getElementById('btnSendEmail').disabled = !emailSendableReady;
         document.getElementById('btnExportCsv').disabled = !emailSendableReady;
+        document.getElementById('btnExportCleanCsv').disabled = !emailSendableReady;
         if (emailSendableReady) updateEmailBatchHint();
       } catch (e) {
         emailSendableReady = false;
@@ -1298,9 +1301,58 @@
         status.style.color = 'var(--danger)';
         document.getElementById('btnSendEmail').disabled = true;
         document.getElementById('btnExportCsv').disabled = true;
+        document.getElementById('btnExportCleanCsv').disabled = true;
         out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
       } finally {
         btnCalc.disabled = false;
+      }
+    };
+
+    // Export CSV pulito contatti (nome,cognome,email,indirizzo)
+    document.getElementById('btnExportCleanCsv').onclick = async () => {
+      const cfg = getEmailAudienceSelectionFromSms();
+      const out = document.getElementById('emailOutput');
+      const btn = document.getElementById('btnExportCleanCsv');
+      if (!cfg.segments.length) {
+        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.</div>';
+        return;
+      }
+      if (!emailSendableReady || emailSendableCount <= 0) {
+        out.innerHTML = '<div class="error">Prima clicca "CALCOLA EMAIL" per validare il pubblico da esportare.</div>';
+        return;
+      }
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Generazione CSV contatti in corso...</div>';
+      try {
+        const params = new URLSearchParams({
+          campaignId: NEWSLETTER_SOURCE_ID,
+          engagementType: getEngagementType(),
+          segments: cfg.segments.join(','),
+          excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0',
+          cleanFields: '1'
+        });
+        if (cfg.targetResourceId) {
+          params.set('targetResourceId', cfg.targetResourceId);
+          params.set('eventIds', cfg.targetResourceId);
+        }
+        const lf = cfg.listDFilters || {};
+        Object.keys(lf).forEach((k) => params.set(k, lf[k]));
+        const r = await fetch(API + '/api/email/export?' + params.toString());
+        if (!r.ok) {
+          let msg = 'Errore export CSV contatti';
+          try {
+            const d = await r.json();
+            msg = d.error || msg;
+          } catch (_) {}
+          throw new Error(msg);
+        }
+        const csvText = await r.text();
+        downloadCsvFile('newsletter-contatti.csv', csvText);
+        out.innerHTML = '<div class="log result-ok">CSV contatti scaricato con successo.</div>';
+      } catch (e) {
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
+      } finally {
+        btn.disabled = false;
       }
     };
 

@@ -749,7 +749,6 @@ router.get('/api/sms/preview', async (req, res) => {
 });
 
 router.post('/api/email/preview/start', (req, res) => {
-  if (!requireCacheReady(res)) return;
   try {
     const q = req.body || req.query || {};
     const campaignId = q.campaignId;
@@ -815,7 +814,6 @@ router.get('/api/email/preview/status/:jobId', (req, res) => {
 });
 
 router.get('/api/email/export', async (req, res) => {
-  if (!requireCacheReady(res)) return;
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
@@ -827,6 +825,7 @@ router.get('/api/email/export', async (req, res) => {
     const listDFilters = parseListDFilters(req.query);
     const excludeTargetBooked = parseBoolParam(req.query.excludeTargetBooked);
     const basicFields = parseBoolParam(req.query.basicFields);
+    const cleanFields = parseBoolParam(req.query.cleanFields);
     const registryMode = parseBoolParam(req.query.registry);
     const subject = String(req.query.subject || '').trim();
     const emailBody = String(req.query.body || '').trim();
@@ -848,6 +847,11 @@ router.get('/api/email/export', async (req, res) => {
       const registryRows = buildRegistryRowsFromData(data, subject, emailBody, new Set());
       csv = registryRowsToCsv(registryRows);
       filename = 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv';
+    } else if (cleanFields) {
+      const header = 'nome,cognome,email,indirizzo';
+      const rows = data.map((r) => [escapeCsv(r.nome), escapeCsv(r.cognome), escapeCsv(r.email), escapeCsv(r.email)].join(','));
+      csv = '\uFEFF' + header + '\n' + rows.join('\n');
+      filename = 'newsletter-contatti.csv';
     } else {
       const header = basicFields ? 'nome,cognome,email,telefono' : 'nome,cognome,email,telefono,evento,segment';
       const rows = data.map((r) => {
@@ -868,7 +872,6 @@ router.get('/api/email/export', async (req, res) => {
 });
 
 router.get('/api/email/preview', async (req, res) => {
-  if (!requireCacheReady(res)) return;
   res.setTimeout(90000);
   try {
     const campaignId = req.query.campaignId;
