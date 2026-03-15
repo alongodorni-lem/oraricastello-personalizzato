@@ -92,6 +92,8 @@ let resourcesCache = null;
 let resourcesCacheExpiry = 0;
 const TARGET_SEGMENT_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 const targetSegmentCache = new Map();
+let resourcesListCache = null;
+let resourcesListCacheExpiry = 0;
 
 /**
  * Carica tutte le prenotazioni CONFERMATE effettuate (data di prenotazione) negli ultimi N mesi.
@@ -275,6 +277,78 @@ async function getPlanyoResourceIds() {
   return ids;
 }
 
+function parseBoolLike(v) {
+  if (v === true || v === 1) return true;
+  if (v === false || v === 0 || v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  if (!s) return false;
+  if (['1', 'true', 'yes', 'y', 'si', 's'].includes(s)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(s)) return false;
+  return false;
+}
+
+function inferPublishedFlag(obj) {
+  if (!obj || typeof obj !== 'object') return true;
+  const boolKeys = ['published', 'is_published', 'isPublished', 'active', 'enabled', 'visible'];
+  for (const k of boolKeys) {
+    if (Object.prototype.hasOwnProperty.call(obj, k)) {
+      return parseBoolLike(obj[k]);
+    }
+  }
+  const status = String(obj.status || obj.resource_status || '').trim().toLowerCase();
+  if (status) {
+    if (['inactive', 'disabled', 'hidden', 'deleted', 'archived', 'draft'].includes(status)) return false;
+    return true;
+  }
+  return true;
+}
+
+function collectResourceEntries(value, out = [], depth = 0) {
+  if (!value || depth > 6) return out;
+  if (Array.isArray(value)) {
+    value.forEach((x) => collectResourceEntries(x, out, depth + 1));
+    return out;
+  }
+  if (typeof value !== 'object') return out;
+
+  const id = parseInt(String(value.id ?? value.resource_id ?? value.resourceId ?? '').trim(), 10);
+  const name = String(value.name ?? value.resource_name ?? value.title ?? value.label ?? '').trim();
+  if (!isNaN(id) && id > 0 && name) {
+    out.push({ id, name, published: inferPublishedFlag(value) });
+  }
+  Object.keys(value).forEach((k) => collectResourceEntries(value[k], out, depth + 1));
+  return out;
+}
+
+async function getPublishedResources() {
+  if (resourcesListCache && Date.now() < resourcesListCacheExpiry) {
+    return resourcesListCache;
+  }
+  const siteId = process.env.PLANYO_SITE_ID || '8895';
+  const data = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2 });
+  const entries = collectResourceEntries(data);
+  const byId = new Map();
+  for (const r of entries) {
+    const prev = byId.get(r.id);
+    if (!prev) {
+      byId.set(r.id, r);
+      continue;
+    }
+    // Prefer record marked as published and with longer descriptive name.
+    const better =
+      (r.published && !prev.published) ||
+      (r.published === prev.published && String(r.name || '').length > String(prev.name || '').length);
+    if (better) byId.set(r.id, r);
+  }
+  const resources = [...byId.values()]
+    .filter((r) => r.published)
+    .map((r) => ({ id: r.id, name: r.name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
+  resourcesListCache = resources;
+  resourcesListCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
+  return resources;
+}
+
 async function validateTargetResourceIds(targetResourceId) {
   const ids = parseTargetResourceIds(targetResourceId);
   if (ids.length === 0) return { ok: false, missing: [], all: [] };
@@ -339,6 +413,7 @@ module.exports = {
   segmentEmail,
   buildListAAndB,
   validateTargetResourceIds,
+  getPublishedResources,
   getCachedListAAndB,
   extractPhone,
   normalizePhone

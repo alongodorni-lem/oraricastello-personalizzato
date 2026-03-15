@@ -274,6 +274,7 @@
         <label>ID evento Planyo (filtro prenotazioni)</label>
         <input type="text" id="smsEventIds" placeholder="es. 236955" maxlength="80" autocomplete="off">
         <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola (es. 236955, 243693).</p>
+        <p class="hint" id="planyoResourcesHint" style="margin-top: 0.35rem; color: var(--success);">Caricamento risorse Planyo pubblicate...</p>
         <button type="button" class="btn btn-secondary" id="btnBuildExcludeTarget">ESCLUDI PRENOTATI EVENTO TARGET</button>
         <p class="hint" id="excludeTargetStatus" style="margin-top: 0.5rem;">Esclusione evento target non attiva.</p>
       </div>
@@ -496,6 +497,24 @@
     }
 
     function getEngagementType() { return 'open'; }
+    async function loadPlanyoResourcesHint() {
+      const el = document.getElementById('planyoResourcesHint');
+      if (!el) return;
+      try {
+        const d = await fetchJson(API + '/api/planyo/resources');
+        if (!d.success) throw new Error(d.error || 'Errore caricamento risorse');
+        const resources = Array.isArray(d.resources) ? d.resources : [];
+        if (!resources.length) {
+          el.textContent = 'Nessuna risorsa pubblicata trovata su Planyo.';
+          return;
+        }
+        const text = resources.map((r) => `${r.id} - ${r.name}`).join(' | ');
+        el.textContent = 'Risorse Planyo pubblicate: ' + text;
+      } catch (e) {
+        el.textContent = 'Impossibile caricare elenco risorse Planyo: ' + e.message;
+        el.style.color = 'var(--danger)';
+      }
+    }
     function getSmsAudienceSelection() {
       const src = Array.from(document.querySelectorAll('input[name="smsSource"]:checked')).map(c => c.value);
       const includeNewsletterRaw = src.includes('newsletter');
@@ -1738,6 +1757,7 @@
     toggleListDFilters();
     updateEmailAudienceHint();
     loadConfig();
+    loadPlanyoResourcesHint();
     fetch(API + '/api/preload-planyo').catch(() => {}); // Preload Lista A in background (API Planyo)
   </script>
 </body>

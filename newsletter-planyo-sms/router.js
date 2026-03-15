@@ -149,6 +149,19 @@ router.get('/api/preload-planyo', (req, res) => {
   }
 });
 
+router.get('/api/planyo/resources', async (_req, res) => {
+  try {
+    if (!process.env.PLANYO_API_KEY) {
+      return res.json({ success: true, resources: [], message: 'PLANYO_API_KEY non configurata' });
+    }
+    const planyo = require('./services/planyo');
+    const resources = await planyo.getPublishedResources();
+    res.json({ success: true, resources });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // API
 router.get('/api/config', (req, res) => {
   try {
