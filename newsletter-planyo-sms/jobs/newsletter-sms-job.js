@@ -88,7 +88,7 @@ function markAsSent(campaignId, email, segment) {
  * @param {{ dryRun?: boolean }} options
  */
 async function runNewsletterSmsJob(campaignId, options = {}) {
-  const { dryRun = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck, engagementType = 'open', excludeTargetBooked = false } = options;
+  const { dryRun = false, prepareOnly = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck, engagementType = 'open', excludeTargetBooked = false } = options;
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
   const targetResourceId = overrideTargetId != null ? overrideTargetId : configTargetId;
 
@@ -125,8 +125,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     let skipped = 0;
     const textD = getText();
     for (const { email, telefono: phone } of withPhone) {
-      if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
-      if (wasSameMessageSentRecently(phone, textD)) { skipped++; continue; }
+      if (!prepareOnly) {
+        if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, textD)) { skipped++; continue; }
+      }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
@@ -269,13 +271,15 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const text = getText(segment);
     if (!segmentsToProcess.includes(segment)) continue;
     for (const { email, phone } of lists[segment]) {
-      if (wasAlreadySent(campaignId, email, segment)) {
-        skipped++;
-        continue;
-      }
-      if (wasSameMessageSentRecently(phone, text)) {
-        skipped++;
-        continue;
+      if (!prepareOnly) {
+        if (wasAlreadySent(campaignId, email, segment)) {
+          skipped++;
+          continue;
+        }
+        if (wasSameMessageSentRecently(phone, text)) {
+          skipped++;
+          continue;
+        }
       }
       if (!phone || phone.length < 10) {
         skipped++;
@@ -324,8 +328,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   if (segmentsFilter && segmentsFilter.includes('D') && listD.length > 0) {
     const text = getText('D');
     for (const { email, telefono: phone } of listD) {
-      if (wasAlreadySent(campaignId, email, 'D')) { skipped++; continue; }
-      if (wasSameMessageSentRecently(phone, text)) { skipped++; continue; }
+      if (!prepareOnly) {
+        if (wasAlreadySent(campaignId, email, 'D')) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, text)) { skipped++; continue; }
+      }
       if (!phone || phone.length < 10 || phone.includes('@')) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }

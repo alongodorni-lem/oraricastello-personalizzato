@@ -1145,6 +1145,7 @@
             segments: segs.length ? segs : ['A', 'B', 'C'],
             excludeTargetBooked: audience.excludeTargetBooked,
             dryRun: true,
+            prepareOnly: true,
             engagementType: getEngagementType(),
             targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
             smsText,

@@ -359,7 +359,7 @@ router.get('/api/update-prenotazioni/status/:jobId', (req, res) => {
 router.post('/api/run', async (req, res) => {
   res.setTimeout(30 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
+  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, prepareOnly = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
   const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
   if (!customSmsText) {
     return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
@@ -399,7 +399,7 @@ router.post('/api/run', async (req, res) => {
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, segments: segFilter, targetResourceId: targetId, eventIds: forceReportOnly ? null : evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: excludeTarget });
+      const r = await runNewsletterSmsJob(id, { dryRun, prepareOnly: parseBoolParam(prepareOnly), segments: segFilter, targetResourceId: targetId, eventIds: forceReportOnly ? null : evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: excludeTarget });
       total.inserted += r.inserted || 0;
       total.notInserted += r.notInserted || 0;
       total.duplicates += r.duplicates || 0;
