@@ -95,6 +95,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   const onlyD = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'D';
   const engagementLabel = engagementType === 'click' ? 'click' : 'open';
   const trackId = campaignId || 'list-d-only';
+  const seenPhonesInRun = new Set();
 
   console.log('[Job] Avvio newsletter-sms-job');
   console.log('[Job] Campagna:', trackId, '| Solo Lista D:', !!onlyD, '| Dry run:', dryRun);
@@ -126,9 +127,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     for (const { email, telefono: phone } of withPhone) {
       if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
       if (wasSameMessageSentRecently(phone, textD)) { skipped++; continue; }
+      const normPhone = smshosting.normalizePhone(phone);
+      if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
+      seenPhonesInRun.add(normPhone);
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
-      const result = await smshosting.sendSms(phone, textD);
+      const result = await smshosting.sendSms(normPhone, textD);
       if (result.success) {
         markAsSent(trackId, email, 'D');
         markMessageSentForSpamGuard(phone, textD);
@@ -282,6 +286,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         skipped++;
         continue;
       }
+      const normPhone = smshosting.normalizePhone(phone);
+      if (!normPhone || seenPhonesInRun.has(normPhone)) {
+        skipped++;
+        continue;
+      }
+      seenPhonesInRun.add(normPhone);
 
       if (typeof abortCheck === 'function' && abortCheck()) {
         console.log('[Job] Annullato dall\'utente');
@@ -293,7 +303,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         continue;
       }
 
-      const result = await smshosting.sendSms(phone, text);
+      const result = await smshosting.sendSms(normPhone, text);
       if (result.success) {
         markAsSent(campaignId, email, segment);
         markMessageSentForSpamGuard(phone, text);
@@ -317,9 +327,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       if (wasAlreadySent(campaignId, email, 'D')) { skipped++; continue; }
       if (wasSameMessageSentRecently(phone, text)) { skipped++; continue; }
       if (!phone || phone.length < 10 || phone.includes('@')) { skipped++; continue; }
+      const normPhone = smshosting.normalizePhone(phone);
+      if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
+      seenPhonesInRun.add(normPhone);
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
-      const result = await smshosting.sendSms(phone, text);
+      const result = await smshosting.sendSms(normPhone, text);
       if (result.success) {
         markAsSent(campaignId, email, 'D');
         markMessageSentForSpamGuard(phone, text);

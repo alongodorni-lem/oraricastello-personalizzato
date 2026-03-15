@@ -319,12 +319,13 @@
       </div>
       <div class="form-group">
         <label>Invio prova</label>
-        <p class="hint" style="margin-bottom: 0.5rem;">Invia un SMS di test al tuo numero. Usa il testo scritto nel campo sopra (se presente), altrimenti il predefinito Lista B.</p>
+        <p class="hint" style="margin-bottom: 0.5rem;">Invia un SMS di test al tuo numero usando il testo scritto nel campo sopra.</p>
         <label>Numero telefono</label>
         <input type="text" id="testPhone" placeholder="+39 333 1234567" maxlength="20">
       </div>
       <div class="actions">
         <button class="btn btn-secondary" id="btnTest">Invia SMS di prova</button>
+        <button class="btn btn-secondary" id="btnCalcSms">CALCOLA SMS</button>
         <button class="btn btn-primary" id="btnRun" disabled>
           Avvia invio
         </button>
@@ -333,6 +334,7 @@
         </button>
       </div>
       <div class="output" id="testOutput"></div>
+      <p class="hint" id="smsSendableStatus" style="margin-top: 0.5rem;">Calcola SMS per preparare la lista numeri prima dell'invio.</p>
       <div class="output" id="runOutput"></div>
     </div>
     </div>
@@ -450,6 +452,8 @@
 
     const NEWSLETTER_SOURCE_ID = 'uploaded-file';
     let excludeTargetBookedActive = false;
+    let smsSendableCount = 0;
+    let smsSendableReady = false;
 
     function showOutput(el, logs, extra) {
       let html = '';
@@ -462,6 +466,18 @@
       if (extra) html += `<div class="log">${escapeHtml(extra)}</div>`;
       el.innerHTML = html || '';
       el.scrollTop = el.scrollHeight;
+    }
+
+    function resetSmsSendable(forceMessage) {
+      smsSendableCount = 0;
+      smsSendableReady = false;
+      const status = document.getElementById('smsSendableStatus');
+      const btnRun = document.getElementById('btnRun');
+      if (status) {
+        status.textContent = forceMessage || 'Calcola SMS per preparare la lista numeri prima dell\'invio.';
+        status.style.color = '';
+      }
+      if (btnRun) btnRun.disabled = true;
     }
 
     function escapeHtml(s) {
@@ -578,6 +594,10 @@
       }
       if (!smsText) {
         out.innerHTML = '<div class="error">Scrivi prima il testo SMS da inviare.</div>';
+        return;
+      }
+      if (!smsSendableReady || smsSendableCount <= 0) {
+        out.innerHTML = '<div class="error">Prima devi cliccare "CALCOLA SMS" e preparare una lista valida.</div>';
         return;
       }
       if (!confirm('Confermi l\'invio reale degli SMS? Riceverai un\'SMS di conferma al numero admin.')) {
@@ -754,12 +774,14 @@
       const btnExportCsv = document.getElementById('btnExportCsv');
       const btnSendEmail = document.getElementById('btnSendEmail');
       const btnTest = document.getElementById('btnTest');
+      const btnCalcSms = document.getElementById('btnCalcSms');
       if (btnSmsCalc) btnSmsCalc.disabled = busy;
       if (btnRun && busy) btnRun.disabled = true;
       if (btnEmailCalc) btnEmailCalc.disabled = busy;
       if (btnExportCsv && busy) btnExportCsv.disabled = true;
       if (btnSendEmail && busy) btnSendEmail.disabled = true;
       if (btnTest) btnTest.disabled = busy;
+      if (btnCalcSms) btnCalcSms.disabled = busy;
     }
 
     document.getElementById('btnUpdateNewsletter').onclick = async () => {
@@ -916,11 +938,12 @@
 
     document.getElementById('smsText').oninput = function() {
       document.getElementById('smsCharCount').textContent = this.value.length + '/160';
+      resetSmsSendable('Testo modificato: ricalcola SMS prima dell\'invio.');
     };
 
     function resetSmsCalc() {
       document.getElementById('smsCountStatus').textContent = 'Modifica i criteri e clicca Calcola contatti (totale email).';
-      document.getElementById('btnRun').disabled = true;
+      resetSmsSendable('Filtri modificati: clicca "CALCOLA SMS" prima dell\'invio.');
     }
     function resetExcludeTargetState() {
       excludeTargetBookedActive = false;
@@ -1046,11 +1069,11 @@
       const btnRun = document.getElementById('btnRun');
       if (!segs.length) {
         status.textContent = 'Seleziona almeno una sorgente in "Da inserire in lista".';
-        btnRun.disabled = true;
+        resetSmsSendable('Seleziona almeno una sorgente in "Da inserire in lista".');
         return;
       }
       status.textContent = 'Calcolo in corso... può richiedere fino a 10 minuti. Non chiudere la pagina.';
-      btnRun.disabled = true;
+      resetSmsSendable();
       try {
         const baseParams = {
           campaignId: campaignId || 'dummy',
@@ -1083,10 +1106,60 @@
         if (d.error) throw new Error(d.error);
         smsContactCount = d.total || 0;
         status.textContent = smsContactCount + ' contatti totali (email) corrispondono al criterio. In invio SMS verranno usati solo i numeri validi.';
-        btnRun.disabled = smsContactCount === 0;
       } catch (e) {
         status.textContent = 'Errore: ' + e.message;
-        btnRun.disabled = true;
+        resetSmsSendable();
+      }
+    };
+
+    document.getElementById('btnCalcSms').onclick = async () => {
+      const audience = getSmsAudienceSelection();
+      const segs = audience.segments;
+      const smsText = document.getElementById('smsText').value.trim();
+      const status = document.getElementById('smsSendableStatus');
+      const btnCalc = document.getElementById('btnCalcSms');
+      const out = document.getElementById('runOutput');
+      if (!segs.length) {
+        resetSmsSendable('Seleziona almeno una sorgente in "Da inserire in lista".');
+        return;
+      }
+      if (!smsText) {
+        resetSmsSendable('Scrivi prima il testo SMS e poi clicca CALCOLA SMS.');
+        return;
+      }
+      btnCalc.disabled = true;
+      status.textContent = 'Calcolo SMS inviabili in corso...';
+      status.style.color = '';
+      try {
+        const d = await fetchJson(API + '/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            campaignId: NEWSLETTER_SOURCE_ID,
+            segments: segs.length ? segs : ['A', 'B', 'C'],
+            excludeTargetBooked: audience.excludeTargetBooked,
+            dryRun: true,
+            engagementType: getEngagementType(),
+            targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
+            smsText,
+            ...getListDFilters(true)
+          })
+        });
+        if (d.error || !d.success) throw new Error(d.error || 'Calcolo SMS fallito');
+        smsSendableCount = d.result?.inserted || 0;
+        smsSendableReady = smsSendableCount > 0;
+        status.textContent = 'SMS previsti: ' + smsSendableCount + ' (numeri validi, normalizzati e deduplicati).';
+        status.style.color = smsSendableReady ? 'var(--success)' : '';
+        document.getElementById('btnRun').disabled = !smsSendableReady;
+        if (Array.isArray(d.logs) && d.logs.length) showOutput(out, d.logs);
+      } catch (e) {
+        smsSendableReady = false;
+        smsSendableCount = 0;
+        status.textContent = 'Errore: ' + e.message;
+        status.style.color = 'var(--danger)';
+        document.getElementById('btnRun').disabled = true;
+      } finally {
+        btnCalc.disabled = false;
       }
     };
 
