@@ -272,7 +272,7 @@
       <div class="form-group">
         <p class="hint" style="margin-bottom:0.5rem;"><strong>DA ESCLUDERE</strong></p>
         <label>ID evento Planyo (filtro prenotazioni)</label>
-        <input type="text" id="smsEventIds" placeholder="236955" maxlength="80">
+        <input type="text" id="smsEventIds" placeholder="es. 236955" maxlength="80" autocomplete="off">
         <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola (es. 236955, 243693).</p>
         <button type="button" class="btn btn-secondary" id="btnBuildExcludeTarget">ESCLUDI PRENOTATI EVENTO TARGET</button>
         <p class="hint" id="excludeTargetStatus" style="margin-top: 0.5rem;">Esclusione evento target non attiva.</p>
@@ -365,7 +365,7 @@
         </div>
         <div class="form-group">
           <label>ID evento Planyo (filtro prenotazioni)</label>
-          <input type="text" id="emailEventIds" placeholder="236955" maxlength="80">
+          <input type="text" id="emailEventIds" placeholder="es. 236955" maxlength="80" autocomplete="off">
           <p class="hint">Vuoto = tutte le prenotazioni. Con ID = solo prenotazioni per quell'evento. Più eventi: separare con virgola.</p>
         </div>
         <div class="form-group" id="emailListDFilters" style="display:none;">

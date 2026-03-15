@@ -61,7 +61,7 @@ const COL_ALIASES = {
   nome: ['first name', 'firstname', 'nome', 'name', 'prenome'],
   cognome: ['last name', 'lastname', 'cognome', 'surname', 'sobrenome'],
   email: ['email', 'e-mail', 'mail', 'e-mail address', 'email address', 'client email', 'user email', 'contact email', 'posta', 'correo'],
-  telefono: ['phone', 'telefono', 'tel', 'mobile', 'cellulare'],
+  telefono: ['phone', 'phone number', 'mobile', 'mobile number', 'cell', 'cell phone', 'cellphone', 'telefono', 'telefono cellulare', 'telefono mobile', 'tel', 'whatsapp'],
   evento: ['risorsa', 'resource name', 'nome risorsa', 'evento', 'nome evento'],
   idRisorsa: ['idrisorsa', 'id risorsa', 'resource id', 'resource_id', 'id_risorsa'],
   stato: ['status', 'stato', 'state', 'reservation status', 'stato prenotazione'],
@@ -75,6 +75,22 @@ function findColumnIndex(headers, aliases) {
     if (i >= 0) return i;
   }
   return -1;
+}
+
+function isLikelyPhoneHeader(value) {
+  const h = String(value || '').toLowerCase().trim();
+  return /(phone|mobile|cell|telefono|tel|whatsapp)/i.test(h);
+}
+
+function hasAnyUsablePhone(rows) {
+  const data = Array.isArray(rows) ? rows : [];
+  for (const r of data) {
+    const raw = String(r?.telefono || '').trim();
+    if (!raw) continue;
+    const normalized = planyo.normalizePhone(raw) || raw.replace(/[^\d]/g, '');
+    if (normalized && normalized.length >= 9) return true;
+  }
+  return false;
 }
 
 /**
@@ -175,6 +191,11 @@ async function fetchAndParseCsv(csvUrl) {
   const idxCognome = findColumnIndex(headers, COL_ALIASES.cognome);
   const idxEmail = findColumnIndex(headers, COL_ALIASES.email);
   const idxTelefono = findColumnIndex(headers, COL_ALIASES.telefono);
+  const fallbackPhoneIdx = headers
+    .map((h, i) => ({ h, i }))
+    .filter((x) => isLikelyPhoneHeader(x.h))
+    .map((x) => x.i);
+
   const idxEvento = findColumnIndex(headers, COL_ALIASES.evento);
   const idxIdRisorsa = findColumnIndex(headers, COL_ALIASES.idRisorsa);
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
@@ -192,11 +213,22 @@ async function fetchAndParseCsv(csvUrl) {
     const email = get(idxEmail);
     if (!email || !email.includes('@')) continue;
 
+    let telefono = get(idxTelefono);
+    if (!telefono && fallbackPhoneIdx.length) {
+      for (const idx of fallbackPhoneIdx) {
+        const v = get(idx);
+        if (v && v.replace(/[^\d]/g, '').length >= 6) {
+          telefono = v;
+          break;
+        }
+      }
+    }
+
     result.push({
       nome: get(idxNome),
       cognome: get(idxCognome),
       email: email.toLowerCase(),
-      telefono: get(idxTelefono),
+      telefono,
       eventoPrenotato: get(idxEvento),
       idRisorsa: get(idxIdRisorsa),
       stato: get(idxStato),
@@ -290,7 +322,7 @@ async function loadListDFromCsv(filters = {}, excludeListA = {}) {
   try {
     const dataCache = require('./dataCache');
     const cached = dataCache.loadPlanyoCache();
-    if (cached?.contacts?.length) {
+    if (cached?.contacts?.length && hasAnyUsablePhone(cached.contacts)) {
       raw = cached.contacts;
     } else {
       const csvUrl = process.env.PLANYO_LISTD_CSV_URL;

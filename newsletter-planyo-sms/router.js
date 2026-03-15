@@ -63,6 +63,14 @@ function saveUiConfig(obj) {
   fs.writeFileSync(UI_CONFIG_FILE, JSON.stringify(obj, null, 2), 'utf8');
 }
 
+function getConfiguredTargetResourceId() {
+  const cfg = loadUiConfig();
+  const cfgValue = formatTargetResourceIds(cfg.targetResourceId ?? '', '');
+  const legacyDefault = formatTargetResourceIds(config.targetResourceId ?? '', '');
+  if (!cfgValue || (legacyDefault && cfgValue === legacyDefault)) return '';
+  return cfgValue;
+}
+
 function captureLogs(fn) {
   const logs = [];
   const origLog = console.log;
@@ -113,8 +121,7 @@ router.get('/api/test-planyo', async (req, res) => {
     const byEmail = await planyo.loadReservationsByEmail(months);
     const totalRes = [...byEmail.values()].reduce((s, e) => s + (e.reservations?.length || 0), 0);
     const { buildListAAndB } = planyo;
-    const cfg = loadUiConfig();
-    const targetId = cfg.targetResourceId ?? config.targetResourceId;
+    const targetId = getConfiguredTargetResourceId();
     const { listA, listB, emailsInA } = buildListAAndB(byEmail, targetId);
     res.json({
       success: true,
@@ -146,7 +153,7 @@ router.get('/api/preload-planyo', (req, res) => {
 router.get('/api/config', (req, res) => {
   try {
     const cfg = loadUiConfig();
-    const targetResourceId = formatTargetResourceIds(cfg.targetResourceId ?? config.targetResourceId ?? 236955);
+    const targetResourceId = getConfiguredTargetResourceId();
     const mailchimpEngagementType = parseEngagementType(cfg.mailchimpEngagementType || 'open');
     const emailSubject = typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '';
     const emailBody = typeof cfg.emailBody === 'string' ? cfg.emailBody : '';
@@ -185,7 +192,7 @@ router.post('/api/config', (req, res) => {
     saveUiConfig(cfg);
     res.json({
       success: true,
-      targetResourceId: formatTargetResourceIds(cfg.targetResourceId ?? config.targetResourceId ?? 236955),
+      targetResourceId: getConfiguredTargetResourceId(),
       mailchimpEngagementType: parseEngagementType(cfg.mailchimpEngagementType || 'open'),
       emailSubject: typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '',
       emailBody: typeof cfg.emailBody === 'string' ? cfg.emailBody : ''
@@ -329,7 +336,7 @@ router.post('/api/exclude-target/build', async (req, res) => {
       return res.status(400).json({ success: false, error: 'PLANYO_API_KEY non configurata' });
     }
     const targetResourceId = parseTargetResourceIdsParam(req.body?.targetResourceId);
-    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     await validateExcludeTargetSetup(true, targetId);
     const planyo = require('./services/planyo');
     const segmented = await planyo.getCachedListAAndB(targetId, config.monthsLookback);
@@ -367,7 +374,7 @@ router.post('/api/run', async (req, res) => {
   const listDFilters = parseListDFilters(body_);
   const forceReportOnly = !!(listDFilters && listDFilters.eventNameContains);
   const excludeTarget = forceReportOnly ? false : parseBoolParam(excludeTargetBooked);
-  const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+  const targetId = targetResourceId != null ? targetResourceId : getConfiguredTargetResourceId();
   try {
     await validateExcludeTargetSetup(excludeTarget, targetId);
   } catch (err) {
@@ -450,7 +457,7 @@ router.post('/api/check-phone', async (req, res) => {
   try {
     let cid = campaignId;
     if (!cid) cid = dataCache.UPLOADED_CAMPAIGN_ID;
-    const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+    const targetId = targetResourceId != null ? targetResourceId : getConfiguredTargetResourceId();
     const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const result = await checkPhoneInLists(cid, phone, { targetResourceId: targetId, engagementType: mode });
     res.json({
@@ -498,7 +505,7 @@ function parseTargetResourceIdsParam(val) {
   return ids;
 }
 
-function formatTargetResourceIds(idsOrValue, fallback = '236955') {
+function formatTargetResourceIds(idsOrValue, fallback = '') {
   if (Array.isArray(idsOrValue)) return idsOrValue.join(',');
   if (idsOrValue == null) return fallback;
   const str = String(idsOrValue).trim();
@@ -587,7 +594,7 @@ router.post('/api/sms/preview/start', async (req, res) => {
 
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
-    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     const effectiveExcludeTarget = forceReportOnly ? false : excludeTargetBooked;
     await validateExcludeTargetSetup(effectiveExcludeTarget, targetId);
     const jobId = getJobId();
@@ -650,7 +657,7 @@ router.get('/api/sms/preview', async (req, res) => {
 
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
-    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     const effectiveExcludeTarget = forceReportOnly ? false : excludeTargetBooked;
     await validateExcludeTargetSetup(effectiveExcludeTarget, targetId);
     const result = await getSmsPreview(cid, {
@@ -684,7 +691,7 @@ router.post('/api/email/preview/start', (req, res) => {
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const jobId = getJobId();
-    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     previewJobs.set(jobId, { status: 'pending', createdAt: Date.now() });
     cleanupOldJobs();
 
@@ -747,7 +754,7 @@ router.get('/api/email/export', async (req, res) => {
     const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
-    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     const excludeListA = await getListAExclusions(targetId);
     let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
@@ -785,7 +792,7 @@ router.get('/api/email/preview', async (req, res) => {
     const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
-    const targetId = targetResourceId ?? loadUiConfig().targetResourceId ?? config.targetResourceId;
+    const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     const excludeListA = await getListAExclusions(targetId);
     let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
@@ -908,7 +915,7 @@ router.post('/api/email/send', async (req, res) => {
   const maxToSend = Math.min(limitNum, limitInfo.remaining);
 
   const cap = captureLogs(async () => {
-    const targetId = targetResourceId != null ? targetResourceId : (loadUiConfig().targetResourceId ?? config.targetResourceId);
+    const targetId = targetResourceId != null ? targetResourceId : getConfiguredTargetResourceId();
     const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const excludeListA = await getListAExclusions(targetId);
     let data = onlyD ? [] : await buildEmailListData(campaignId || dataCache.UPLOADED_CAMPAIGN_ID, { targetResourceId: targetId, engagementType: mode });
