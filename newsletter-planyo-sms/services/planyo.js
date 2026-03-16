@@ -365,11 +365,13 @@ function decodeHtmlEntities(text) {
 
 async function fetchPublishedResourcesFromPublicPage(siteId) {
   const endpoint = 'https://www.planyo.com/rest/ulap-jsonp.php';
+  const language = (process.env.PLANYO_LANGUAGE || 'IT').toUpperCase();
   const { data } = await axios.get(endpoint, {
     params: {
       ulap_url: 'https://www.planyo.com/rest/planyo-reservations.php',
       mode: 'display_resource_list_code',
       site_id: siteId,
+      language,
       sort: 'name',
       tz_offset: 0,
       html_mode: 1,
