@@ -147,15 +147,13 @@ function findColumn(headers, aliases) {
 function normalizeMobilePhone(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
-  let digits = raw.replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) digits = digits.slice(1);
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.startsWith('39')) {
-    const national = digits.slice(2);
-    if (/^3\d{9}$/.test(national)) return '39' + national;
-    return '';
-  }
+  let digits = raw.replace(/\D/g, '');
+  while (digits.startsWith('00')) digits = digits.slice(2);
+  while (digits.startsWith('3939')) digits = '39' + digits.slice(4);
+  if (/^393\d{9}$/.test(digits)) return digits;
   if (/^3\d{9}$/.test(digits)) return '39' + digits;
+  const tail = digits.match(/3\d{9}$/);
+  if (tail) return '39' + tail[0];
   return '';
 }
 

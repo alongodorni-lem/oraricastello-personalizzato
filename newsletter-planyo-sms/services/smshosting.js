@@ -11,12 +11,21 @@ const BASE_URL = 'https://api.smshosting.it/rest/api';
  * Normalizza numero per SMS (Italia: 39xxxxxxxxxx)
  */
 function normalizePhone(phone) {
-  let p = (phone || '').replace(/\s/g, '');
-  if (p.startsWith('+39')) p = '39' + p.slice(3);
-  else if (p.startsWith('39') && p.length >= 11) p = p;
-  else if (p.startsWith('0') && p.length >= 10) p = '39' + p;
-  else if (p.length >= 9 && !p.startsWith('39')) p = '39' + p;
-  return p.replace(/\D/g, '');
+  const raw = String(phone || '').trim();
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+  while (digits.startsWith('00')) digits = digits.slice(2);
+  while (digits.startsWith('3939')) digits = '39' + digits.slice(4);
+  if (!digits) return '';
+
+  // Gia corretto: 39 + mobile(10 cifre)
+  if (/^393\d{9}$/.test(digits)) return digits;
+  // Mobile nazionale senza prefisso internazionale
+  if (/^3\d{9}$/.test(digits)) return '39' + digits;
+  // Ripulisce casi sporchi tipo "(39) 393..." o "39.393..."
+  const tail = digits.match(/3\d{9}$/);
+  if (tail) return '39' + tail[0];
+  return '';
 }
 
 /**
@@ -38,7 +47,7 @@ async function sendSms(to, text, options = {}) {
     return { success: false, error: 'NO_VALID_RECIPIENT (valore non è un numero)' };
   }
   const phone = normalizePhone(to);
-  if (phone.length < 10) {
+  if (!/^393\d{9}$/.test(phone)) {
     return { success: false, error: 'Numero telefono non valido' };
   }
 
