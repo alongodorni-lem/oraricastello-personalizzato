@@ -1595,6 +1595,21 @@
         const failed = d.result?.failed || 0;
         const remaining = d.result?.remaining || 0;
         out.innerHTML = '<div class="log result-ok">Invio da registro completato. Inviate: ' + sent + (failed ? (' | Fallite: ' + failed) : '') + ' | Rimanenti: ' + remaining + '.</div>';
+        const failureSummary = Array.isArray(d.result?.failureSummary) ? d.result.failureSummary : [];
+        const failureSamples = Array.isArray(d.result?.failureSamples) ? d.result.failureSamples : [];
+        if (failed > 0 && failureSummary.length) {
+          const summaryText = failureSummary
+            .map((x) => (x.reason || 'Errore') + ': ' + (x.count || 0))
+            .join(' | ');
+          out.innerHTML += '<div class="log">Cause fallimento: ' + escapeHtml(summaryText) + '.</div>';
+        }
+        if (failed > 0 && failureSamples.length) {
+          const sampleText = failureSamples
+            .slice(0, 3)
+            .map((x) => (x.email || '-') + ' -> ' + (x.reason || 'errore'))
+            .join(' || ');
+          out.innerHTML += '<div class="log">Esempi: ' + escapeHtml(sampleText) + '.</div>';
+        }
         if (d.result?.registryCsv) {
           const fn = d.result.registryFilename || ('REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv');
           downloadCsvFile(fn, d.result.registryCsv);

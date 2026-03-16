@@ -47,6 +47,22 @@ function basicAuthMiddleware(req, res, next) {
 router.use(basicAuthMiddleware);
 
 let runAbortRequested = false;
+const EMAIL_SEND_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_SEND_DELAY_MS || '1200', 10) || 1200);
+const EMAIL_BATCH_PAUSE_EVERY = Math.max(0, parseInt(process.env.EMAIL_BATCH_PAUSE_EVERY || '40', 10) || 40);
+const EMAIL_BATCH_PAUSE_MS = Math.max(0, parseInt(process.env.EMAIL_BATCH_PAUSE_MS || '15000', 10) || 15000);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitEmailSendThrottle(processedCount) {
+  if (EMAIL_SEND_DELAY_MS > 0) {
+    await sleep(EMAIL_SEND_DELAY_MS);
+  }
+  if (EMAIL_BATCH_PAUSE_EVERY > 0 && EMAIL_BATCH_PAUSE_MS > 0 && processedCount > 0 && processedCount % EMAIL_BATCH_PAUSE_EVERY === 0) {
+    await sleep(EMAIL_BATCH_PAUSE_MS);
+  }
+}
 
 function loadUiConfig() {
   try {
@@ -102,6 +118,48 @@ function captureLogs(fn) {
         console.warn = origWarn;
       }
     }
+  };
+}
+
+function classifyEmailError(err) {
+  const code = String(err?.code || '').trim();
+  const responseCode = String(err?.responseCode || '').trim();
+  const msg = String(err?.message || err || '').replace(/\s+/g, ' ').trim();
+  const raw = [responseCode, code, msg].filter(Boolean).join(' | ');
+  const low = raw.toLowerCase();
+
+  let reason = 'Errore invio provider';
+  if (
+    low.includes('quota') ||
+    low.includes('daily') ||
+    low.includes('limit') ||
+    low.includes('too many') ||
+    low.includes('rate') ||
+    low.includes('4.7.0')
+  ) {
+    reason = 'Limite/quota provider email';
+  } else if (
+    low.includes('invalid recipient') ||
+    low.includes('recipient address rejected') ||
+    low.includes('mailbox unavailable') ||
+    low.includes('no recipients defined') ||
+    low.includes('bad destination mailbox') ||
+    low.includes('5.1.1')
+  ) {
+    reason = 'Indirizzo destinatario non valido';
+  } else if (
+    low.includes('auth') ||
+    low.includes('invalid login') ||
+    low.includes('username and password not accepted') ||
+    low.includes('5.7.8') ||
+    low.includes('535')
+  ) {
+    reason = 'Autenticazione account mittente';
+  }
+
+  return {
+    reason,
+    detail: raw.slice(0, 280) || 'Errore sconosciuto'
   };
 }
 
@@ -1058,7 +1116,7 @@ router.post('/api/email/send', async (req, res) => {
         failed++;
         console.error('[Email] Errore per', row.email, err.message);
       }
-      await new Promise((r) => setTimeout(r, 200));
+      await waitEmailSendThrottle(sent + failed);
     }
 
     if (successfullySent.length > 0) {
@@ -1110,6 +1168,8 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     emailAbortRequested = false;
     let sent = 0;
     let failed = 0;
+    const failureByReason = new Map();
+    const failureSamples = [];
     for (const row of pending) {
       if (emailAbortRequested) break;
       try {
@@ -1123,9 +1183,18 @@ router.post('/api/email/send-from-registry', async (req, res) => {
         row.data_invio_email = toRegistryTimestamp();
       } catch (err) {
         failed++;
+        const info = classifyEmailError(err);
+        failureByReason.set(info.reason, (failureByReason.get(info.reason) || 0) + 1);
+        if (failureSamples.length < 8) {
+          failureSamples.push({
+            email: String(row.email || '').toLowerCase(),
+            reason: info.detail
+          });
+        }
+        console.error('[Email-Registro] Errore invio', row.email, info.detail);
         // Mantiene vuota la data per consentire ritentativo nel prossimo caricamento.
       }
-      await new Promise((r) => setTimeout(r, 200));
+      await waitEmailSendThrottle(sent + failed);
     }
 
     return res.json({
@@ -1135,6 +1204,15 @@ router.post('/api/email/send-from-registry', async (req, res) => {
         failed,
         total: pending.length,
         remaining: rows.filter((r) => !String(r.data_invio_email || '').trim()).length,
+        failureSummary: [...failureByReason.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([reason, count]) => ({ reason, count })),
+        failureSamples,
+        throttle: {
+          perEmailDelayMs: EMAIL_SEND_DELAY_MS,
+          pauseEvery: EMAIL_BATCH_PAUSE_EVERY,
+          pauseMs: EMAIL_BATCH_PAUSE_MS
+        },
         registryCsv: registryRowsToCsv(rows, subject, emailText),
         registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
       },

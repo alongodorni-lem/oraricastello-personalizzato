@@ -11,6 +11,9 @@ const crypto = require('crypto');
 const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-sent.json');
 const BATCH_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-batches.json');
 const DAILY_LIMIT = 500;
+const EMAIL_RETRY_MAX = Math.max(0, parseInt(process.env.EMAIL_RETRY_MAX || '2', 10) || 2);
+const EMAIL_RETRY_BASE_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_RETRY_BASE_DELAY_MS || '2500', 10) || 2500);
+let transporterCache = null;
 
 function createTransporter() {
   const user = process.env.GMAIL_USER;
@@ -22,6 +25,26 @@ function createTransporter() {
     service: 'gmail',
     auth: { user, pass }
   });
+}
+
+function getTransporter() {
+  if (!transporterCache) transporterCache = createTransporter();
+  return transporterCache;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableEmailError(err) {
+  const code = String(err?.code || '').toUpperCase();
+  const responseCode = String(err?.responseCode || '');
+  const msg = String(err?.message || '').toLowerCase();
+  if (['ETIMEDOUT', 'ECONNRESET', 'ESOCKET', 'ECONNECTION'].includes(code)) return true;
+  if (responseCode.startsWith('4')) return true;
+  if (msg.includes('rate') || msg.includes('quota') || msg.includes('too many') || msg.includes('temporar') || msg.includes('try again')) return true;
+  if (msg.includes('4.7.0') || msg.includes('421') || msg.includes('450') || msg.includes('451') || msg.includes('452')) return true;
+  return false;
 }
 
 function loadSentRegistry() {
@@ -81,18 +104,32 @@ function applyTemplate(template, data) {
  * @param {{ to: string, subject: string, body: string, data: object }} opts
  */
 async function sendPersonalizedEmail({ to, subject, body, data }) {
-  const transporter = createTransporter();
+  const transporter = getTransporter();
   const fromAddress = process.env.GMAIL_FROM || process.env.GMAIL_USER;
   const text = applyTemplate(body, data || {});
   const html = text.replace(/\n/g, '<br>');
-
-  await transporter.sendMail({
+  const mail = {
     from: fromAddress,
     to,
     subject: applyTemplate(subject, data || {}),
     text,
     html
-  });
+  };
+  let lastErr = null;
+  for (let attempt = 0; attempt <= EMAIL_RETRY_MAX; attempt++) {
+    try {
+      await transporter.sendMail(mail);
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= EMAIL_RETRY_MAX || !isRetryableEmailError(err)) break;
+      const jitter = Math.floor(Math.random() * 400);
+      const waitMs = EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, attempt) + jitter;
+      await sleep(waitMs);
+    }
+  }
+  if (lastErr) throw lastErr;
 
   const today = new Date().toISOString().slice(0, 10);
   const reg = loadSentRegistry();
@@ -204,7 +241,7 @@ function getSentMapForBatch(batchId) {
  */
 async function sendTestEmail({ to, subject, body }) {
   const data = { nome: 'Mario', cognome: 'Rossi', email: to, eventoPrenotato: 'Castello delle Sorprese' };
-  const transporter = createTransporter();
+  const transporter = getTransporter();
   const fromAddress = process.env.GMAIL_FROM || process.env.GMAIL_USER;
   const text = applyTemplate(body, data);
   const html = text.replace(/\n/g, '<br>');
