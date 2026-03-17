@@ -20,6 +20,8 @@ const config = require('./config/segments');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
 const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
+const SMS_RUN_LOCK_FILE = path.join(__dirname, 'data', 'sms-run-lock.json');
+const SMS_RUN_LOCK_TTL_MS = Math.max(60 * 1000, parseInt(process.env.SMS_RUN_LOCK_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000));
 
 router.use(express.json({ limit: '30mb' }));
 
@@ -78,6 +80,73 @@ function saveUiConfig(obj) {
   const dir = path.dirname(UI_CONFIG_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(UI_CONFIG_FILE, JSON.stringify(obj, null, 2), 'utf8');
+}
+
+function loadSmsRunLockRaw() {
+  try {
+    const data = fs.readFileSync(SMS_RUN_LOCK_FILE, 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSmsRunLock(lock) {
+  const dir = path.dirname(SMS_RUN_LOCK_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(SMS_RUN_LOCK_FILE, JSON.stringify(lock, null, 2), 'utf8');
+}
+
+function clearSmsRunLockFile() {
+  try {
+    if (fs.existsSync(SMS_RUN_LOCK_FILE)) fs.unlinkSync(SMS_RUN_LOCK_FILE);
+  } catch (_) {}
+}
+
+function getActiveSmsRunLock() {
+  const lock = loadSmsRunLockRaw();
+  if (!lock) return null;
+  const now = Date.now();
+  const expiresAtMs = new Date(lock.expiresAt || 0).getTime();
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) {
+    clearSmsRunLockFile();
+    return null;
+  }
+  return lock;
+}
+
+function acquireSmsRunLock() {
+  const active = getActiveSmsRunLock();
+  if (active) return { ok: false, lock: active };
+  const now = Date.now();
+  const token = `smsrun-${process.pid}-${now}-${Math.random().toString(36).slice(2, 10)}`;
+  const lock = {
+    token,
+    pid: process.pid,
+    startedAt: new Date(now).toISOString(),
+    lastSeenAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + SMS_RUN_LOCK_TTL_MS).toISOString()
+  };
+  saveSmsRunLock(lock);
+  return { ok: true, lock };
+}
+
+function refreshSmsRunLock(token) {
+  const current = loadSmsRunLockRaw();
+  if (!current || current.token !== token) return false;
+  const now = Date.now();
+  current.lastSeenAt = new Date(now).toISOString();
+  current.expiresAt = new Date(now + SMS_RUN_LOCK_TTL_MS).toISOString();
+  saveSmsRunLock(current);
+  return true;
+}
+
+function releaseSmsRunLock(token) {
+  const current = loadSmsRunLockRaw();
+  if (!current) return;
+  if (token && current.token !== token) return;
+  clearSmsRunLockFile();
 }
 
 function getConfiguredTargetResourceId() {
@@ -444,11 +513,27 @@ router.post('/api/run', async (req, res) => {
     });
   }
 
+  const lockAcq = acquireSmsRunLock();
+  if (!lockAcq.ok) {
+    return res.status(409).json({
+      success: false,
+      error: 'Invio SMS già in corso (lock server attivo). Attendi il completamento prima di avviarne un altro.',
+      runningSince: lockAcq.lock?.startedAt || null
+    });
+  }
+  const lockToken = lockAcq.lock.token;
+  const heartbeat = setInterval(() => {
+    refreshSmsRunLock(lockToken);
+  }, Math.min(30000, Math.max(5000, Math.floor(SMS_RUN_LOCK_TTL_MS / 4))));
+  if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
   smsRunInProgress = true;
   const body_ = req.body || {};
   const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, prepareOnly = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
   const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
   if (!customSmsText) {
+    clearInterval(heartbeat);
+    releaseSmsRunLock(lockToken);
     smsRunInProgress = false;
     return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
   }
@@ -459,6 +544,8 @@ router.post('/api/run', async (req, res) => {
   try {
     await validateExcludeTargetSetup(excludeTarget, targetId);
   } catch (err) {
+    clearInterval(heartbeat);
+    releaseSmsRunLock(lockToken);
     smsRunInProgress = false;
     return res.status(400).json({ success: false, error: err.message });
   }
@@ -502,12 +589,19 @@ router.post('/api/run', async (req, res) => {
     const out = await cap.run();
     res.json({ ...out, aborted: runAbortRequested });
   } finally {
+    clearInterval(heartbeat);
+    releaseSmsRunLock(lockToken);
     smsRunInProgress = false;
   }
 });
 
 router.get('/api/run/state', (_req, res) => {
-  res.json({ success: true, running: smsRunInProgress });
+  const lock = getActiveSmsRunLock();
+  res.json({
+    success: true,
+    running: !!(smsRunInProgress || lock),
+    runningSince: lock?.startedAt || null
+  });
 });
 
 router.post('/api/run/abort', (_req, res) => {
