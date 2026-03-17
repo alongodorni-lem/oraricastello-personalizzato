@@ -47,6 +47,7 @@ function basicAuthMiddleware(req, res, next) {
 router.use(basicAuthMiddleware);
 
 let runAbortRequested = false;
+let smsRunInProgress = false;
 const EMAIL_SEND_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_SEND_DELAY_MS || '1200', 10) || 1200);
 const EMAIL_BATCH_PAUSE_EVERY = Math.max(0, parseInt(process.env.EMAIL_BATCH_PAUSE_EVERY || '40', 10) || 40);
 const EMAIL_BATCH_PAUSE_MS = Math.max(0, parseInt(process.env.EMAIL_BATCH_PAUSE_MS || '15000', 10) || 15000);
@@ -436,10 +437,19 @@ router.get('/api/update-prenotazioni/status/:jobId', (req, res) => {
 
 router.post('/api/run', async (req, res) => {
   res.setTimeout(30 * 60 * 1000);
+  if (smsRunInProgress) {
+    return res.status(409).json({
+      success: false,
+      error: 'Invio SMS già in corso. Attendi il completamento prima di avviarne un altro.'
+    });
+  }
+
+  smsRunInProgress = true;
   const body_ = req.body || {};
   const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, prepareOnly = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
   const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
   if (!customSmsText) {
+    smsRunInProgress = false;
     return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
   }
   const listDFilters = parseListDFilters(body_);
@@ -449,6 +459,7 @@ router.post('/api/run', async (req, res) => {
   try {
     await validateExcludeTargetSetup(excludeTarget, targetId);
   } catch (err) {
+    smsRunInProgress = false;
     return res.status(400).json({ success: false, error: err.message });
   }
 
@@ -487,8 +498,16 @@ router.post('/api/run', async (req, res) => {
     return total;
   });
 
-  const out = await cap.run();
-  res.json({ ...out, aborted: runAbortRequested });
+  try {
+    const out = await cap.run();
+    res.json({ ...out, aborted: runAbortRequested });
+  } finally {
+    smsRunInProgress = false;
+  }
+});
+
+router.get('/api/run/state', (_req, res) => {
+  res.json({ success: true, running: smsRunInProgress });
 });
 
 router.post('/api/run/abort', (_req, res) => {

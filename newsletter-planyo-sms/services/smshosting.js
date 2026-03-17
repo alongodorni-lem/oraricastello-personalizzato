@@ -6,6 +6,8 @@
 const axios = require('axios');
 
 const BASE_URL = 'https://api.smshosting.it/rest/api';
+const GSM7_BASIC = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ`¿abcdefghijklmnopqrstuvwxyzäöñüà";
+const GSM7_EXT = "^{}\\[~]|€";
 
 /**
  * Normalizza numero per SMS (Italia: 39xxxxxxxxxx)
@@ -26,6 +28,48 @@ function normalizePhone(phone) {
   const tail = digits.match(/3\d{9}$/);
   if (tail) return '39' + tail[0];
   return '';
+}
+
+function normalizeSmsText(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u2018|\u2019/g, "'")
+    .replace(/\u201C|\u201D/g, '"')
+    .replace(/\u2013|\u2014/g, '-')
+    .replace(/\u2026/g, '...')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function getGsm7Units(text) {
+  let units = 0;
+  for (const ch of String(text || '')) {
+    if (GSM7_BASIC.includes(ch)) units += 1;
+    else if (GSM7_EXT.includes(ch)) units += 2;
+    else return -1;
+  }
+  return units;
+}
+
+function prepareSingleSmsText(text) {
+  const raw = normalizeSmsText(text);
+  const gsmUnits = getGsm7Units(raw);
+  if (gsmUnits >= 0) {
+    // Single-part GSM-7: max 160 units
+    let out = '';
+    let used = 0;
+    for (const ch of raw) {
+      const u = GSM7_EXT.includes(ch) ? 2 : 1;
+      if (used + u > 160) break;
+      out += ch;
+      used += u;
+    }
+    return { text: out, encoding: 'GSM-7', truncated: out !== raw };
+  }
+
+  // Single-part UCS-2: max 70 chars
+  const out = [...raw].slice(0, 70).join('');
+  return { text: out, encoding: 'UCS-2', truncated: out !== raw };
 }
 
 /**
@@ -51,7 +95,8 @@ async function sendSms(to, text, options = {}) {
     return { success: false, error: 'Numero telefono non valido' };
   }
 
-  const bodyParams = new URLSearchParams({ to: phone, text: (text || '').slice(0, 480) });
+  const prepared = prepareSingleSmsText(text || '');
+  const bodyParams = new URLSearchParams({ to: phone, text: prepared.text });
   // Mittente: usa alias solo se SMSHOSTING_USE_ALIAS=true, altrimenti mittente numerico (default)
   const useAlias = process.env.SMSHOSTING_USE_ALIAS === 'true' || process.env.SMSHOSTING_USE_ALIAS === '1';
   const from = (options && (options.from === '' || options.from === false)) ? '' : (useAlias ? (options?.from || process.env.SMSHOSTING_FROM) : '');
@@ -91,7 +136,9 @@ async function sendSms(to, text, options = {}) {
       smsInserted: rawInserted,
       smsNotInserted: rawNotInserted,
       error,
-      isDuplicate
+      isDuplicate,
+      encoding: prepared.encoding,
+      truncated: prepared.truncated
     };
   } catch (err) {
     const msg = err.response?.data?.errorMsg || err.response?.data?.message || err.message;

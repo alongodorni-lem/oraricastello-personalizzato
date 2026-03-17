@@ -721,6 +721,7 @@
       out.innerHTML = '<div class="log">Avvio in corso...</div>';
 
       const controller = new AbortController();
+      let keepLockedAsRunning = false;
       btnAbort.onclick = () => {
         btnAbort.disabled = true;
         fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
@@ -755,13 +756,34 @@
         if (e.name === 'AbortError') {
           out.innerHTML += '<div class="log warn">Operazione annullata. Gli SMS inviati fino a questo momento sono stati registrati.</div>';
         } else {
-          out.innerHTML += `<div class="error">Errore: ${escapeHtml(e.message)}</div>`;
+          let msg = `Errore: ${escapeHtml(e.message)}`;
+          if (/failed to fetch/i.test(String(e.message || ''))) {
+            try {
+              const stateRes = await fetch(API + '/api/run/state');
+              const state = await stateRes.json();
+              if (state && state.running) {
+                keepLockedAsRunning = true;
+                msg = 'Connessione interrotta durante l\'invio, ma il job sembra ancora in corso sul server. Non riavviare l\'invio: attendi e usa ANNULLA se necessario.';
+                btn.textContent = 'Invio in corso...';
+                btn.disabled = true;
+                btnAbort.style.display = 'inline-flex';
+                btnAbort.disabled = false;
+                btnAbort.onclick = () => {
+                  btnAbort.disabled = true;
+                  fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
+                };
+              }
+            } catch (_) {}
+          }
+          out.innerHTML += `<div class="error">${escapeHtml(msg)}</div>`;
         }
       }
-      btn.disabled = false;
-      btn.textContent = 'Avvia invio';
-      btnAbort.style.display = 'none';
-      btnAbort.onclick = null;
+      if (!keepLockedAsRunning) {
+        btn.disabled = false;
+        btn.textContent = 'Avvia invio';
+        btnAbort.style.display = 'none';
+        btnAbort.onclick = null;
+      }
     };
 
     document.getElementById('btnTest').onclick = async () => {
