@@ -169,6 +169,7 @@ async function loadReservationsByEmail(monthsLookback = 18) {
       const entry = byEmail.get(email);
       entry.reservations.push({
         reservation_id: res.reservation_id || res.id || null,
+        user_id: res.user_id != null ? Number(res.user_id) : null,
         resource_id: resourceId,
         start_time: res.start_time,
         resource_name: res.resource_name || res.resource?.name || res.name
@@ -579,6 +580,7 @@ async function findContactByEmail(email, monthsLookback = 18) {
         foundVia: 'list_reservations_user_email',
         reservations: rows.map((r) => ({
           reservation_id: r.reservation_id || r.id || null,
+          user_id: r.user_id != null ? Number(r.user_id) : null,
           resource_id: r.resource_id || r.resource?.id || null,
           start_time: r.start_time || null,
           resource_name: r.resource_name || r.name || r.resource?.name || ''
@@ -628,12 +630,18 @@ async function findContactByEmail(email, monthsLookback = 18) {
         const modeLabel = mode.list_created_by_admin ? 'admin_users' : 'reservation_users';
         console.log('[Planyo][Privacy] list_users lookup', queryEmail === normEmail ? 'exact' : 'wildcard', modeLabel, 'users:', users.length, 'elapsed_ms:', elapsed);
         if (users.length > 0) {
+          const u0 = users[0];
+          const rawUid = u0 && typeof u0 === 'object' && !Array.isArray(u0)
+            ? (u0.id ?? u0.user_id)
+            : null;
+          const planyoUserId = Number(rawUid);
           return {
             source: 'planyo',
             status: 'found',
             found: true,
             email: normEmail,
             foundVia: `${queryEmail === normEmail ? 'list_users_exact' : 'list_users_wildcard'}_${modeLabel}`,
+            planyoUserId: Number.isInteger(planyoUserId) && planyoUserId > 0 ? planyoUserId : undefined,
             reservations: []
           };
         }
@@ -646,6 +654,42 @@ async function findContactByEmail(email, monthsLookback = 18) {
   return { source: 'planyo', status: 'not_found', found: false };
 }
 
+/**
+ * Estrae user_id Planyo dal risultato findContactByEmail (prenotazioni o list_users).
+ */
+function extractPlanyoUserIdFromFound(found) {
+  if (!found || !found.found) return null;
+  const direct = Number(found.planyoUserId);
+  if (Number.isInteger(direct) && direct > 0) return direct;
+  for (const r of found.reservations || []) {
+    const uid = Number(r?.user_id);
+    if (Number.isInteger(uid) && uid > 0) return uid;
+  }
+  return null;
+}
+
+/**
+ * Metodo ufficiale Planyo per eliminare un cliente dall'anagrafica (vedi API remove_user).
+ * Consentito solo se non ha prenotazioni attive o solo prenotazioni cancellate sul sito.
+ */
+async function tryRemovePlanyoUser(siteId, userId) {
+  await callPlanyoAPI('remove_user', { site_id: siteId, user_id: userId });
+  return true;
+}
+
+/**
+ * Per richieste privacy: dopo remove_user fallito, si possono eliminare le prenotazioni note
+ * e ritentare remove_user. Disabilitabile con PLANYO_PRIVACY_SKIP_RESERVATION_DELETE=true.
+ */
+function privacyAllowsReservationCascade() {
+  return String(process.env.PLANYO_PRIVACY_SKIP_RESERVATION_DELETE || '').toLowerCase() !== 'true';
+}
+
+/** Legacy: forzare solo remove_user senza toccare prenotazioni (opzionale) */
+function privacyLegacyReservationDeleteFlag() {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env.PLANYO_PRIVACY_ALLOW_RESERVATION_DELETE || '').toLowerCase());
+}
+
 async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
   if (!process.env.PLANYO_API_KEY) return { source: 'planyo', status: 'error', reason: 'PLANYO_API_KEY non configurata' };
   const found = await findContactByEmail(email, monthsLookback);
@@ -653,6 +697,9 @@ async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
 
   const siteId = process.env.PLANYO_SITE_ID || '8895';
   const normEmail = normalizeEmail(email);
+  const userId = extractPlanyoUserIdFromFound(found);
+
+  // Tentativi legacy / non documentati (alcuni siti potrebbero avere estensioni)
   const customerDeleteMethods = ['delete_customer_data', 'delete_customer'];
   for (const method of customerDeleteMethods) {
     try {
@@ -661,20 +708,41 @@ async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
     } catch (_) {}
   }
 
-  const allowReservationDelete = String(process.env.PLANYO_PRIVACY_ALLOW_RESERVATION_DELETE || '').toLowerCase();
-  if (!['1', 'true', 'yes', 'on'].includes(allowReservationDelete)) {
-    return {
-      source: 'planyo',
-      status: 'found_not_deleted',
-      reason: 'Contatto trovato su Planyo ma delete diretto non supportato dal metodo configurato'
-    };
+  // Metodo ufficiale documentato: remove_user (richiede user_id)
+  if (userId) {
+    try {
+      await tryRemovePlanyoUser(siteId, userId);
+      return { source: 'planyo', status: 'deleted', method: 'remove_user', userId };
+    } catch (err) {
+      console.warn('[Planyo][Privacy] remove_user fallito (user_id=' + userId + '):', err.message);
+    }
   }
 
   const reservationIds = [...new Set((found.reservations || [])
     .map((r) => Number(r?.reservation_id || 0))
     .filter((n) => Number.isInteger(n) && n > 0))];
+
+  const allowCascade = privacyAllowsReservationCascade() || privacyLegacyReservationDeleteFlag();
+
+  if (!allowCascade) {
+    const hint = userId
+      ? 'Planyo: remove_user non riuscito (es. prenotazioni attive). Imposta PLANYO_PRIVACY_SKIP_RESERVATION_DELETE=false (default) per eliminare prenotazioni note e ritentare, oppure PLANYO_PRIVACY_ALLOW_RESERVATION_DELETE=true.'
+      : 'Planyo: nessun user_id disponibile per remove_user; verifica che le prenotazioni restituiscano user_id.';
+    return {
+      source: 'planyo',
+      status: 'found_not_deleted',
+      reason: hint
+    };
+  }
+
   if (reservationIds.length === 0) {
-    return { source: 'planyo', status: 'found_not_deleted', reason: 'Nessun reservation_id disponibile per cancellazione' };
+    return {
+      source: 'planyo',
+      status: 'found_not_deleted',
+      reason: userId
+        ? 'remove_user non riuscito e nessun reservation_id da elaborare'
+        : 'Nessun user_id né reservation_id disponibili per la cancellazione Planyo'
+    };
   }
 
   let deleted = 0;
@@ -692,9 +760,36 @@ async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
     else failed++;
   }
 
-  if (deleted > 0 && failed === 0) return { source: 'planyo', status: 'deleted', deletedReservations: deleted };
-  if (deleted > 0) return { source: 'planyo', status: 'found_not_deleted', reason: `Cancellate ${deleted}, non cancellate ${failed}` };
-  return { source: 'planyo', status: 'found_not_deleted', reason: 'Metodo delete non riuscito su Planyo' };
+  if (userId) {
+    try {
+      await tryRemovePlanyoUser(siteId, userId);
+      return {
+        source: 'planyo',
+        status: 'deleted',
+        method: 'remove_user_after_reservations',
+        userId,
+        deletedReservations: deleted,
+        failedReservations: failed
+      };
+    } catch (err) {
+      console.warn('[Planyo][Privacy] remove_user dopo prenotazioni fallito:', err.message);
+      if (deleted > 0) {
+        return {
+          source: 'planyo',
+          status: 'found_not_deleted',
+          reason: `Prenotazioni elaborate (${deleted} ok, ${failed} no) ma remove_user ancora fallito: ${err.message}`,
+          deletedReservations: deleted,
+          failedReservations: failed
+        };
+      }
+    }
+  }
+
+  if (deleted > 0 && failed === 0) return { source: 'planyo', status: 'deleted', deletedReservations: deleted, method: 'delete_reservation_only' };
+  if (deleted > 0) {
+    return { source: 'planyo', status: 'found_not_deleted', reason: `Cancellate ${deleted}, non cancellate ${failed}` };
+  }
+  return { source: 'planyo', status: 'found_not_deleted', reason: 'Metodo delete prenotazioni non riuscito su Planyo' };
 }
 
 module.exports = {
