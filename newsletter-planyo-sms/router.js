@@ -233,6 +233,39 @@ function classifyEmailError(err) {
   };
 }
 
+function normalizePrivacyEmail(email) {
+  return String(email || '').toLowerCase().trim();
+}
+
+function sourceLabel(key) {
+  if (key === 'mailchimp') return 'Mailchimp';
+  if (key === 'planyo') return 'Planyo';
+  if (key === 'smshosting') return 'SMS Hosting';
+  return key;
+}
+
+function buildPrivacyMessage(resultsBySource) {
+  const deleted = [];
+  const notFound = [];
+  const foundNotDeleted = [];
+  const errors = [];
+  for (const [key, r] of Object.entries(resultsBySource || {})) {
+    const label = sourceLabel(key);
+    if (r?.status === 'deleted') deleted.push(label);
+    else if (r?.status === 'not_found') notFound.push(label);
+    else if (r?.status === 'found_not_deleted') foundNotDeleted.push(label);
+    else if (r?.status === 'error') errors.push(label);
+  }
+
+  const chunks = [];
+  if (deleted.length) chunks.push('Contatto cancellato da ' + deleted.join(' - '));
+  if (notFound.length) chunks.push('contatto non trovato in ' + notFound.join(' - '));
+  if (foundNotDeleted.length) chunks.push('contatto trovato in ' + foundNotDeleted.join(' - ') + ' ma non cancellato');
+  if (errors.length) chunks.push('errore su ' + errors.join(' - '));
+  if (!chunks.length) return 'Nessuna operazione eseguita.';
+  return chunks.join(' | ');
+}
+
 // Pagina principale
 router.get('/', (req, res) => {
   res.sendFile(path.join(PUBLIC_PATH, 'index.html'));
@@ -287,6 +320,53 @@ router.get('/api/planyo/resources', async (_req, res) => {
     res.json({ success: true, resources });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/api/privacy/delete', async (req, res) => {
+  try {
+    const email = normalizePrivacyEmail(req.body?.email);
+    const phoneRaw = String(req.body?.phone || '').trim();
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ success: false, error: 'Email contatto obbligatoria e valida.' });
+    }
+
+    const [mailchimpResult, planyoResult] = await Promise.all([
+      mailchimp.deleteMemberByEmailForPrivacy(email).catch((err) => ({ source: 'mailchimp', status: 'error', reason: err.message })),
+      require('./services/planyo').deleteContactByEmailForPrivacy(email, config.monthsLookback)
+        .catch((err) => ({ source: 'planyo', status: 'error', reason: err.message }))
+    ]);
+
+    const smsPhoneCandidate = phoneRaw
+      || (() => {
+        const mc = dataCache.loadMailchimpCache();
+        const c = mc?.contacts?.[email];
+        return String(c?.telefono || c?.cellulare || '').trim();
+      })();
+
+    const cacheResult = dataCache.removeContactFromCaches(email, smsPhoneCandidate || phoneRaw);
+
+    const smsResult = await smshosting.deleteContactByPhoneForPrivacy(smsPhoneCandidate)
+      .catch((err) => ({ source: 'smshosting', status: 'error', reason: err.message }));
+
+    const results = {
+      mailchimp: mailchimpResult,
+      planyo: planyoResult,
+      smshosting: smsResult
+    };
+    const message = buildPrivacyMessage(results);
+    const hasError = Object.values(results).some((r) => r?.status === 'error');
+
+    return res.status(hasError ? 207 : 200).json({
+      success: !hasError,
+      email,
+      phone: smshosting.normalizePhone(smsPhoneCandidate || ''),
+      message,
+      results,
+      cache: cacheResult
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

@@ -146,6 +146,98 @@ async function sendSms(to, text, options = {}) {
   }
 }
 
+function boolLike(v) {
+  const s = String(v ?? '').toLowerCase().trim();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'ok' || s === 'deleted' || s === 'success';
+}
+
+function looksLikeNotFoundPayload(data) {
+  const raw = String(data?.message || data?.errorMsg || data?.statusDetail || data?.error || '').toLowerCase();
+  return raw.includes('not found') || raw.includes('not_exist') || raw.includes('inesistente') || raw.includes('missing');
+}
+
+async function tryDeleteWithEndpoint(url, auth, phone) {
+  const payloads = [
+    new URLSearchParams({ phone }).toString(),
+    new URLSearchParams({ msisdn: phone }).toString(),
+    new URLSearchParams({ recipient: phone }).toString()
+  ];
+  for (const body of payloads) {
+    const res = await axios.post(url, body, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      auth,
+      timeout: 20000,
+      validateStatus: (s) => s < 500
+    });
+    const data = res.data || {};
+    if (res.status === 404 || looksLikeNotFoundPayload(data)) return { status: 'not_found' };
+    if (res.status >= 400) continue;
+    if (boolLike(data.success) || boolLike(data.deleted) || Number(data.deleted) > 0 || Number(data.removed) > 0) {
+      return { status: 'deleted' };
+    }
+    // HTTP OK ma nessun indicatore affidabile: consideriamo trovato ma non cancellato
+    return { status: 'found_not_deleted', reason: data.message || data.errorMsg || 'Delete non confermato dal provider' };
+  }
+  return { status: 'found_not_deleted', reason: 'Delete endpoint non ha confermato la cancellazione' };
+}
+
+async function deleteContactByPhoneForPrivacy(phone) {
+  const authKey = process.env.SMSHOSTING_AUTH_KEY;
+  const authSecret = process.env.SMSHOSTING_AUTH_SECRET;
+  if (!authKey || !authSecret) {
+    return { source: 'smshosting', status: 'error', reason: 'SMSHOSTING_AUTH_KEY/SMSHOSTING_AUTH_SECRET non configurate' };
+  }
+  const normalized = normalizePhone(phone);
+  if (!normalized) {
+    return { source: 'smshosting', status: 'not_found', reason: 'Cellulare non disponibile o non valido' };
+  }
+
+  const auth = { username: authKey, password: authSecret };
+  const configuredDeleteUrl = String(process.env.SMSHOSTING_LIST_DELETE_URL || '').trim();
+  const configuredLookupUrl = String(process.env.SMSHOSTING_LIST_LOOKUP_URL || '').trim();
+
+  // Se disponibile, prima prova lookup dedicato per distinguere not_found.
+  if (configuredLookupUrl) {
+    try {
+      const r = await axios.post(configuredLookupUrl, new URLSearchParams({ phone: normalized }).toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        auth,
+        timeout: 20000,
+        validateStatus: (s) => s < 500
+      });
+      if (r.status === 404 || looksLikeNotFoundPayload(r.data || {})) {
+        return { source: 'smshosting', status: 'not_found' };
+      }
+    } catch (_) {}
+  }
+
+  const candidates = [];
+  if (configuredDeleteUrl) candidates.push(configuredDeleteUrl);
+  candidates.push(
+    `${BASE_URL}/contacts/delete`,
+    `${BASE_URL}/contact/delete`,
+    `${BASE_URL}/addressbook/contact/delete`
+  );
+
+  for (const url of candidates) {
+    try {
+      const out = await tryDeleteWithEndpoint(url, auth, normalized);
+      if (out.status === 'deleted') return { source: 'smshosting', status: 'deleted', phone: normalized };
+      if (out.status === 'not_found') return { source: 'smshosting', status: 'not_found', phone: normalized };
+      if (out.status === 'found_not_deleted') {
+        return { source: 'smshosting', status: 'found_not_deleted', phone: normalized, reason: out.reason };
+      }
+    } catch (_) {}
+  }
+
+  return {
+    source: 'smshosting',
+    status: 'found_not_deleted',
+    phone: normalized,
+    reason: 'API gestione liste SMS Hosting non disponibile o endpoint delete non configurato'
+  };
+}
+
 // Log configurazione alias all'avvio (visibile nei log Render)
 if (process.env.NODE_ENV !== 'test') {
   const useAlias = process.env.SMSHOSTING_USE_ALIAS === 'true' || process.env.SMSHOSTING_USE_ALIAS === '1';
@@ -153,4 +245,8 @@ if (process.env.NODE_ENV !== 'test') {
   console.log('[Smshosting] Mittente:', useAlias && from ? `alfanumerico (${from})` : 'numerico', '| USE_ALIAS=', process.env.SMSHOSTING_USE_ALIAS || '(vuoto)', '| FROM=', from ? 'impostato' : '(vuoto)');
 }
 
-module.exports = { sendSms, normalizePhone };
+module.exports = {
+  sendSms,
+  normalizePhone,
+  deleteContactByPhoneForPrivacy
+};

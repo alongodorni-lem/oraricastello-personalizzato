@@ -3,6 +3,7 @@
  * https://mailchimp.com/developer/marketing/api/open-reports/
  */
 const axios = require('axios');
+const crypto = require('crypto');
 
 const BASE_URL = 'https://us21.api.mailchimp.com/3.0';
 const RUNTIME_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -155,6 +156,150 @@ async function getCampaignClickEmails(campaignId) {
 
 function normalizeEngagementType(type) {
   return String(type || 'open').toLowerCase().trim() === 'click' ? 'click' : 'open';
+}
+
+function normalizeEmail(email) {
+  return String(email || '').toLowerCase().trim();
+}
+
+function getSubscriberHash(email) {
+  return crypto.createHash('md5').update(normalizeEmail(email)).digest('hex');
+}
+
+async function getAllAudienceListIds(apiKey) {
+  const baseUrl = getBaseUrl(apiKey);
+  let offset = 0;
+  const count = 100;
+  const ids = new Set();
+  while (true) {
+    const res = await axios.get(`${baseUrl}/lists`, {
+      params: { count, offset },
+      auth: { username: 'anystring', password: apiKey },
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000
+    });
+    const lists = Array.isArray(res.data?.lists) ? res.data.lists : [];
+    for (const l of lists) {
+      const id = String(l?.id || '').trim();
+      if (id) ids.add(id);
+    }
+    if (lists.length < count) break;
+    offset += count;
+    if (offset > 5000) break;
+  }
+  return [...ids];
+}
+
+async function getCandidateListIdsForPrivacy(apiKey) {
+  const ids = new Set();
+  const envListId = String(process.env.MAILCHIMP_LIST_ID || '').trim();
+  if (envListId) ids.add(envListId);
+  try {
+    const dataCache = require('./dataCache');
+    const cached = dataCache.loadMailchimpCache();
+    const campaigns = new Set([
+      ...Object.keys(cached?.campaignEngagements?.open || {}),
+      ...Object.keys(cached?.campaignEngagements?.click || {})
+    ]);
+    for (const campaignId of campaigns) {
+      try {
+        const listId = await getCampaignListId(campaignId);
+        if (listId) ids.add(String(listId).trim());
+      } catch (_) {}
+    }
+  } catch (_) {}
+  if (ids.size === 0) {
+    const all = await getAllAudienceListIds(apiKey);
+    all.forEach((id) => ids.add(id));
+  }
+  return [...ids];
+}
+
+async function findMemberByEmailAcrossLists(email) {
+  const apiKey = process.env.MAILCHIMP_API_KEY;
+  if (!apiKey) throw new Error('MAILCHIMP_API_KEY non configurata');
+  const normEmail = normalizeEmail(email);
+  if (!normEmail || !normEmail.includes('@')) {
+    return { found: false, status: 'not_found', reason: 'Email non valida' };
+  }
+  const baseUrl = getBaseUrl(apiKey);
+  const hash = getSubscriberHash(normEmail);
+  const listIds = await getCandidateListIdsForPrivacy(apiKey);
+
+  for (const listId of listIds) {
+    try {
+      const res = await axios.get(`${baseUrl}/lists/${encodeURIComponent(listId)}/members/${hash}`, {
+        auth: { username: 'anystring', password: apiKey },
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 60000,
+        validateStatus: (s) => s < 500
+      });
+      if (res.status === 200) {
+        return {
+          found: true,
+          status: 'found',
+          listId,
+          subscriberHash: hash,
+          memberStatus: String(res.data?.status || '').trim()
+        };
+      }
+      if (res.status !== 404) {
+        return {
+          found: false,
+          status: 'error',
+          reason: `Mailchimp lookup ${res.status}`
+        };
+      }
+    } catch (err) {
+      return { found: false, status: 'error', reason: err.message };
+    }
+  }
+
+  return { found: false, status: 'not_found' };
+}
+
+async function deleteMemberByEmailForPrivacy(email) {
+  const apiKey = process.env.MAILCHIMP_API_KEY;
+  if (!apiKey) return { source: 'mailchimp', status: 'error', reason: 'MAILCHIMP_API_KEY non configurata' };
+  const found = await findMemberByEmailAcrossLists(email);
+  if (!found.found) {
+    if (found.status === 'error') return { source: 'mailchimp', status: 'error', reason: found.reason };
+    return { source: 'mailchimp', status: 'not_found' };
+  }
+
+  const baseUrl = getBaseUrl(apiKey);
+  const listId = found.listId;
+  const hash = found.subscriberHash;
+  const headers = { 'Content-Type': 'application/json' };
+  const auth = { username: 'anystring', password: apiKey };
+
+  try {
+    const perm = await axios.post(
+      `${baseUrl}/lists/${encodeURIComponent(listId)}/members/${hash}/actions/delete-permanent`,
+      {},
+      { auth, headers, timeout: 60000, validateStatus: (s) => s < 500 }
+    );
+    if (perm.status === 204 || perm.status === 200) {
+      return { source: 'mailchimp', status: 'deleted', listId };
+    }
+    if (perm.status === 404) return { source: 'mailchimp', status: 'not_found', listId };
+  } catch (_) {}
+
+  try {
+    const del = await axios.delete(`${baseUrl}/lists/${encodeURIComponent(listId)}/members/${hash}`, {
+      auth,
+      headers,
+      timeout: 60000,
+      validateStatus: (s) => s < 500
+    });
+    if (del.status === 204 || del.status === 200) {
+      return { source: 'mailchimp', status: 'deleted', listId };
+    }
+    if (del.status === 404) return { source: 'mailchimp', status: 'not_found', listId };
+    return { source: 'mailchimp', status: 'found_not_deleted', listId, reason: `Delete HTTP ${del.status}` };
+  } catch (err) {
+    return { source: 'mailchimp', status: 'found_not_deleted', listId, reason: err.message };
+  }
 }
 
 /**
@@ -431,5 +576,7 @@ module.exports = {
   getMemberDetailsForEmails,
   getMemberDetailsForEmailsWithCache,
   getBaseUrl,
-  getDatacenter
+  getDatacenter,
+  findMemberByEmailAcrossLists,
+  deleteMemberByEmailForPrivacy
 };

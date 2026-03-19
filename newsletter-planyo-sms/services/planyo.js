@@ -89,6 +89,10 @@ function parseTargetResourceIds(targetResourceId) {
     .filter((n) => !isNaN(n) && n > 0);
 }
 
+function normalizeEmail(email) {
+  return String(email || '').toLowerCase().trim();
+}
+
 const RESERVATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
 let reservationsCache = null;
 let reservationsCacheExpiry = 0;
@@ -152,6 +156,7 @@ async function loadReservationsByEmail(monthsLookback = 18) {
       }
       const entry = byEmail.get(email);
       entry.reservations.push({
+        reservation_id: res.reservation_id || res.id || null,
         resource_id: resourceId,
         start_time: res.start_time,
         resource_name: res.resource_name || res.resource?.name || res.name
@@ -517,6 +522,72 @@ async function getCachedListAAndB(targetResourceId, monthsLookback = 18) {
   return { listA, listB, emailsInA };
 }
 
+async function findContactByEmail(email, monthsLookback = 18) {
+  const normEmail = normalizeEmail(email);
+  if (!normEmail || !normEmail.includes('@')) return { source: 'planyo', status: 'not_found', found: false };
+  const byEmail = await loadReservationsByEmail(monthsLookback);
+  const entry = byEmail.get(normEmail);
+  if (!entry) return { source: 'planyo', status: 'not_found', found: false };
+  return {
+    source: 'planyo',
+    status: 'found',
+    found: true,
+    email: normEmail,
+    reservations: entry.reservations || []
+  };
+}
+
+async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
+  if (!process.env.PLANYO_API_KEY) return { source: 'planyo', status: 'error', reason: 'PLANYO_API_KEY non configurata' };
+  const found = await findContactByEmail(email, monthsLookback);
+  if (!found.found) return { source: 'planyo', status: 'not_found' };
+
+  const siteId = process.env.PLANYO_SITE_ID || '8895';
+  const normEmail = normalizeEmail(email);
+  const customerDeleteMethods = ['delete_customer_data', 'delete_customer'];
+  for (const method of customerDeleteMethods) {
+    try {
+      await callPlanyoAPI(method, { site_id: siteId, email: normEmail });
+      return { source: 'planyo', status: 'deleted', method };
+    } catch (_) {}
+  }
+
+  const allowReservationDelete = String(process.env.PLANYO_PRIVACY_ALLOW_RESERVATION_DELETE || '').toLowerCase();
+  if (!['1', 'true', 'yes', 'on'].includes(allowReservationDelete)) {
+    return {
+      source: 'planyo',
+      status: 'found_not_deleted',
+      reason: 'Contatto trovato su Planyo ma delete diretto non supportato dal metodo configurato'
+    };
+  }
+
+  const reservationIds = [...new Set((found.reservations || [])
+    .map((r) => Number(r?.reservation_id || 0))
+    .filter((n) => Number.isInteger(n) && n > 0))];
+  if (reservationIds.length === 0) {
+    return { source: 'planyo', status: 'found_not_deleted', reason: 'Nessun reservation_id disponibile per cancellazione' };
+  }
+
+  let deleted = 0;
+  let failed = 0;
+  for (const reservationId of reservationIds) {
+    let ok = false;
+    for (const method of ['delete_reservation', 'cancel_reservation']) {
+      try {
+        await callPlanyoAPI(method, { site_id: siteId, reservation_id: reservationId });
+        ok = true;
+        break;
+      } catch (_) {}
+    }
+    if (ok) deleted++;
+    else failed++;
+  }
+
+  if (deleted > 0 && failed === 0) return { source: 'planyo', status: 'deleted', deletedReservations: deleted };
+  if (deleted > 0) return { source: 'planyo', status: 'found_not_deleted', reason: `Cancellate ${deleted}, non cancellate ${failed}` };
+  return { source: 'planyo', status: 'found_not_deleted', reason: 'Metodo delete non riuscito su Planyo' };
+}
+
 module.exports = {
   callPlanyoAPI,
   loadReservationsByEmail,
@@ -525,6 +596,8 @@ module.exports = {
   validateTargetResourceIds,
   getPublishedResources,
   getCachedListAAndB,
+  findContactByEmail,
+  deleteContactByEmailForPrivacy,
   extractPhone,
   normalizePhone
 };

@@ -239,6 +239,7 @@
     <div class="tab-bar">
       <button type="button" class="tab-btn active" data-tab="sms">Newsletter SMS</button>
       <button type="button" class="tab-btn" data-tab="email">INVIO EMAIL</button>
+      <button type="button" class="tab-btn" data-tab="privacy">PRIVACY</button>
     </div>
 
     <!-- Tab SMS -->
@@ -403,6 +404,27 @@
         <div class="output" id="emailOutput"></div>
       </div>
     </div>
+
+    <!-- Tab PRIVACY -->
+    <div id="tabPrivacy" class="tab-panel">
+      <div class="card">
+        <h2>PRIVACY</h2>
+        <p class="hint" style="margin-bottom: 1rem;">Ricerca multi-fonte e cancellazione diretta del contatto da Mailchimp, Planyo e SMS Hosting (quando supportato).</p>
+        <div class="form-group">
+          <label for="privacyEmail">Email contatto</label>
+          <input type="email" id="privacyEmail" placeholder="nome@dominio.it" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="privacyPhone">Cellulare (facoltativo)</label>
+          <input type="text" id="privacyPhone" placeholder="+39 333 1234567" autocomplete="off">
+          <p class="hint">Se disponibile viene usato anche per la gestione contatti/liste su SMS Hosting.</p>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-danger" id="btnPrivacyDelete">CERCA E CANCELLA</button>
+        </div>
+        <div class="output" id="privacyOutput"></div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -471,6 +493,51 @@
       const d = document.createElement('div');
       d.textContent = s;
       return d.innerHTML;
+    }
+    function sourceLabel(key) {
+      if (key === 'mailchimp') return 'Mailchimp';
+      if (key === 'planyo') return 'Planyo';
+      if (key === 'smshosting') return 'SMS Hosting';
+      return key;
+    }
+    function renderPrivacyResult(outputEl, response) {
+      const results = response?.results || {};
+      let html = '';
+      if (response?.message) {
+        html += '<div class="log result-ok">' + escapeHtml(response.message) + '</div>';
+      }
+      const keys = ['mailchimp', 'planyo', 'smshosting'];
+      for (const key of keys) {
+        const item = results[key] || {};
+        const status = String(item.status || 'error');
+        let statusText = '';
+        let css = 'log';
+        if (status === 'deleted') {
+          statusText = 'cancellato';
+          css = 'log result-ok';
+        } else if (status === 'not_found') {
+          statusText = 'contatto non trovato';
+          css = 'warn';
+        } else if (status === 'found_not_deleted') {
+          statusText = 'contatto trovato ma non cancellato';
+          css = 'warn';
+        } else {
+          statusText = 'errore';
+          css = 'error';
+        }
+        const reason = item.reason ? (' - ' + item.reason) : '';
+        html += '<div class="' + css + '">' + escapeHtml(sourceLabel(key) + ': ' + statusText + reason) + '</div>';
+      }
+      if (response?.cache) {
+        const cache = response.cache;
+        const mc = cache.mailchimp || {};
+        const pc = cache.planyo || {};
+        html += '<div class="log">Cache locale: Mailchimp ' + (mc.deleted ? 'aggiornata' : 'nessuna modifica')
+          + (mc.removedCampaignRefs ? (' (riferimenti campagne rimossi: ' + mc.removedCampaignRefs + ')') : '')
+          + ' | Planyo ' + (pc.deleted ? ('aggiornata (righe rimosse: ' + (pc.removedRows || 0) + ')') : 'nessuna modifica')
+          + '</div>';
+      }
+      outputEl.innerHTML = html;
     }
     function downloadCsvFile(filename, csvContent) {
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
@@ -1463,6 +1530,32 @@
       }
     }
 
+    document.getElementById('btnPrivacyDelete').onclick = async () => {
+      const out = document.getElementById('privacyOutput');
+      const btn = document.getElementById('btnPrivacyDelete');
+      const email = (document.getElementById('privacyEmail').value || '').trim().toLowerCase();
+      const phone = (document.getElementById('privacyPhone').value || '').trim();
+      if (!email || !email.includes('@')) {
+        out.innerHTML = '<div class="error">Inserisci una email valida del contatto da cancellare.</div>';
+        return;
+      }
+      if (!confirm('Confermi la richiesta privacy di ricerca e cancellazione contatto su tutte le fonti disponibili?')) return;
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Ricerca e cancellazione in corso...</div>';
+      try {
+        const d = await fetchJson(API + '/api/privacy/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, phone: phone || undefined })
+        });
+        renderPrivacyResult(out, d);
+      } catch (e) {
+        out.innerHTML = '<div class="error">Errore: ' + escapeHtml(e.message) + '</div>';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
     // Tab switching
     let selectedEmailLimit = 100;
     document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -1471,7 +1564,9 @@
         document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
         btn.classList.add('active');
         const tab = btn.dataset.tab;
-        document.getElementById(tab === 'sms' ? 'tabSms' : 'tabEmail').classList.add('active');
+        const panelId = tab === 'sms' ? 'tabSms' : (tab === 'email' ? 'tabEmail' : 'tabPrivacy');
+        const panel = document.getElementById(panelId);
+        if (panel) panel.classList.add('active');
       };
     });
 

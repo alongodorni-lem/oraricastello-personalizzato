@@ -419,6 +419,63 @@ function getCacheStatus() {
   };
 }
 
+function removeContactFromCaches(email, phone = '') {
+  const normEmail = String(email || '').toLowerCase().trim();
+  const normPhone = normalizeMobilePhone(phone) || String(phone || '').replace(/\D/g, '');
+  const result = {
+    source: 'cache',
+    mailchimp: { deleted: false, removedCampaignRefs: 0 },
+    planyo: { deleted: false, removedRows: 0 }
+  };
+
+  try {
+    const mc = normalizeCacheShape(loadMailchimpCache());
+    let changed = false;
+    if (normEmail && mc.contacts && mc.contacts[normEmail]) {
+      delete mc.contacts[normEmail];
+      result.mailchimp.deleted = true;
+      changed = true;
+    }
+    let removedRefs = 0;
+    for (const type of ['open', 'click']) {
+      const byCampaign = mc.campaignEngagements?.[type] || {};
+      for (const campaignId of Object.keys(byCampaign)) {
+        const arr = Array.isArray(byCampaign[campaignId]) ? byCampaign[campaignId] : [];
+        const filtered = arr.filter((e) => String(e || '').toLowerCase().trim() !== normEmail);
+        if (filtered.length !== arr.length) {
+          byCampaign[campaignId] = filtered;
+          removedRefs += (arr.length - filtered.length);
+          changed = true;
+        }
+      }
+    }
+    result.mailchimp.removedCampaignRefs = removedRefs;
+    if (changed) saveMailchimpCache(mc);
+  } catch (_) {}
+
+  try {
+    const pc = loadPlanyoCache();
+    const rows = Array.isArray(pc?.contacts) ? pc.contacts : null;
+    if (rows) {
+      const before = rows.length;
+      const filtered = rows.filter((r) => {
+        const rowEmail = String(r?.email || '').toLowerCase().trim();
+        const rowPhone = String(r?.telefono || '').replace(/\D/g, '');
+        const matchEmail = normEmail && rowEmail === normEmail;
+        const matchPhone = normPhone && rowPhone && (rowPhone === normPhone || rowPhone.endsWith(normPhone.slice(-9)));
+        return !(matchEmail || matchPhone);
+      });
+      if (filtered.length !== before) {
+        result.planyo.deleted = true;
+        result.planyo.removedRows = before - filtered.length;
+        savePlanyoCache({ ...(pc || {}), updatedAt: new Date().toISOString(), contacts: filtered });
+      }
+    }
+  } catch (_) {}
+
+  return result;
+}
+
 module.exports = {
   loadMailchimpCache,
   loadPlanyoCache,
@@ -431,6 +488,7 @@ module.exports = {
   runUpdatePrenotazioni,
   isReadyForOperations,
   getCacheStatus,
+  removeContactFromCaches,
   importNewsletterCsv,
   importNewsletterContacts,
   UPLOADED_CAMPAIGN_ID,
