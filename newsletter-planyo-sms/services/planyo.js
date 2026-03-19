@@ -555,22 +555,28 @@ async function findContactByEmail(email, monthsLookback = 18) {
   }
 
   // 2) Lookup diretto storico prenotazioni per email (anche passate/cancellate/deleted)
-  // Questo copre i casi in cui il cliente esiste ma non appare nel subset "prenotazioni confermate ultimi 18 mesi".
+  // list_reservations restituisce al massimo 500 risultati per pagina: paginiamo tutte le pagine.
   try {
     const startTime = Math.floor(new Date('2000-01-01T00:00:00Z').getTime() / 1000);
     const endTime = Math.floor(new Date('2100-01-01T00:00:00Z').getTime() / 1000);
-    const historical = await callPlanyoAPI('list_reservations', {
-      site_id: siteId,
-      start_time: startTime,
-      end_time: endTime,
-      user_email: normEmail,
-      detail_level: 1,
-      page: 0,
-      include_deleted: true
-    }, { timeoutMs: 90000 });
-    const rows = Array.isArray(historical?.results)
-      ? historical.results
-      : (Array.isArray(historical?.data?.results) ? historical.data.results : []);
+    const rows = [];
+    const maxPages = 50;
+    for (let page = 0; page < maxPages; page++) {
+      const historical = await callPlanyoAPI('list_reservations', {
+        site_id: siteId,
+        start_time: startTime,
+        end_time: endTime,
+        user_email: normEmail,
+        detail_level: 1,
+        page,
+        include_deleted: true
+      }, { timeoutMs: 90000 });
+      const chunk = Array.isArray(historical?.results)
+        ? historical.results
+        : (Array.isArray(historical?.data?.results) ? historical.data.results : []);
+      rows.push(...chunk);
+      if (chunk.length < 500) break;
+    }
     if (rows.length > 0) {
       return {
         source: 'planyo',
@@ -583,6 +589,7 @@ async function findContactByEmail(email, monthsLookback = 18) {
           user_id: r.user_id != null ? Number(r.user_id) : null,
           resource_id: r.resource_id || r.resource?.id || null,
           start_time: r.start_time || null,
+          status: r.status != null ? r.status : null,
           resource_name: r.resource_name || r.name || r.resource?.name || ''
         }))
       };
@@ -745,19 +752,28 @@ async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
     };
   }
 
-  let deleted = 0;
-  let failed = 0;
+  /**
+   * remove_user richiede che le prenotazioni risultino "cancellate" (non basta un metodo inesistente cancel_reservation).
+   * API ufficiale: do_reservation_action con action=Cancel (admin).
+   */
+  let cancelledOk = 0;
+  let cancelledFail = 0;
   for (const reservationId of reservationIds) {
-    let ok = false;
-    for (const method of ['delete_reservation', 'cancel_reservation']) {
-      try {
-        await callPlanyoAPI(method, { site_id: siteId, reservation_id: reservationId });
-        ok = true;
-        break;
-      } catch (_) {}
+    try {
+      await callPlanyoAPI(
+        'do_reservation_action',
+        {
+          site_id: siteId,
+          reservation_id: reservationId,
+          action: 'Cancel',
+          is_quiet: true
+        },
+        { timeoutMs: 60000 }
+      );
+      cancelledOk++;
+    } catch (_) {
+      cancelledFail++;
     }
-    if (ok) deleted++;
-    else failed++;
   }
 
   if (userId) {
@@ -766,30 +782,69 @@ async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
       return {
         source: 'planyo',
         status: 'deleted',
-        method: 'remove_user_after_reservations',
+        method: 'remove_user_after_cancel',
         userId,
-        deletedReservations: deleted,
-        failedReservations: failed
+        cancelledReservations: cancelledOk,
+        failedCancelReservations: cancelledFail
       };
     } catch (err) {
-      console.warn('[Planyo][Privacy] remove_user dopo prenotazioni fallito:', err.message);
-      if (deleted > 0) {
-        return {
-          source: 'planyo',
-          status: 'found_not_deleted',
-          reason: `Prenotazioni elaborate (${deleted} ok, ${failed} no) ma remove_user ancora fallito: ${err.message}`,
-          deletedReservations: deleted,
-          failedReservations: failed
-        };
-      }
+      console.warn('[Planyo][Privacy] remove_user dopo Cancel fallito:', err.message);
     }
   }
 
-  if (deleted > 0 && failed === 0) return { source: 'planyo', status: 'deleted', deletedReservations: deleted, method: 'delete_reservation_only' };
-  if (deleted > 0) {
-    return { source: 'planyo', status: 'found_not_deleted', reason: `Cancellate ${deleted}, non cancellate ${failed}` };
+  // Fallback: eliminazione definitiva prenotazioni (documentata), poi ritenta remove_user
+  let deleted = 0;
+  let failed = 0;
+  for (const reservationId of reservationIds) {
+    try {
+      await callPlanyoAPI('delete_reservation', { site_id: siteId, reservation_id: reservationId }, { timeoutMs: 60000 });
+      deleted++;
+    } catch (_) {
+      failed++;
+    }
   }
-  return { source: 'planyo', status: 'found_not_deleted', reason: 'Metodo delete prenotazioni non riuscito su Planyo' };
+
+  if (userId) {
+    try {
+      await tryRemovePlanyoUser(siteId, userId);
+      return {
+        source: 'planyo',
+        status: 'deleted',
+        method: 'remove_user_after_delete_reservation',
+        userId,
+        cancelledReservations: cancelledOk,
+        deletedReservations: deleted,
+        failedDeleteReservations: failed
+      };
+    } catch (err) {
+      console.warn('[Planyo][Privacy] remove_user dopo delete_reservation fallito:', err.message);
+      const parts = [
+        `Cancel admin: ${cancelledOk} ok, ${cancelledFail} no`,
+        `delete_reservation: ${deleted} ok, ${failed} no`
+      ].join(' | ');
+      return {
+        source: 'planyo',
+        status: 'found_not_deleted',
+        reason: `${parts}. remove_user: ${err.message}`,
+        cancelledReservations: cancelledOk,
+        deletedReservations: deleted,
+        failedCancelReservations: cancelledFail,
+        failedDeleteReservations: failed
+      };
+    }
+  }
+
+  if (deleted > 0 && failed === 0) {
+    return { source: 'planyo', status: 'deleted', deletedReservations: deleted, method: 'delete_reservation_only' };
+  }
+  if (deleted > 0) {
+    return { source: 'planyo', status: 'found_not_deleted', reason: `delete_reservation: ${deleted} ok, ${failed} no (nessun user_id per remove_user)` };
+  }
+  return {
+    source: 'planyo',
+    status: 'found_not_deleted',
+    reason: `Impossibile elaborare prenotazioni (Cancel: ${cancelledOk}/${cancelledFail + cancelledOk}, delete: fallito)`
+  };
 }
 
 module.exports = {
