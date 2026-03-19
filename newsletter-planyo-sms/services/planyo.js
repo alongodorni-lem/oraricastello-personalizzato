@@ -557,42 +557,50 @@ async function findContactByEmail(email, monthsLookback = 18) {
   try {
     const siteId = process.env.PLANYO_SITE_ID || '8895';
     const queryCandidates = [normEmail, `${normEmail}*`];
+    const listUsersModes = [
+      // Default: utenti con almeno una prenotazione (caso più comune)
+      { list_unconfirmed: true },
+      // Modalità alternativa: utenti creati da admin/API
+      { list_unconfirmed: true, list_created_by_admin: true }
+    ];
     for (const queryEmail of queryCandidates) {
-      let data = null;
-      let lastErr = null;
-      const startedAt = Date.now();
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          data = await callPlanyoAPI('list_users', {
-            site_id: siteId,
-            email: queryEmail,
-            list_unconfirmed: true,
-            list_created_by_admin: true,
-            detail_level: 1,
-            page: 0,
-            page_size: 1000
-          }, { timeoutMs: 90000 });
-          lastErr = null;
-          break;
-        } catch (err) {
-          lastErr = err;
-          if (attempt >= 2 || !isTransientLookupError(err)) break;
-          await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
+      for (const mode of listUsersModes) {
+        let data = null;
+        let lastErr = null;
+        const startedAt = Date.now();
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            data = await callPlanyoAPI('list_users', {
+              site_id: siteId,
+              email: queryEmail,
+              detail_level: 1,
+              page: 0,
+              page_size: 1000,
+              ...mode
+            }, { timeoutMs: 90000 });
+            lastErr = null;
+            break;
+          } catch (err) {
+            lastErr = err;
+            if (attempt >= 2 || !isTransientLookupError(err)) break;
+            await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
+          }
         }
-      }
-      if (lastErr) throw lastErr;
-      const users = Array.isArray(data?.users) ? data.users : (Array.isArray(data?.results) ? data.results : []);
-      const elapsed = Date.now() - startedAt;
-      console.log('[Planyo][Privacy] list_users lookup', queryEmail === normEmail ? 'exact' : 'wildcard', 'users:', users.length, 'elapsed_ms:', elapsed);
-      if (users.length > 0) {
-        return {
-          source: 'planyo',
-          status: 'found',
-          found: true,
-          email: normEmail,
-          foundVia: queryEmail === normEmail ? 'list_users_exact' : 'list_users_wildcard',
-          reservations: []
-        };
+        if (lastErr) throw lastErr;
+        const users = Array.isArray(data?.users) ? data.users : (Array.isArray(data?.results) ? data.results : []);
+        const elapsed = Date.now() - startedAt;
+        const modeLabel = mode.list_created_by_admin ? 'admin_users' : 'reservation_users';
+        console.log('[Planyo][Privacy] list_users lookup', queryEmail === normEmail ? 'exact' : 'wildcard', modeLabel, 'users:', users.length, 'elapsed_ms:', elapsed);
+        if (users.length > 0) {
+          return {
+            source: 'planyo',
+            status: 'found',
+            found: true,
+            email: normEmail,
+            foundVia: `${queryEmail === normEmail ? 'list_users_exact' : 'list_users_wildcard'}_${modeLabel}`,
+            reservations: []
+          };
+        }
       }
     }
   } catch (_) {
