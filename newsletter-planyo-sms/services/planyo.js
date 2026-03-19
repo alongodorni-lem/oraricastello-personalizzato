@@ -537,6 +537,7 @@ async function getCachedListAAndB(targetResourceId, monthsLookback = 18) {
 async function findContactByEmail(email, monthsLookback = 18) {
   const normEmail = normalizeEmail(email);
   if (!normEmail || !normEmail.includes('@')) return { source: 'planyo', status: 'not_found', found: false };
+  const siteId = process.env.PLANYO_SITE_ID || '8895';
 
   // 1) Fast path: cache prenotazioni usata dal modulo (ultimi 18 mesi, confermate)
   const byEmail = await loadReservationsByEmail(monthsLookback);
@@ -552,10 +553,45 @@ async function findContactByEmail(email, monthsLookback = 18) {
     };
   }
 
-  // 2) Privacy lookup globale utenti Planyo (menu "Clienti")
+  // 2) Lookup diretto storico prenotazioni per email (anche passate/cancellate/deleted)
+  // Questo copre i casi in cui il cliente esiste ma non appare nel subset "prenotazioni confermate ultimi 18 mesi".
+  try {
+    const startTime = Math.floor(new Date('2000-01-01T00:00:00Z').getTime() / 1000);
+    const endTime = Math.floor(new Date('2100-01-01T00:00:00Z').getTime() / 1000);
+    const historical = await callPlanyoAPI('list_reservations', {
+      site_id: siteId,
+      start_time: startTime,
+      end_time: endTime,
+      user_email: normEmail,
+      detail_level: 1,
+      page: 0,
+      include_deleted: true
+    }, { timeoutMs: 90000 });
+    const rows = Array.isArray(historical?.results)
+      ? historical.results
+      : (Array.isArray(historical?.data?.results) ? historical.data.results : []);
+    if (rows.length > 0) {
+      return {
+        source: 'planyo',
+        status: 'found',
+        found: true,
+        email: normEmail,
+        foundVia: 'list_reservations_user_email',
+        reservations: rows.map((r) => ({
+          reservation_id: r.reservation_id || r.id || null,
+          resource_id: r.resource_id || r.resource?.id || null,
+          start_time: r.start_time || null,
+          resource_name: r.resource_name || r.name || r.resource?.name || ''
+        }))
+      };
+    }
+  } catch (_) {
+    // fallback sotto: list_users
+  }
+
+  // 3) Privacy lookup globale utenti Planyo (menu "Clienti")
   // list_users permette filtro email e include anche casi non coperti dal lookback.
   try {
-    const siteId = process.env.PLANYO_SITE_ID || '8895';
     const queryCandidates = [normEmail, `${normEmail}*`];
     const listUsersModes = [
       // Default: utenti con almeno una prenotazione (caso più comune)
