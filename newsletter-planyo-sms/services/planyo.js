@@ -6,15 +6,16 @@ const axios = require('axios');
 
 const PLANYO_API_URL = 'https://www.planyo.com/rest/';
 
-async function callPlanyoAPI(method, params = {}) {
+async function callPlanyoAPI(method, params = {}, options = {}) {
   const apiKey = process.env.PLANYO_API_KEY;
   if (!apiKey) throw new Error('PLANYO_API_KEY non configurata');
 
   const requestParams = { method, api_key: apiKey, ...params };
+  const timeoutMs = Math.max(5000, Number(options.timeoutMs) || 60000);
 
   const response = await axios.get(PLANYO_API_URL, {
     params: requestParams,
-    timeout: 60000
+    timeout: timeoutMs
   });
 
   if (response.data.response_code !== 0) {
@@ -91,6 +92,17 @@ function parseTargetResourceIds(targetResourceId) {
 
 function normalizeEmail(email) {
   return String(email || '').toLowerCase().trim();
+}
+
+function isTransientLookupError(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    msg.includes('timeout') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('socket hang up') ||
+    msg.includes('network')
+  );
 }
 
 const RESERVATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -525,16 +537,69 @@ async function getCachedListAAndB(targetResourceId, monthsLookback = 18) {
 async function findContactByEmail(email, monthsLookback = 18) {
   const normEmail = normalizeEmail(email);
   if (!normEmail || !normEmail.includes('@')) return { source: 'planyo', status: 'not_found', found: false };
+
+  // 1) Fast path: cache prenotazioni usata dal modulo (ultimi 18 mesi, confermate)
   const byEmail = await loadReservationsByEmail(monthsLookback);
   const entry = byEmail.get(normEmail);
-  if (!entry) return { source: 'planyo', status: 'not_found', found: false };
-  return {
-    source: 'planyo',
-    status: 'found',
-    found: true,
-    email: normEmail,
-    reservations: entry.reservations || []
-  };
+  if (entry) {
+    return {
+      source: 'planyo',
+      status: 'found',
+      found: true,
+      email: normEmail,
+      foundVia: 'reservations_lookback',
+      reservations: entry.reservations || []
+    };
+  }
+
+  // 2) Privacy lookup globale utenti Planyo (menu "Clienti")
+  // list_users permette filtro email e include anche casi non coperti dal lookback.
+  try {
+    const siteId = process.env.PLANYO_SITE_ID || '8895';
+    const queryCandidates = [normEmail, `${normEmail}*`];
+    for (const queryEmail of queryCandidates) {
+      let data = null;
+      let lastErr = null;
+      const startedAt = Date.now();
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          data = await callPlanyoAPI('list_users', {
+            site_id: siteId,
+            email: queryEmail,
+            list_unconfirmed: true,
+            list_created_by_admin: true,
+            detail_level: 1,
+            page: 0,
+            page_size: 1000
+          }, { timeoutMs: 90000 });
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (attempt >= 2 || !isTransientLookupError(err)) break;
+          await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
+        }
+      }
+      if (lastErr) throw lastErr;
+      const users = Array.isArray(data?.users) ? data.users : (Array.isArray(data?.results) ? data.results : []);
+      const elapsed = Date.now() - startedAt;
+      console.log('[Planyo][Privacy] list_users lookup', queryEmail === normEmail ? 'exact' : 'wildcard', 'users:', users.length, 'elapsed_ms:', elapsed);
+      if (users.length > 0) {
+        return {
+          source: 'planyo',
+          status: 'found',
+          found: true,
+          email: normEmail,
+          foundVia: queryEmail === normEmail ? 'list_users_exact' : 'list_users_wildcard',
+          reservations: []
+        };
+      }
+    }
+  } catch (_) {
+    // fallback sotto: not_found
+  }
+
+  return { source: 'planyo', status: 'not_found', found: false };
 }
 
 async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
