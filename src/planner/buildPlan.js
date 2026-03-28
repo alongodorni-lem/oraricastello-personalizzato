@@ -987,7 +987,7 @@ function buildUnifiedInterestPlan(payload, arrivalMins, endLimit, interests, has
   const usedKeys = new Set();
 
   const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && aEnd > bStart;
-  const isWellnessBlock = (block) => /Area Benessere|Yin Yoga|Meditazione del Cuore/i.test(block.title);
+  const isWellnessBlock = (block) => /Area Benessere|Yoga della gioia|Meditazione del Cuore/i.test(block.title);
   const canPlace = (block) => {
     if (block.time < arrivalMins || block.end > endLimit) return false;
     const overlapping = selected.filter((s) => overlaps(block.time, block.end, s.time, s.end));
@@ -1205,7 +1205,7 @@ function buildUnifiedInterestPlan(payload, arrivalMins, endLimit, interests, has
   // 2) Benessere sempre per genitori/adulti.
   ["yin_yoga", "meditazione_cuore"].forEach((id) => {
     const blocks = candidates
-      .filter((c) => id === "yin_yoga" ? /Yin Yoga/i.test(c.title) : /Meditazione del Cuore/i.test(c.title))
+      .filter((c) => id === "yin_yoga" ? /Yoga della gioia/i.test(c.title) : /Meditazione del Cuore/i.test(c.title))
       .sort(byUsageThenTime);
     for (const block of blocks) {
       if (place(block)) break;
@@ -1593,7 +1593,7 @@ function buildPersonalPlan(payload) {
     "1 Pass benessere per adulto incluso. Seconda attività benessere solo se disponibili posti liberi ad inizio sessione."
   );
   addItem(itinerary, {
-    activity: yin?.name || "Area Benessere - Yin Yoga",
+    activity: yin?.name || "Area Benessere - Yoga della gioia",
     location: yin?.location || "",
     note: `${formatTimesLabel(getStartsInWindow(yin, arrivalMins, endLimit))}. Attività consigliata per genitori - adulti.`,
     colorKey: "green",

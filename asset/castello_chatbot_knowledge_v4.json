@@ -360,7 +360,7 @@
     },
     {
       "id": "yin_yoga",
-      "name": "Area Benessere – Yin Yoga",
+      "name": "Area Benessere – Yoga della gioia",
       "location": "Parco",
       "type": "adult_wellness",
       "sessions": [
@@ -582,7 +582,7 @@
     },
     {
       "q": "Quali sono gli orari delle attività benessere?",
-      "a": "Yin Yoga: 10:30–11:00, 12:10–12:40, 13:50–14:20, 15:30–16:00. Meditazione del Cuore: 11:20–11:50, 13:00–13:30, 14:40–15:10, 16:20–16:50. 1 pass benessere per adulto incluso; seconda attività solo se posti liberi.",
+      "a": "Yoga della gioia: 10:30–11:00, 12:10–12:40, 13:50–14:20, 15:30–16:00. Meditazione del Cuore: 11:20–11:50, 13:00–13:30, 14:40–15:10, 16:20–16:50. 1 pass benessere per adulto incluso; seconda attività solo se posti liberi.",
       "tags": [
         "benessere",
         "adulti"

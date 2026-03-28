@@ -163,7 +163,7 @@ function renderPlanBlock(plan, title) {
                 ? "red"
                 : /BEE-Dance|Ape Maia/i.test(s.activity)
                   ? "black"
-                  : /Area Benessere|Yin Yoga|Meditazione del Cuore/i.test(s.activity)
+                  : /Area Benessere|Yoga della gioia|Meditazione del Cuore/i.test(s.activity)
                     ? "green"
                     : null);
         const normalizedNote =
