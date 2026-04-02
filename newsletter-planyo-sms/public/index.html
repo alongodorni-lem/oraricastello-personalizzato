@@ -645,6 +645,19 @@
       }
     }
 
+    function appendOutputLogs(el, logs) {
+      if (!Array.isArray(logs) || !logs.length) return;
+      for (const l of logs) {
+        const cls = l.type === 'error' ? 'error' : (l.type === 'warn' ? 'warn' : 'log');
+        el.innerHTML += `<div class="${cls}">${escapeHtml(l.msg)}</div>`;
+      }
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function delay(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
     function parseCsvRows(text) {
       const rows = [];
       let row = [];
@@ -787,64 +800,90 @@
       btnAbort.disabled = false;
       out.innerHTML = '<div class="log">Avvio in corso...</div>';
 
-      const controller = new AbortController();
       let keepLockedAsRunning = false;
+      let stopPolling = false;
       btnAbort.onclick = () => {
         btnAbort.disabled = true;
         fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
-        controller.abort();
       };
 
       try {
-        const r = await fetch(API + '/api/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            campaignId: NEWSLETTER_SOURCE_ID,
-            segments: segs.length ? segs : ['A', 'B', 'C'],
-            excludeTargetBooked: audience.excludeTargetBooked,
-            engagementType: getEngagementType(),
-            targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
-            smsText,
-            ...getListDFilters(true)
-          }),
-          signal: controller.signal
-        });
-        const d = await r.json();
-        showOutput(out, d.logs);
-        if (d.result) {
-          const { inserted, notInserted, duplicates } = d.result;
-          const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
-          out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Non inseriti ${notInserted}${dup}</div>`;
-          if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata dall\'utente.</div>';
-        }
-        if (d.error) out.innerHTML += `<div class="error">Errore: ${escapeHtml(d.error)}</div>`;
-      } catch (e) {
-        if (e.name === 'AbortError') {
-          out.innerHTML += '<div class="log warn">Operazione annullata. Gli SMS inviati fino a questo momento sono stati registrati.</div>';
-        } else {
-          let msg = `Errore: ${escapeHtml(e.message)}`;
-          if (/failed to fetch/i.test(String(e.message || ''))) {
-            try {
-              const stateRes = await fetch(API + '/api/run/state');
-              const state = await stateRes.json();
-              if (state && state.running) {
-                keepLockedAsRunning = true;
-                msg = 'Connessione interrotta durante l\'invio, ma il job sembra ancora in corso sul server. Non riavviare l\'invio: attendi e usa ANNULLA se necessario.';
-                btn.textContent = 'Invio in corso...';
-                btn.disabled = true;
-                btnAbort.style.display = 'inline-flex';
-                btnAbort.disabled = false;
-                btnAbort.onclick = () => {
-                  btnAbort.disabled = true;
-                  fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
-                };
-              }
-            } catch (_) {}
+        const runPayload = {
+          campaignId: NEWSLETTER_SOURCE_ID,
+          segments: segs.length ? segs : ['A', 'B', 'C'],
+          excludeTargetBooked: audience.excludeTargetBooked,
+          engagementType: getEngagementType(),
+          targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
+          smsText,
+          ...getListDFilters(true)
+        };
+
+        if (isLocalhost()) {
+          const d = await fetchJson(API + '/api/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(runPayload)
+          });
+          showOutput(out, d.logs);
+          if (d.result) {
+            const { inserted, notInserted, duplicates } = d.result;
+            const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
+            out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Non inseriti ${notInserted}${dup}</div>`;
+            if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata dall\'utente.</div>';
           }
-          out.innerHTML += `<div class="error">${escapeHtml(msg)}</div>`;
+          if (d.error) out.innerHTML += `<div class="error">Errore: ${escapeHtml(d.error)}</div>`;
+        } else {
+          const start = await fetchJson(API + '/api/run/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(runPayload)
+          });
+          if (!start.success || !start.jobId) {
+            throw new Error(start.error || 'Impossibile avviare l\'invio SMS.');
+          }
+
+          let since = 0;
+          while (!stopPolling) {
+            const st = await fetchJson(API + '/api/run/status/' + encodeURIComponent(start.jobId) + '?since=' + since);
+            appendOutputLogs(out, st.logs || []);
+            since = st.nextSince || since;
+
+            if (st.status === 'done') {
+              const { inserted = 0, notInserted = 0, duplicates = 0 } = st.result || {};
+              const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
+              out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Non inseriti ${notInserted}${dup}</div>`;
+              if (st.aborted) out.innerHTML += '<div class="log warn">Operazione annullata dall\'utente.</div>';
+              break;
+            }
+            if (st.status === 'error') {
+              throw new Error(st.error || 'Errore durante l\'invio SMS.');
+            }
+            await delay(2000);
+          }
         }
+      } catch (e) {
+        let msg = `Errore: ${escapeHtml(e.message)}`;
+        if (/failed to fetch/i.test(String(e.message || ''))) {
+          try {
+            const state = await fetchJson(API + '/api/run/state');
+            if (state && state.running) {
+              keepLockedAsRunning = true;
+              msg = 'Connessione interrotta durante l\'invio, ma il job sembra ancora in corso sul server. Non riavviare l\'invio: attendi e usa ANNULLA se necessario.';
+              btn.textContent = 'Invio in corso...';
+              btn.disabled = true;
+              btnAbort.style.display = 'inline-flex';
+              btnAbort.disabled = false;
+              btnAbort.onclick = () => {
+                btnAbort.disabled = true;
+                fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
+              };
+            }
+          } catch (_) {}
+          }
+        }
+        out.innerHTML += `<div class="error">${escapeHtml(msg)}</div>`;
       }
+      stopPolling = true;
       if (!keepLockedAsRunning) {
         btn.disabled = false;
         btn.textContent = 'Avvia invio';

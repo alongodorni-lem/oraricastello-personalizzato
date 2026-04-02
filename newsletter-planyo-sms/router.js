@@ -175,6 +175,7 @@ function captureLogs(fn) {
     origWarn.apply(console, args);
   };
   return {
+    logs,
     run: async () => {
       try {
         const result = await fn();
@@ -189,6 +190,77 @@ function captureLogs(fn) {
       }
     }
   };
+}
+
+const smsRunJobs = new Map();
+const SMS_RUN_JOB_TTL_MS = 24 * 60 * 60 * 1000;
+
+function getSmsRunJobId() {
+  return 'sr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+function cleanupOldSmsRunJobs() {
+  const cutoff = Date.now() - SMS_RUN_JOB_TTL_MS;
+  for (const [id, job] of smsRunJobs) {
+    if ((job.createdAt || 0) < cutoff) smsRunJobs.delete(id);
+  }
+}
+
+function createSmsRunCapture({
+  campaignIds,
+  campaignId,
+  segments,
+  dryRun,
+  prepareOnly,
+  targetId,
+  customSmsText,
+  listDFilters,
+  forceReportOnly,
+  mode,
+  eventIds,
+  excludeTarget,
+  abortCheck
+}) {
+  return captureLogs(async () => {
+    const seg = forceReportOnly ? ['D'] : (Array.isArray(segments) ? segments : [segments]);
+    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D'].includes(String(s).toUpperCase())) : null;
+    const onlyD = segFilter && segFilter.length === 1 && segFilter[0].toUpperCase() === 'D';
+
+    let ids = [];
+    if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
+      ids = ['list-d-only'];
+    } else if (campaignIds && Array.isArray(campaignIds) && campaignIds.length > 0) {
+      ids = campaignIds.slice(0, 2);
+    } else if (campaignId) {
+      ids = [campaignId];
+    } else {
+      ids = [dataCache.UPLOADED_CAMPAIGN_ID];
+    }
+    if (ids.length === 0) throw new Error('Nessuna campagna trovata (o Lista D senza PLANYO_LISTD_CSV_URL)');
+
+    let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
+    for (const id of ids) {
+      if (typeof abortCheck === 'function' && abortCheck()) break;
+      const r = await runNewsletterSmsJob(id, {
+        dryRun,
+        prepareOnly: parseBoolParam(prepareOnly),
+        segments: segFilter,
+        targetResourceId: targetId,
+        eventIds: forceReportOnly ? null : eventIds,
+        listDFilters,
+        smsText: customSmsText,
+        abortCheck,
+        engagementType: mode,
+        excludeTargetBooked: excludeTarget
+      });
+      total.inserted += r.inserted || 0;
+      total.notInserted += r.notInserted || 0;
+      total.duplicates += r.duplicates || 0;
+      total.skipped += r.skipped || 0;
+      if (ids.length > 1) await new Promise((r) => setTimeout(r, 2000));
+    }
+    return total;
+  });
 }
 
 function classifyEmailError(err) {
@@ -630,39 +702,24 @@ router.post('/api/run', async (req, res) => {
     return res.status(400).json({ success: false, error: err.message });
   }
 
-  const cap = captureLogs(async () => {
-    const seg = forceReportOnly ? ['D'] : (Array.isArray(segments) ? segments : [segments]);
-    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D'].includes(String(s).toUpperCase())) : null;
-    const onlyD = segFilter && segFilter.length === 1 && segFilter[0].toUpperCase() === 'D';
-
-    let ids = [];
-    if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
-      ids = ['list-d-only'];
-    } else if (campaignIds && Array.isArray(campaignIds) && campaignIds.length > 0) {
-      ids = campaignIds.slice(0, 2);
-    } else if (campaignId) {
-      ids = [campaignId];
-    } else {
-      ids = [dataCache.UPLOADED_CAMPAIGN_ID];
-    }
-    if (ids.length === 0) throw new Error('Nessuna campagna trovata (o Lista D senza PLANYO_LISTD_CSV_URL)');
-
-    const evIds = parseEventIdsParam(eventIds);
-
-    const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
-    runAbortRequested = false;
-    const abortCheck = () => runAbortRequested;
-    let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
-    for (const id of ids) {
-      if (abortCheck()) break;
-      const r = await runNewsletterSmsJob(id, { dryRun, prepareOnly: parseBoolParam(prepareOnly), segments: segFilter, targetResourceId: targetId, eventIds: forceReportOnly ? null : evIds, listDFilters, smsText: customSmsText, abortCheck, engagementType: mode, excludeTargetBooked: excludeTarget });
-      total.inserted += r.inserted || 0;
-      total.notInserted += r.notInserted || 0;
-      total.duplicates += r.duplicates || 0;
-      total.skipped += r.skipped || 0;
-      if (ids.length > 1) await new Promise((r) => setTimeout(r, 2000));
-    }
-    return total;
+  const evIds = parseEventIdsParam(eventIds);
+  const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
+  runAbortRequested = false;
+  const abortCheck = () => runAbortRequested;
+  const cap = createSmsRunCapture({
+    campaignIds,
+    campaignId,
+    segments,
+    dryRun,
+    prepareOnly,
+    targetId,
+    customSmsText,
+    listDFilters,
+    forceReportOnly,
+    mode,
+    eventIds: evIds,
+    excludeTarget,
+    abortCheck
   });
 
   try {
@@ -673,6 +730,138 @@ router.post('/api/run', async (req, res) => {
     releaseSmsRunLock(lockToken);
     smsRunInProgress = false;
   }
+});
+
+router.post('/api/run/start', async (req, res) => {
+  if (smsRunInProgress) {
+    return res.status(409).json({
+      success: false,
+      error: 'Invio SMS già in corso. Attendi il completamento prima di avviarne un altro.'
+    });
+  }
+
+  const lockAcq = acquireSmsRunLock();
+  if (!lockAcq.ok) {
+    return res.status(409).json({
+      success: false,
+      error: 'Invio SMS già in corso (lock server attivo). Attendi il completamento prima di avviarne un altro.',
+      runningSince: lockAcq.lock?.startedAt || null
+    });
+  }
+
+  const body_ = req.body || {};
+  const { campaignIds, campaignId, lastN = 2, segments = ['A', 'B', 'C'], dryRun = false, prepareOnly = false, targetResourceId, eventIds, smsText, engagementType, excludeTargetBooked } = body_;
+  const customSmsText = (typeof smsText === 'string' && smsText.trim()) ? smsText.trim().slice(0, 160) : null;
+  if (!customSmsText) {
+    releaseSmsRunLock(lockAcq.lock.token);
+    return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
+  }
+  const listDFilters = parseListDFilters(body_);
+  const forceReportOnly = !!(listDFilters && listDFilters.eventNameContains);
+  const excludeTarget = forceReportOnly ? false : parseBoolParam(excludeTargetBooked);
+  const targetId = targetResourceId != null ? targetResourceId : getConfiguredTargetResourceId();
+  try {
+    await validateExcludeTargetSetup(excludeTarget, targetId);
+  } catch (err) {
+    releaseSmsRunLock(lockAcq.lock.token);
+    return res.status(400).json({ success: false, error: err.message });
+  }
+
+  const evIds = parseEventIdsParam(eventIds);
+  const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
+  const jobId = getSmsRunJobId();
+  const runToken = lockAcq.lock.token;
+  const heartbeat = setInterval(() => {
+    refreshSmsRunLock(runToken);
+  }, Math.min(30000, Math.max(5000, Math.floor(SMS_RUN_LOCK_TTL_MS / 4))));
+  if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
+  runAbortRequested = false;
+  const abortCheck = () => runAbortRequested;
+  const cap = createSmsRunCapture({
+    campaignIds,
+    campaignId,
+    segments,
+    dryRun,
+    prepareOnly,
+    targetId,
+    customSmsText,
+    listDFilters,
+    forceReportOnly,
+    mode,
+    eventIds: evIds,
+    excludeTarget,
+    abortCheck
+  });
+
+  smsRunJobs.set(jobId, {
+    status: 'pending',
+    createdAt: Date.now(),
+    logs: cap.logs,
+    result: null,
+    error: null,
+    aborted: false
+  });
+  cleanupOldSmsRunJobs();
+  smsRunInProgress = true;
+
+  setImmediate(async () => {
+    const job = smsRunJobs.get(jobId);
+    if (job) job.status = 'running';
+    try {
+      const out = await cap.run();
+      const current = smsRunJobs.get(jobId);
+      if (!current) return;
+      current.aborted = runAbortRequested;
+      if (out.success) {
+        current.status = 'done';
+        current.result = out.result || null;
+      } else {
+        current.status = 'error';
+        current.error = out.error || 'Errore esecuzione job';
+      }
+    } finally {
+      clearInterval(heartbeat);
+      releaseSmsRunLock(runToken);
+      smsRunInProgress = false;
+    }
+  });
+
+  res.json({ success: true, jobId });
+});
+
+router.get('/api/run/status/:jobId', (req, res) => {
+  const job = smsRunJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, error: 'Job non trovato o scaduto' });
+  const since = Math.max(0, parseInt(String(req.query.since || '0'), 10) || 0);
+  const logs = Array.isArray(job.logs) ? job.logs.slice(since) : [];
+  const nextSince = since + logs.length;
+  if (job.status === 'done') {
+    return res.json({
+      success: true,
+      status: 'done',
+      result: job.result,
+      aborted: !!job.aborted,
+      logs,
+      nextSince
+    });
+  }
+  if (job.status === 'error') {
+    return res.json({
+      success: false,
+      status: 'error',
+      error: job.error,
+      aborted: !!job.aborted,
+      logs,
+      nextSince
+    });
+  }
+  return res.json({
+    success: true,
+    status: job.status || 'pending',
+    logs,
+    nextSince
+  });
 });
 
 router.get('/api/run/state', (_req, res) => {
