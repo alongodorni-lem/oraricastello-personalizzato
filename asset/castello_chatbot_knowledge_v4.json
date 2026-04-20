@@ -53,11 +53,11 @@
       "type": "show",
       "sessions": [
         {
-          "start": "11:30",
+          "start": "11:00",
           "duration_min": 40
         },
         {
-          "start": "16:00",
+          "start": "16:15",
           "duration_min": 40
         }
       ],
@@ -76,8 +76,8 @@
       "type": "drop_in",
       "open_windows": [
         {
-          "start": "14:00",
-          "end": "15:00"
+          "start": "14:15",
+          "end": "14:45"
         }
       ],
       "audience": [
@@ -444,7 +444,7 @@
         "include": [
           "bee_dance"
         ],
-        "reason": "Con bimbi fino a 8 anni, proporre sempre Ape Maia (14:00–15:00)."
+        "reason": "Con bimbi fino a 8 anni, proporre sempre Ape Maia (14:15–14:45)."
       },
       {
         "condition": "adults_present",
@@ -516,7 +516,7 @@
     },
     {
       "q": "A che ora è lo spettacolo K-POP?",
-      "a": "K-POP: inizio alle 11:30 e alle 16:00 (durata circa 40 minuti) in Area Spettacoli. Per arrivare scendi nella parte bassa del Parco (circa 200 m), cancello sulla destra guardando il Castello.",
+      "a": "K-POP: inizio alle 11:00 e alle 16:15 (durata circa 40 minuti) in Area Spettacoli. Per arrivare scendi nella parte bassa del Parco (circa 200 m), cancello sulla destra guardando il Castello.",
       "tags": [
         "kpop",
         "spettacoli"
@@ -524,7 +524,7 @@
     },
     {
       "q": "A che ora c’è la BEE-Dance con Ape Maia?",
-      "a": "BEE-Dance con Ape Maia: dalle 14:00 alle 15:00 in Area Spettacoli. È continuativa: puoi unirti quando vuoi e ballare con le musiche ufficiali del musical.",
+      "a": "BEE-Dance con Ape Maia: dalle 14:15 alle 14:45 in Area Spettacoli. È continuativa: puoi unirti quando vuoi e ballare con le musiche ufficiali del musical.",
       "tags": [
         "ape_maia",
         "bambini",
@@ -598,7 +598,7 @@
     },
     {
       "q": "Quando è meglio arrivare?",
-      "a": "Se vuoi fare più cose, l’ideale è arrivare entro le 11:30. Se arrivi nel pomeriggio, punta su Sentiero Incantato (1h), Magia, Stanza dei Segreti, Principesse (dalle 15:00) e K-POP alle 16:00.",
+      "a": "Se vuoi fare più cose, l’ideale è arrivare entro le 11:00. Se arrivi nel pomeriggio, punta su Sentiero Incantato (1h), Magia, Stanza dei Segreti, Principesse (dalle 15:00) e K-POP alle 16:15.",
       "tags": [
         "consigli",
         "ingressi"
