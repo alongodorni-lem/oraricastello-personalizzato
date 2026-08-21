@@ -444,10 +444,12 @@ router.get('/api/config', (req, res) => {
     const emailSubject = typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '';
     const emailBody = typeof cfg.emailBody === 'string' ? cfg.emailBody : '';
     const emailHtml = typeof cfg.emailHtml === 'string' ? cfg.emailHtml : '';
+    const emailEditorHtml = typeof cfg.emailEditorHtml === 'string' ? cfg.emailEditorHtml : '';
+    const emailComposeMode = parseEmailComposeMode(cfg.emailComposeMode);
     dataCache.startWeeklyNewsletterRefresh(mailchimpEngagementType);
     const cacheStatus = dataCache.getCacheStatus();
     const ready = dataCache.isReadyForOperations();
-    res.json({ success: true, targetResourceId, mailchimpEngagementType, emailSubject, emailBody, emailHtml, cacheStatus, ready });
+    res.json({ success: true, targetResourceId, mailchimpEngagementType, emailSubject, emailBody, emailHtml, emailEditorHtml, emailComposeMode, cacheStatus, ready });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -478,6 +480,12 @@ router.post('/api/config', (req, res) => {
     if (Object.prototype.hasOwnProperty.call(body, 'emailHtml')) {
       cfg.emailHtml = String(body.emailHtml || '').slice(0, 200000);
     }
+    if (Object.prototype.hasOwnProperty.call(body, 'emailEditorHtml')) {
+      cfg.emailEditorHtml = String(body.emailEditorHtml || '').slice(0, 200000);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'emailComposeMode')) {
+      cfg.emailComposeMode = parseEmailComposeMode(body.emailComposeMode);
+    }
 
     saveUiConfig(cfg);
     res.json({
@@ -486,7 +494,9 @@ router.post('/api/config', (req, res) => {
       mailchimpEngagementType: parseEngagementType(cfg.mailchimpEngagementType || 'open'),
       emailSubject: typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '',
       emailBody: typeof cfg.emailBody === 'string' ? cfg.emailBody : '',
-      emailHtml: typeof cfg.emailHtml === 'string' ? cfg.emailHtml : ''
+      emailHtml: typeof cfg.emailHtml === 'string' ? cfg.emailHtml : '',
+      emailEditorHtml: typeof cfg.emailEditorHtml === 'string' ? cfg.emailEditorHtml : '',
+      emailComposeMode: parseEmailComposeMode(cfg.emailComposeMode)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -918,6 +928,12 @@ function formatTargetResourceIds(idsOrValue, fallback = '') {
 
 function parseEngagementType(val) {
   return String(val || 'open').toLowerCase().trim() === 'click' ? 'click' : 'open';
+}
+
+function parseEmailComposeMode(val) {
+  const mode = String(val || 'text').toLowerCase().trim();
+  if (mode === 'editor' || mode === 'html') return mode;
+  return 'text';
 }
 
 function parseBoolParam(val) {

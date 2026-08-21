@@ -228,6 +228,40 @@
     }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
+    .compose-mode-btns { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .compose-mode-btns .btn { flex: 1; min-width: 8.5rem; }
+    .compose-panel { display: none; }
+    .compose-panel.active { display: block; }
+    .editor-wrap {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--card);
+    }
+    .editor-toolbar {
+      display: flex;
+      gap: 0.25rem;
+      flex-wrap: wrap;
+      padding: 0.4rem;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border);
+    }
+    .editor-toolbar .btn {
+      padding: 0.3rem 0.55rem;
+      font-size: 0.8rem;
+      min-width: auto;
+    }
+    .email-wysiwyg {
+      min-height: 12rem;
+      padding: 0.75rem;
+      outline: none;
+      background: #fff;
+    }
+    .email-wysiwyg:focus {
+      box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.2);
+    }
+    .email-wysiwyg img { max-width: 100%; height: auto; }
+    .email-wysiwyg a { color: var(--primary); }
   </style>
 </head>
 <body>
@@ -362,17 +396,48 @@
         </div>
         <div class="form-group">
           <label>Oggetto email</label>
-          <input type="text" id="emailSubject" placeholder="Oggetto (usa {{nome}} {{cognome}} se vuoi)">
+          <input type="text" id="emailSubject" placeholder="Oggetto (es. Ciao {{nome}} / $(first_name))">
         </div>
         <div class="form-group">
-          <label>Messaggio email</label>
-          <textarea id="emailBody" rows="6" placeholder="Ciao {{nome}},\n\n..."></textarea>
-          <p class="hint">Contenuto testo (fallback). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
+          <label>Formato messaggio</label>
+          <div class="compose-mode-btns">
+            <button type="button" class="btn btn-primary" data-compose-mode="text">Solo testo</button>
+            <button type="button" class="btn btn-secondary" data-compose-mode="editor">Editor</button>
+            <button type="button" class="btn btn-secondary" data-compose-mode="html">Codice HTML</button>
+          </div>
+          <p class="hint" id="composeModeHint">Modalità testo: il messaggio viene inviato come testo semplice.</p>
         </div>
-        <div class="form-group">
-          <label>HTML email (opzionale)</label>
-          <textarea id="emailHtml" rows="8" placeholder="<table>...newsletter html...</table>"></textarea>
-          <p class="hint">Puoi incollare HTML completo: se presente, viene usato per l'invio. I placeholder funzionano anche qui.</p>
+        <div id="composePanelText" class="compose-panel active">
+          <div class="form-group">
+            <label for="emailBody">Messaggio email</label>
+            <textarea id="emailBody" rows="6" placeholder="Ciao {{nome}},\n\n..."></textarea>
+            <p class="hint">Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city).</p>
+            <p class="hint">Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
+          </div>
+        </div>
+        <div id="composePanelEditor" class="compose-panel">
+          <div class="form-group">
+            <label>Editor messaggio</label>
+            <div class="editor-wrap">
+              <div class="editor-toolbar">
+                <button type="button" class="btn btn-secondary" data-editor-cmd="bold" title="Grassetto"><strong>B</strong></button>
+                <button type="button" class="btn btn-secondary" data-editor-cmd="italic" title="Corsivo"><em>I</em></button>
+                <button type="button" class="btn btn-secondary" data-editor-cmd="insertUnorderedList" title="Elenco puntato">• Lista</button>
+                <button type="button" class="btn btn-secondary" data-editor-cmd="insertOrderedList" title="Elenco numerato">1. Lista</button>
+                <button type="button" class="btn btn-secondary" data-editor-cmd="createLink" title="Inserisci link">Link</button>
+                <button type="button" class="btn btn-secondary" data-editor-cmd="insertImage" title="Inserisci immagine">Immagine</button>
+              </div>
+              <div id="emailWysiwyg" class="email-wysiwyg" contenteditable="true" role="textbox" aria-multiline="true"></div>
+            </div>
+            <p class="hint">Toolbar base per comunicazioni veloci. Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city). Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
+          </div>
+        </div>
+        <div id="composePanelHtml" class="compose-panel">
+          <div class="form-group">
+            <label for="emailHtml">Codice HTML da incollare</label>
+            <textarea id="emailHtml" rows="10" placeholder="<table>...newsletter html...</table>"></textarea>
+            <p class="hint">Incolla HTML completo. Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city). Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
+          </div>
         </div>
         <div class="form-group">
           <label>Invio prova</label>
@@ -441,6 +506,7 @@
     let emailTotalAudienceCount = 0;
     let emailDailyLimitEnabled = false;
     let emailDailyLimit = null;
+    let emailComposeMode = 'text';
     function showOutput(el, logs, extra) {
       let html = '';
       if (logs && logs.length) {
@@ -952,6 +1018,8 @@
         if (typeof d.emailSubject === 'string') document.getElementById('emailSubject').value = d.emailSubject;
         if (typeof d.emailBody === 'string') document.getElementById('emailBody').value = d.emailBody;
         if (typeof d.emailHtml === 'string') document.getElementById('emailHtml').value = d.emailHtml;
+        if (typeof d.emailEditorHtml === 'string') document.getElementById('emailWysiwyg').innerHTML = d.emailEditorHtml;
+        setComposeMode(d.emailComposeMode || 'text', { skipSave: true });
         updateCacheStatusDisplay(d.cacheStatus);
       } catch (e) { /* use default */ }
     }
@@ -1192,6 +1260,56 @@
       return obj;
     }
     let emailDraftSaveTimer = null;
+    function getComposeModeHint(mode) {
+      if (mode === 'editor') return 'Modalità editor: grassetto, link, elenchi e immagini. Il contenuto viene inviato come HTML.';
+      if (mode === 'html') return 'Modalità codice HTML: incolla una newsletter completa generata altrove.';
+      return 'Modalità testo: il messaggio viene inviato come testo semplice.';
+    }
+    function setComposeMode(mode, opts) {
+      const next = (mode === 'editor' || mode === 'html') ? mode : 'text';
+      emailComposeMode = next;
+      document.querySelectorAll('[data-compose-mode]').forEach((btn) => {
+        const active = btn.dataset.composeMode === next;
+        btn.classList.toggle('btn-primary', active);
+        btn.classList.toggle('btn-secondary', !active);
+      });
+      document.getElementById('composePanelText').classList.toggle('active', next === 'text');
+      document.getElementById('composePanelEditor').classList.toggle('active', next === 'editor');
+      document.getElementById('composePanelHtml').classList.toggle('active', next === 'html');
+      const hint = document.getElementById('composeModeHint');
+      if (hint) hint.textContent = getComposeModeHint(next);
+      if (!opts?.skipSave) scheduleEmailDraftSave();
+    }
+    function getEmailMessagePayload() {
+      if (emailComposeMode === 'editor') {
+        const editor = document.getElementById('emailWysiwyg');
+        const html = String(editor?.innerHTML || '').trim();
+        const body = String(editor?.innerText || '').trim();
+        return { body, html };
+      }
+      if (emailComposeMode === 'html') {
+        return { body: '', html: String(document.getElementById('emailHtml')?.value || '').trim() };
+      }
+      return { body: String(document.getElementById('emailBody')?.value || '').trim(), html: '' };
+    }
+    function runEditorCommand(cmd) {
+      const editor = document.getElementById('emailWysiwyg');
+      if (!editor) return;
+      editor.focus();
+      if (cmd === 'createLink') {
+        const url = window.prompt('URL del link', 'https://');
+        if (!url) return;
+        document.execCommand('createLink', false, url.trim());
+      } else if (cmd === 'insertImage') {
+        const url = window.prompt('URL dell\'immagine', 'https://');
+        if (!url) return;
+        document.execCommand('insertImage', false, url.trim());
+      } else {
+        document.execCommand(cmd, false, null);
+      }
+      resetEmailSendable('Messaggio modificato: ricalcola EMAIL prima dell\'invio.');
+      scheduleEmailDraftSave();
+    }
     async function saveEmailDraftConfig() {
       try {
         await fetch(API + '/api/config', {
@@ -1200,7 +1318,9 @@
           body: JSON.stringify({
             emailSubject: document.getElementById('emailSubject').value,
             emailBody: document.getElementById('emailBody').value,
-            emailHtml: document.getElementById('emailHtml').value
+            emailHtml: document.getElementById('emailHtml').value,
+            emailEditorHtml: document.getElementById('emailWysiwyg')?.innerHTML || '',
+            emailComposeMode
           })
         });
       } catch (_) {}
@@ -1265,9 +1385,24 @@
       resetEmailSendable('HTML modificato: ricalcola EMAIL prima dell\'invio.');
       scheduleEmailDraftSave();
     };
+    document.getElementById('emailWysiwyg').oninput = () => {
+      resetEmailSendable('Messaggio modificato: ricalcola EMAIL prima dell\'invio.');
+      scheduleEmailDraftSave();
+    };
     document.getElementById('emailSubject').onblur = saveEmailDraftConfig;
     document.getElementById('emailBody').onblur = saveEmailDraftConfig;
     document.getElementById('emailHtml').onblur = saveEmailDraftConfig;
+    document.getElementById('emailWysiwyg').onblur = saveEmailDraftConfig;
+    document.querySelectorAll('[data-compose-mode]').forEach((btn) => {
+      btn.onclick = () => {
+        setComposeMode(btn.dataset.composeMode);
+        resetEmailSendable('Formato messaggio modificato: ricalcola EMAIL prima dell\'invio.');
+      };
+    });
+    document.querySelectorAll('[data-editor-cmd]').forEach((btn) => {
+      btn.onmousedown = (e) => e.preventDefault();
+      btn.onclick = () => runEditorCommand(btn.dataset.editorCmd);
+    });
     
 
     let smsContactCount = 0;
@@ -1598,15 +1733,16 @@
     document.getElementById('btnTestEmail').onclick = async () => {
       const email = document.getElementById('emailTestAddress').value.trim();
       const subject = document.getElementById('emailSubject').value.trim();
-      const body = document.getElementById('emailBody').value.trim();
-      const html = document.getElementById('emailHtml').value.trim();
+      const payload = getEmailMessagePayload();
+      const body = payload.body;
+      const html = payload.html;
       const out = document.getElementById('emailTestOutput');
       if (!email || !email.includes('@')) {
         out.innerHTML = '<div class="error">Inserisci un indirizzo email valido.</div>';
         return;
       }
       if (!subject || (!body && !html)) {
-        out.innerHTML = '<div class="error">Inserisci oggetto e contenuto email (testo o HTML).</div>';
+        out.innerHTML = '<div class="error">Inserisci oggetto e contenuto email nella modalità selezionata.</div>';
         return;
       }
       const btn = document.getElementById('btnTestEmail');
@@ -1632,15 +1768,16 @@
     document.getElementById('btnSendEmail').onclick = async () => {
       const campaignId = NEWSLETTER_SOURCE_ID;
       const subject = document.getElementById('emailSubject').value.trim();
-      const body = document.getElementById('emailBody').value.trim();
-      const html = document.getElementById('emailHtml').value.trim();
+      const payload = getEmailMessagePayload();
+      const body = payload.body;
+      const html = payload.html;
       const out = document.getElementById('emailOutput');
       const btn = document.getElementById('btnSendEmail');
       const btnAbort = document.getElementById('btnEmailAbort');
       const cfg = getEmailAudienceSelectionFromSms();
       const emailSegs = cfg.segments;
       if (!subject || (!body && !html)) {
-        out.innerHTML = '<div class="error">Oggetto e contenuto email richiesti (testo o HTML).</div>';
+        out.innerHTML = '<div class="error">Oggetto e contenuto email richiesti nella modalità selezionata.</div>';
         return;
       }
       if (!emailSegs.length) {

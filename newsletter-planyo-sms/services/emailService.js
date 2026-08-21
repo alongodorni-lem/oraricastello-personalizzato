@@ -1,6 +1,7 @@
 /**
  * Servizio invio email Newsletter via Resend API
- * Placeholder: {{nome}}, {{cognome}}, {{email}}, {{evento}}
+ * Placeholder contatto: {{nome}}/$(first_name), {{cognome}}, {{email}}, {{phone}}/$(phone), {{city}}/$(city)
+ * Placeholder evento (liste A/B/D): {{evento}}/$(name), {{start_date}}, {{status}}
  * Batch: traccia email già inviate per soggetto+filtri
  */
 const axios = require('axios');
@@ -122,6 +123,7 @@ function buildTemplateData(data = {}) {
   );
   const eventName = (seg === 'A' || seg === 'B' || seg === 'D') ? eventRaw : '';
   const firstName = pickFirstNonEmpty(data.first_name, data.nome, data.firstName);
+  const lastName = pickFirstNonEmpty(data.cognome, data.last_name, data.lastName);
   const phone = pickFirstNonEmpty(data.phone, data.telefono, data.cellulare);
   const city = pickFirstNonEmpty(data.city, data.citta);
   const status = pickFirstNonEmpty(data.status, data.stato);
@@ -131,7 +133,8 @@ function buildTemplateData(data = {}) {
     ...data,
     nome: firstName,
     first_name: firstName,
-    cognome: pickFirstNonEmpty(data.cognome, data.last_name, data.lastName),
+    cognome: lastName,
+    last_name: lastName,
     email: pickFirstNonEmpty(data.email),
     telefono: phone,
     phone,
@@ -141,7 +144,8 @@ function buildTemplateData(data = {}) {
     eventoPrenotato: eventName,
     name: eventName,
     start_date: startDate,
-    status
+    status,
+    stato: status
   };
 }
 
@@ -428,13 +432,17 @@ async function sendTestEmail({ to, subject, body, html }) {
     nome: 'Mario',
     first_name: 'Mario',
     cognome: 'Rossi',
+    last_name: 'Rossi',
     email: to,
     telefono: '393331234567',
+    phone: '393331234567',
     city: 'Milano',
+    citta: 'Milano',
     eventoPrenotato: 'Castello delle Sorprese',
     name: 'Castello delle Sorprese',
     start_date: '2026-10-15',
     status: 'confermato',
+    stato: 'confermato',
     segment: 'A'
   };
   const cfg = getResendConfig();
