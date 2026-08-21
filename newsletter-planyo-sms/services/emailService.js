@@ -163,20 +163,41 @@ function applyTemplate(template, data) {
   });
 }
 
+function stripHtmlToText(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /**
  * Invia una singola email personalizzata
- * @param {{ to: string, subject: string, body: string, data: object }} opts
+ * @param {{ to: string, subject: string, body?: string, html?: string, data: object }} opts
  */
-async function sendPersonalizedEmail({ to, subject, body, data }) {
+async function sendPersonalizedEmail({ to, subject, body, html, data }) {
   const cfg = getResendConfig();
-  const text = applyTemplate(body, data || {});
-  const html = text.replace(/\n/g, '<br>');
+  const textTemplate = String(body || '');
+  const htmlTemplate = String(html || '');
+  const resolvedHtml = htmlTemplate ? applyTemplate(htmlTemplate, data || {}) : '';
+  const resolvedText = textTemplate
+    ? applyTemplate(textTemplate, data || {})
+    : (resolvedHtml ? stripHtmlToText(resolvedHtml) : '');
+  const finalHtml = resolvedHtml || resolvedText.replace(/\n/g, '<br>');
   const mail = {
     from: cfg.from,
     to,
     subject: applyTemplate(subject, data || {}),
-    text,
-    html,
+    text: resolvedText,
+    html: finalHtml,
     reply_to: cfg.replyTo,
     tags: [
       { name: 'source', value: 'newsletter-sms' },
@@ -209,14 +230,19 @@ async function sendPersonalizedEmail({ to, subject, body, data }) {
   return { id: messageId };
 }
 
-function buildMailPayload({ row, subject, body, cfg, channel }) {
-  const text = applyTemplate(body, row || {});
+function buildMailPayload({ row, subject, body, html, cfg, channel }) {
+  const textTemplate = String(body || '');
+  const htmlTemplate = String(html || '');
+  const resolvedHtml = htmlTemplate ? applyTemplate(htmlTemplate, row || {}) : '';
+  const text = textTemplate
+    ? applyTemplate(textTemplate, row || {})
+    : (resolvedHtml ? stripHtmlToText(resolvedHtml) : '');
   return {
     from: cfg.from,
     to: String(row?.email || '').trim(),
     subject: applyTemplate(subject, row || {}),
     text,
-    html: text.replace(/\n/g, '<br>'),
+    html: resolvedHtml || text.replace(/\n/g, '<br>'),
     reply_to: cfg.replyTo,
     tags: [
       { name: 'source', value: 'newsletter-sms' },
@@ -227,10 +253,10 @@ function buildMailPayload({ row, subject, body, cfg, channel }) {
 
 /**
  * Invia fino a 100 email in un'unica richiesta Resend
- * @param {{ rows: Array<object>, subject: string, body: string, abortCheck?: Function }} opts
+ * @param {{ rows: Array<object>, subject: string, body?: string, html?: string, abortCheck?: Function }} opts
  * @returns {Promise<{ sentEmails: string[], failed: Array<{email:string,error:string}> }>}
  */
-async function sendPersonalizedBatch({ rows, subject, body, abortCheck }) {
+async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) {
   const cfg = getResendConfig();
   const validRows = [];
   const failed = [];
@@ -251,6 +277,7 @@ async function sendPersonalizedBatch({ rows, subject, body, abortCheck }) {
     row,
     subject,
     body,
+    html,
     cfg,
     channel: 'email-batch'
   }));
@@ -394,9 +421,9 @@ function getSentMapForBatch(batchId) {
 
 /**
  * Invia email di prova (non conta nel limite giornaliero)
- * @param {{ to: string, subject: string, body: string }} opts
+ * @param {{ to: string, subject: string, body?: string, html?: string }} opts
  */
-async function sendTestEmail({ to, subject, body }) {
+async function sendTestEmail({ to, subject, body, html }) {
   const data = {
     nome: 'Mario',
     first_name: 'Mario',
@@ -411,14 +438,19 @@ async function sendTestEmail({ to, subject, body }) {
     segment: 'A'
   };
   const cfg = getResendConfig();
-  const text = applyTemplate(body, data);
-  const html = text.replace(/\n/g, '<br>');
+  const textTemplate = String(body || '');
+  const htmlTemplate = String(html || '');
+  const resolvedHtml = htmlTemplate ? applyTemplate(htmlTemplate, data) : '';
+  const text = textTemplate
+    ? applyTemplate(textTemplate, data)
+    : (resolvedHtml ? stripHtmlToText(resolvedHtml) : '');
+  const finalHtml = resolvedHtml || text.replace(/\n/g, '<br>');
   const payload = {
     from: cfg.from,
     to: String(to || '').trim(),
     subject: applyTemplate(subject, data),
     text,
-    html,
+    html: finalHtml,
     reply_to: cfg.replyTo,
     tags: [
       { name: 'source', value: 'newsletter-sms' },

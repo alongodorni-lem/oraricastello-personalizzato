@@ -367,7 +367,12 @@
         <div class="form-group">
           <label>Messaggio email</label>
           <textarea id="emailBody" rows="6" placeholder="Ciao {{nome}},\n\n..."></textarea>
-          <p class="hint">Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
+          <p class="hint">Contenuto testo (fallback). Placeholder: {{nome}} {{cognome}} {{email}} {{evento}} (solo liste A/B/D)</p>
+        </div>
+        <div class="form-group">
+          <label>HTML email (opzionale)</label>
+          <textarea id="emailHtml" rows="8" placeholder="<table>...newsletter html...</table>"></textarea>
+          <p class="hint">Puoi incollare HTML completo: se presente, viene usato per l'invio. I placeholder funzionano anche qui.</p>
         </div>
         <div class="form-group">
           <label>Invio prova</label>
@@ -447,6 +452,20 @@
       if (extra) html += `<div class="log">${escapeHtml(extra)}</div>`;
       el.innerHTML = html || '';
       el.scrollTop = el.scrollHeight;
+    }
+    function renderEmailSendReport(report) {
+      if (!report || typeof report !== 'object') return '';
+      const dailyText = report.dailyLimitEnabled
+        ? ('attivo (' + report.dailyLimitValue + '/giorno)')
+        : 'disattivato';
+      return [
+        '<div class="log"><strong>Report invio automatico</strong></div>',
+        '<div class="log">Richieste API batch: ' + Number(report.batchApiCalls || 0) + ' (pianificate: ' + Number(report.batchCountPlanned || 0) + ', batch size: ' + Number(report.resendBatchSize || 0) + ', concorrenza: ' + Number(report.resendBatchConcurrency || 0) + ')</div>',
+        '<div class="log">Destinatari richiesti: ' + Number(report.requestedRecipients || 0) + ' | Accettati da Resend: ' + Number(report.acceptedByResend || 0) + ' | Falliti: ' + Number(report.failedByResend || 0) + '</div>',
+        '<div class="log">Gia inviati in batch (saltati): ' + Number(report.skippedAlreadySentInBatch || 0) + ' | Rimanenti dopo invio: ' + Number(report.pendingAfterRun || 0) + '</div>',
+        '<div class="log">Limite giornaliero: ' + dailyText + (report.dailyLimitEnabled ? (' | inviati oggi: ' + Number(report.dailySentAfterRun || 0) + ' | residuo: ' + Number(report.dailyRemainingAfterRun || 0)) : '') + '</div>',
+        report.aborted ? '<div class="warn">Invio interrotto manualmente prima del completamento.</div>' : ''
+      ].filter(Boolean).join('');
     }
 
     function resetSmsSendable(forceMessage) {
@@ -631,7 +650,7 @@
       if (!el) return;
       const dailyText = emailDailyLimitEnabled && Number.isFinite(Number(emailDailyLimit))
         ? ('attivo (' + Number(emailDailyLimit) + '/giorno)')
-        : 'disattivato';
+        : 'nessun limite giornaliero impostato';
       el.textContent = 'Limite giornaliero: ' + dailyText + '.';
     }
 
@@ -932,6 +951,7 @@
         const d = await r.json();
         if (typeof d.emailSubject === 'string') document.getElementById('emailSubject').value = d.emailSubject;
         if (typeof d.emailBody === 'string') document.getElementById('emailBody').value = d.emailBody;
+        if (typeof d.emailHtml === 'string') document.getElementById('emailHtml').value = d.emailHtml;
         updateCacheStatusDisplay(d.cacheStatus);
       } catch (e) { /* use default */ }
     }
@@ -1179,7 +1199,8 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             emailSubject: document.getElementById('emailSubject').value,
-            emailBody: document.getElementById('emailBody').value
+            emailBody: document.getElementById('emailBody').value,
+            emailHtml: document.getElementById('emailHtml').value
           })
         });
       } catch (_) {}
@@ -1240,8 +1261,13 @@
       resetEmailSendable('Messaggio modificato: ricalcola EMAIL prima dell\'invio.');
       scheduleEmailDraftSave();
     };
+    document.getElementById('emailHtml').oninput = () => {
+      resetEmailSendable('HTML modificato: ricalcola EMAIL prima dell\'invio.');
+      scheduleEmailDraftSave();
+    };
     document.getElementById('emailSubject').onblur = saveEmailDraftConfig;
     document.getElementById('emailBody').onblur = saveEmailDraftConfig;
+    document.getElementById('emailHtml').onblur = saveEmailDraftConfig;
     
 
     let smsContactCount = 0;
@@ -1411,7 +1437,7 @@
           const dailyMax = Number(d.dailyLimit.max);
           status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
         } else {
-          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', limite giornaliero disattivato).';
+          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', nessun limite giornaliero impostato).';
         }
         status.style.color = emailSendableReady ? 'var(--success)' : 'var(--danger)';
         document.getElementById('btnSendEmail').disabled = !emailSendableReady;
@@ -1507,11 +1533,11 @@
           ? Math.min(effectiveLimit, remaining, totalRemaining)
           : 0;
         if (batchSent > 0) {
-          hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. In questo invio puoi mandarne fino a ' + sendableToday + (hasDailyLimit ? ' (residuo giornaliero: ' + remaining + ').' : ' (limite giornaliero disattivato).');
+          hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. In questo invio puoi mandarne fino a ' + sendableToday + (hasDailyLimit ? ' (residuo giornaliero: ' + remaining + ').' : ' (nessun limite giornaliero impostato).');
         } else {
           hint.textContent = hasDailyLimit
             ? 'Limite giornaliero attivo: ' + Number(d.dailyLimit) + ' email (residuo oggi: ' + remaining + ').'
-            : 'Limite giornaliero disattivato.';
+            : 'Nessun limite giornaliero impostato.';
         }
       } catch (_) {
         hint.textContent = '';
@@ -1573,13 +1599,14 @@
       const email = document.getElementById('emailTestAddress').value.trim();
       const subject = document.getElementById('emailSubject').value.trim();
       const body = document.getElementById('emailBody').value.trim();
+      const html = document.getElementById('emailHtml').value.trim();
       const out = document.getElementById('emailTestOutput');
       if (!email || !email.includes('@')) {
         out.innerHTML = '<div class="error">Inserisci un indirizzo email valido.</div>';
         return;
       }
-      if (!subject || !body) {
-        out.innerHTML = '<div class="error">Inserisci oggetto e messaggio.</div>';
+      if (!subject || (!body && !html)) {
+        out.innerHTML = '<div class="error">Inserisci oggetto e contenuto email (testo o HTML).</div>';
         return;
       }
       const btn = document.getElementById('btnTestEmail');
@@ -1589,7 +1616,7 @@
         const r = await fetch(API + '/api/email/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, subject, body })
+          body: JSON.stringify({ email, subject, body, html })
         });
         const d = await r.json();
         out.innerHTML = d.success
@@ -1606,13 +1633,14 @@
       const campaignId = NEWSLETTER_SOURCE_ID;
       const subject = document.getElementById('emailSubject').value.trim();
       const body = document.getElementById('emailBody').value.trim();
+      const html = document.getElementById('emailHtml').value.trim();
       const out = document.getElementById('emailOutput');
       const btn = document.getElementById('btnSendEmail');
       const btnAbort = document.getElementById('btnEmailAbort');
       const cfg = getEmailAudienceSelectionFromSms();
       const emailSegs = cfg.segments;
-      if (!subject || !body) {
-        out.innerHTML = '<div class="error">Oggetto e messaggio richiesti.</div>';
+      if (!subject || (!body && !html)) {
+        out.innerHTML = '<div class="error">Oggetto e contenuto email richiesti (testo o HTML).</div>';
         return;
       }
       if (!emailSegs.length) {
@@ -1654,6 +1682,7 @@
             limit: limitCap,
             subject,
             body,
+            html,
             ...(cfg.listDFilters || {})
           }),
           signal: controller.signal
@@ -1661,11 +1690,12 @@
         const d = await r.json();
         showOutput(out, d.logs);
         if (d.result) {
-          const { sent, failed, batchSent, batchRemaining } = d.result;
+          const { sent, failed, batchSent, batchRemaining, sendReport } = d.result;
           out.innerHTML += '<div class="log result-ok">Inviate: ' + sent + (failed > 0 ? ' | Fallite: ' + failed : '') + '</div>';
           if (batchSent != null && batchRemaining != null) {
             out.innerHTML += '<div class="log">Totale batch: ' + batchSent + ' inviati. Rimanenti: ' + batchRemaining + '.</div>';
           }
+          out.innerHTML += renderEmailSendReport(sendReport);
           if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata.</div>';
           resetEmailSendable('Invio completato: clicca "CALCOLA EMAIL" per eventuale nuovo invio.');
           updateEmailBatchHint();

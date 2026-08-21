@@ -443,10 +443,11 @@ router.get('/api/config', (req, res) => {
     const mailchimpEngagementType = parseEngagementType(cfg.mailchimpEngagementType || 'open');
     const emailSubject = typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '';
     const emailBody = typeof cfg.emailBody === 'string' ? cfg.emailBody : '';
+    const emailHtml = typeof cfg.emailHtml === 'string' ? cfg.emailHtml : '';
     dataCache.startWeeklyNewsletterRefresh(mailchimpEngagementType);
     const cacheStatus = dataCache.getCacheStatus();
     const ready = dataCache.isReadyForOperations();
-    res.json({ success: true, targetResourceId, mailchimpEngagementType, emailSubject, emailBody, cacheStatus, ready });
+    res.json({ success: true, targetResourceId, mailchimpEngagementType, emailSubject, emailBody, emailHtml, cacheStatus, ready });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -474,6 +475,9 @@ router.post('/api/config', (req, res) => {
     if (Object.prototype.hasOwnProperty.call(body, 'emailBody')) {
       cfg.emailBody = String(body.emailBody || '').slice(0, 20000);
     }
+    if (Object.prototype.hasOwnProperty.call(body, 'emailHtml')) {
+      cfg.emailHtml = String(body.emailHtml || '').slice(0, 200000);
+    }
 
     saveUiConfig(cfg);
     res.json({
@@ -481,7 +485,8 @@ router.post('/api/config', (req, res) => {
       targetResourceId: getConfiguredTargetResourceId(),
       mailchimpEngagementType: parseEngagementType(cfg.mailchimpEngagementType || 'open'),
       emailSubject: typeof cfg.emailSubject === 'string' ? cfg.emailSubject : '',
-      emailBody: typeof cfg.emailBody === 'string' ? cfg.emailBody : ''
+      emailBody: typeof cfg.emailBody === 'string' ? cfg.emailBody : '',
+      emailHtml: typeof cfg.emailHtml === 'string' ? cfg.emailHtml : ''
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1325,18 +1330,21 @@ router.get('/api/email/batch-status', (req, res) => {
 });
 
 router.post('/api/email/test', async (req, res) => {
-  const { email, subject, body } = req.body || {};
+  const { email, subject, body, html } = req.body || {};
+  const bodyText = String(body || '').trim();
+  const htmlText = String(html || '').trim();
   if (!email || !String(email).trim().includes('@')) {
     return res.status(400).json({ success: false, error: 'Indirizzo email richiesto' });
   }
-  if (!subject || !body) {
-    return res.status(400).json({ success: false, error: 'Oggetto e messaggio richiesti' });
+  if (!subject || (!bodyText && !htmlText)) {
+    return res.status(400).json({ success: false, error: 'Oggetto e contenuto email richiesti (testo o HTML).' });
   }
   try {
     await emailService.sendTestEmail({
       to: email.trim(),
       subject: subject.trim(),
-      body: body.trim()
+      body: bodyText || undefined,
+      html: htmlText || undefined
     });
     res.json({ success: true, message: 'Email di prova inviata con successo' });
   } catch (err) {
@@ -1349,14 +1357,16 @@ let emailAbortRequested = false;
 router.post('/api/email/send', async (req, res) => {
   res.setTimeout(60 * 60 * 1000);
   const body_ = req.body || {};
-  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody, engagementType, excludeTargetBooked } = body_;
+  const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody, html: emailHtml, engagementType, excludeTargetBooked } = body_;
+  const emailBodyText = String(emailBody || '').trim();
+  const emailHtmlText = String(emailHtml || '').trim();
   const listDFilters = parseListDFilters(body_);
   const segFilter = parseSegmentsParam(segments);
   const evIds = parseEventIdsParam(eventIds);
   const onlyD = segFilter && segFilter.length === 1 && segFilter[0].toUpperCase() === 'D';
 
-  if (!subject || !emailBody) {
-    return res.status(400).json({ success: false, error: 'subject e body richiesti' });
+  if (!subject || (!emailBodyText && !emailHtmlText)) {
+    return res.status(400).json({ success: false, error: 'subject e contenuto email richiesti (testo o HTML)' });
   }
   if (onlyD && !process.env.PLANYO_LISTD_CSV_URL) {
     return res.status(400).json({ success: false, error: 'PLANYO_LISTD_CSV_URL richiesto per invio solo Lista D' });
@@ -1395,7 +1405,7 @@ router.post('/api/email/send', async (req, res) => {
     data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
     data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
-    const registryRows = buildRegistryRowsFromData(data, subject, emailBody, sentSet, sentMap);
+    const registryRows = buildRegistryRowsFromData(data, subject, emailBodyText, sentSet, sentMap);
     const pendingData = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()));
     const toSend = takeBlock(pendingData, maxToSend);
 
@@ -1406,17 +1416,20 @@ router.post('/api/email/send', async (req, res) => {
     const sentAtByEmail = {};
     const failureByReason = new Map();
     const failureSamples = [];
+    let apiBatchCalls = 0;
 
     const chunks = chunkArray(toSend, RESEND_BATCH_SIZE);
     for (let i = 0; i < chunks.length; i += RESEND_BATCH_CONCURRENCY) {
       if (emailAbortRequested) break;
       const group = chunks.slice(i, i + RESEND_BATCH_CONCURRENCY);
       const results = await Promise.all(group.map(async (chunk) => {
+        apiBatchCalls += 1;
         try {
           return await emailService.sendPersonalizedBatch({
             rows: chunk,
             subject,
-            body: emailBody,
+            body: emailBodyText || undefined,
+            html: emailHtmlText || undefined,
             abortCheck: () => emailAbortRequested
           });
         } catch (err) {
@@ -1452,6 +1465,7 @@ router.post('/api/email/send', async (req, res) => {
     if (successfullySent.length > 0) {
       emailService.addSentToBatch(batchId, successfullySent, subject, sentAtByEmail);
     }
+    const dailyLimitAfter = emailService.checkDailyLimit();
 
     return {
       sent,
@@ -1463,7 +1477,23 @@ router.post('/api/email/send', async (req, res) => {
         .sort((a, b) => b[1] - a[1])
         .map(([reason, count]) => ({ reason, count })),
       failureSamples,
-      registryCsv: registryRowsToCsv(registryRows, subject, emailBody),
+      sendReport: {
+        requestedRecipients: toSend.length,
+        acceptedByResend: sent,
+        failedByResend: failed,
+        skippedAlreadySentInBatch: Math.max(0, pendingData.length - toSend.length),
+        pendingAfterRun: Math.max(0, pendingData.length - successfullySent.length),
+        batchApiCalls,
+        batchCountPlanned: chunks.length,
+        resendBatchSize: RESEND_BATCH_SIZE,
+        resendBatchConcurrency: RESEND_BATCH_CONCURRENCY,
+        dailyLimitEnabled: !!limitInfo.enabled,
+        dailyLimitValue: limitInfo.enabled ? limitInfo.limit : null,
+        dailySentAfterRun: dailyLimitAfter.today,
+        dailyRemainingAfterRun: dailyLimitAfter.remaining,
+        aborted: !!emailAbortRequested
+      },
+      registryCsv: registryRowsToCsv(registryRows, subject, emailBodyText),
       registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
     };
   });
