@@ -360,7 +360,13 @@
             <button type="button" class="btn btn-secondary" data-limit="400">400</button>
             <button type="button" class="btn btn-secondary" data-limit="500">500</button>
           </div>
+          <div class="form-group" style="margin-top: 0.75rem; margin-bottom: 0.5rem;">
+            <label for="emailCustomLimit">Blocco personalizzato</label>
+            <input type="number" id="emailCustomLimit" min="1" step="1" placeholder="Es. 1700">
+            <p class="hint" id="emailCustomLimitHint">Se valorizzato, il valore personalizzato sovrascrive il preset selezionato.</p>
+          </div>
           <p class="hint" id="emailLimitHint">Selezionato: 100 destinatari</p>
+          <p class="hint" id="emailSystemLimitHint" style="margin-top: 0.25rem; color: #64748b;">Limite giornaliero: caricamento...</p>
           <p class="hint" id="emailBatchHint" style="margin-top: 0.25rem; color: #64748b;"></p>
         </div>
         <div class="form-group">
@@ -437,6 +443,9 @@
     let emailSendableCount = 0;
     let emailSendableReady = false;
     let emailTotalAudienceCount = 0;
+    let selectedEmailLimit = 100;
+    let emailDailyLimitEnabled = false;
+    let emailDailyLimit = null;
     function showOutput(el, logs, extra) {
       let html = '';
       if (logs && logs.length) {
@@ -611,6 +620,57 @@
       const targetText = cfg.targetResourceId ? ('ID evento: ' + cfg.targetResourceId) : 'ID evento: tutte le prenotazioni';
       hint.textContent = 'Pubblico attivo: liste ' + cfg.segments.join(', ') + ' | ' + targetText + (cfg.excludeTargetBooked ? ' | esclusione target attiva' : '');
       hint.style.color = '#475569';
+    }
+
+    function getCustomEmailLimitValue() {
+      const raw = String(document.getElementById('emailCustomLimit')?.value || '').trim();
+      if (!raw) return null;
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed) || parsed < 1) return Number.NaN;
+      return parsed;
+    }
+
+    function getEffectiveEmailLimit() {
+      const custom = getCustomEmailLimitValue();
+      if (custom != null && !Number.isNaN(custom)) return custom;
+      return selectedEmailLimit;
+    }
+
+    function updateEmailSystemLimitHint() {
+      const el = document.getElementById('emailSystemLimitHint');
+      if (!el) return;
+      const dailyText = emailDailyLimitEnabled && Number.isFinite(Number(emailDailyLimit))
+        ? ('attivo (' + Number(emailDailyLimit) + '/giorno)')
+        : 'disattivato';
+      el.textContent = 'Limite giornaliero: ' + dailyText + '.';
+    }
+
+    function updateEmailLimitHint() {
+      const custom = getCustomEmailLimitValue();
+      const effective = getEffectiveEmailLimit();
+      const sourceText = custom != null && !Number.isNaN(custom) ? ' (custom)' : ' (preset)';
+      document.getElementById('emailLimitHint').textContent = 'Selezionato: ' + effective + ' destinatari' + sourceText;
+      updateEmailSystemLimitHint();
+    }
+
+    function validateEmailLimit(outEl) {
+      const custom = getCustomEmailLimitValue();
+      if (Number.isNaN(custom)) {
+        outEl.innerHTML = '<div class="error">Blocco personalizzato non valido: inserisci un intero maggiore o uguale a 1.</div>';
+        return null;
+      }
+      return getEffectiveEmailLimit();
+    }
+
+    async function loadEmailLimits() {
+      try {
+        const d = await fetchJson(API + '/api/email/limits');
+        emailDailyLimitEnabled = !!d?.dailyLimitEnabled;
+        emailDailyLimit = Number.isFinite(Number(d?.dailyLimit)) ? Number(d.dailyLimit) : null;
+      } catch (_) {
+        // Keep fallback values when endpoint is not available.
+      }
+      updateEmailLimitHint();
     }
 
     const isLocalhost = () => /^localhost$|^127\.|^\[::1\]$/.test(window.location.hostname);
@@ -1303,6 +1363,11 @@
         resetEmailSendable('Seleziona almeno una sorgente in "Crea Pubblico" nel tab "SELEZIONA PUBBLICO".');
         return;
       }
+      const limitCap = validateEmailLimit(out);
+      if (limitCap == null) {
+        resetEmailSendable('Blocco non valido: correggi il valore e ricalcola EMAIL.');
+        return;
+      }
       btnCalc.disabled = true;
       status.textContent = 'Calcolo EMAIL in corso...';
       status.style.color = '';
@@ -1311,7 +1376,7 @@
           campaignId: NEWSLETTER_SOURCE_ID,
           targetResourceId: cfg.targetResourceId,
           engagementType: getEngagementType(),
-          limit: selectedEmailLimit,
+          limit: limitCap,
           segments: cfg.segments.join(','),
           excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0'
         };
@@ -1345,13 +1410,13 @@
         emailTotalAudienceCount = total;
         const hasDailyLimit = !!d.dailyLimit?.enabled && Number.isFinite(Number(d.dailyLimit?.max));
         const dailyRemaining = hasDailyLimit ? Number(d.dailyLimit?.remaining ?? 0) : Number.POSITIVE_INFINITY;
-        emailSendableCount = Math.max(0, Math.min(total, selectedEmailLimit, dailyRemaining));
+        emailSendableCount = Math.max(0, Math.min(total, limitCap, dailyRemaining));
         emailSendableReady = emailSendableCount > 0;
         if (hasDailyLimit) {
           const dailyMax = Number(d.dailyLimit.max);
-          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + selectedEmailLimit + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
+          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
         } else {
-          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + selectedEmailLimit + ', limite giornaliero disattivato).';
+          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', limite giornaliero disattivato).';
         }
         status.style.color = emailSendableReady ? 'var(--success)' : 'var(--danger)';
         document.getElementById('btnSendEmail').disabled = !emailSendableReady;
@@ -1442,7 +1507,7 @@
         const hasDailyLimit = Number.isFinite(Number(d.dailyLimit)) && Number(d.dailyLimit) > 0;
         const remaining = hasDailyLimit ? Number(d.dailyRemaining ?? 0) : Number.POSITIVE_INFINITY;
         const totalRemaining = Math.max(0, emailTotalAudienceCount - batchSent);
-        const sendableToday = Math.min(selectedEmailLimit, remaining, totalRemaining);
+        const sendableToday = Math.min(getEffectiveEmailLimit(), remaining, totalRemaining);
         if (batchSent > 0) {
           hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. In questo invio puoi mandarne fino a ' + sendableToday + (hasDailyLimit ? ' (residuo giornaliero: ' + remaining + ').' : ' (limite giornaliero disattivato).');
         } else {
@@ -1482,7 +1547,6 @@
     };
 
     // Tab switching
-    let selectedEmailLimit = 100;
     document.querySelectorAll('.tab-btn').forEach((btn) => {
       btn.onclick = () => {
         document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -1509,11 +1573,15 @@
         document.querySelectorAll('.block-btns [data-limit]').forEach((b) => b.classList.add('btn-secondary'));
         btn.classList.remove('btn-secondary');
         btn.classList.add('btn-primary');
-        document.getElementById('emailLimitHint').textContent = 'Selezionato: ' + selectedEmailLimit + ' destinatari';
+        updateEmailLimitHint();
         resetEmailSendable('Blocco destinatari modificato: ricalcola EMAIL prima dell\'invio.');
         if (emailSendableReady && emailSendableCount > 0) updateEmailBatchHint();
       };
     });
+    document.getElementById('emailCustomLimit').oninput = () => {
+      updateEmailLimitHint();
+      resetEmailSendable('Blocco destinatari modificato: ricalcola EMAIL prima dell\'invio.');
+    };
     document.querySelector('.block-btns [data-limit="100"]').click();
 
     // Test email
@@ -1571,7 +1639,8 @@
         out.innerHTML = '<div class="error">Prima devi cliccare "CALCOLA EMAIL" e ottenere un valore maggiore di zero.</div>';
         return;
       }
-      const limitCap = selectedEmailLimit;
+      const limitCap = validateEmailLimit(out);
+      if (limitCap == null) return;
       if (!confirm('Confermi l\'invio? Verranno inviate fino a ' + limitCap + ' email in questo blocco. I destinatari già inviati in questo batch verranno esclusi automaticamente.' + (emailSegs.length ? ' Liste: ' + emailSegs.join(', ') : ''))) return;
 
       btn.disabled = true;
@@ -1598,7 +1667,7 @@
             engagementType: getEngagementType(),
             segments: emailSegs,
             excludeTargetBooked: cfg.excludeTargetBooked,
-            limit: selectedEmailLimit,
+            limit: limitCap,
             subject,
             body,
             ...(cfg.listDFilters || {})
@@ -1636,6 +1705,8 @@
 
     toggleListDFilters();
     updateEmailAudienceHint();
+    updateEmailLimitHint();
+    loadEmailLimits();
     loadConfig();
     loadPlanyoResourcesHint();
     fetch(API + '/api/preload-planyo').catch(() => {}); // Preload Lista A in background (API Planyo)

@@ -51,7 +51,6 @@ router.use(basicAuthMiddleware);
 
 let runAbortRequested = false;
 let smsRunInProgress = false;
-const EMAIL_MAX_PER_RUN = Math.max(1, parseInt(process.env.EMAIL_MAX_PER_RUN || '500', 10) || 500);
 const RESEND_BATCH_SIZE = Math.min(100, Math.max(1, parseInt(process.env.RESEND_BATCH_SIZE || '100', 10) || 100));
 const RESEND_BATCH_CONCURRENCY = Math.min(5, Math.max(1, parseInt(process.env.RESEND_BATCH_CONCURRENCY || '2', 10) || 2));
 
@@ -920,6 +919,17 @@ function parseBoolParam(val) {
   return val === true || val === 'true' || val === '1' || val === 1 || val === 'on';
 }
 
+function parsePositiveInteger(val) {
+  const num = Number(val);
+  if (!Number.isInteger(num) || num < 1) return null;
+  return num;
+}
+
+function parseEmailLimitOrDefault(val, fallback = 100) {
+  if (val === undefined || val === null || String(val).trim() === '') return fallback;
+  return parsePositiveInteger(String(val).trim());
+}
+
 async function validateExcludeTargetSetup(excludeTargetBooked, targetResourceId) {
   if (!excludeTargetBooked) return;
   const targetIds = parseTargetResourceIdsParam(targetResourceId);
@@ -1085,7 +1095,10 @@ router.post('/api/email/preview/start', (req, res) => {
     const segments = parseSegmentsParam(q.segments);
     const listDFilters = parseListDFilters(q);
     const excludeTargetBooked = parseBoolParam(q.excludeTargetBooked);
-    const limit = parseInt(q.limit || '100', 10);
+    const limit = parseEmailLimitOrDefault(q.limit, 100);
+    if (limit == null) {
+      return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
+    }
 
     const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
@@ -1218,7 +1231,10 @@ router.get('/api/email/preview', async (req, res) => {
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
     const excludeTargetBooked = parseBoolParam(req.query.excludeTargetBooked);
-    const limit = parseInt(req.query.limit || '100', 10);
+    const limit = parseEmailLimitOrDefault(req.query.limit, 100);
+    if (limit == null) {
+      return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
+    }
 
     const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
@@ -1247,6 +1263,23 @@ router.get('/api/email/preview', async (req, res) => {
         remaining: limitInfo.remaining,
         max: limitInfo.enabled ? limitInfo.limit : null
       }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/api/email/limits', (_req, res) => {
+  try {
+    const limitInfo = emailService.checkDailyLimit();
+    res.json({
+      success: true,
+      maxPerRun: null,
+      unlimitedPerRun: true,
+      dailyLimitEnabled: !!limitInfo.enabled,
+      dailyLimit: limitInfo.enabled ? limitInfo.limit : null,
+      dailyRemaining: limitInfo.remaining,
+      dailySent: limitInfo.today
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1329,7 +1362,10 @@ router.post('/api/email/send', async (req, res) => {
     return res.status(400).json({ success: false, error: 'PLANYO_LISTD_CSV_URL richiesto per invio solo Lista D' });
   }
 
-  const limitNum = Math.min(Math.max(parseInt(String(limit), 10) || 100, 1), EMAIL_MAX_PER_RUN);
+  const limitNum = parseEmailLimitOrDefault(limit, 100);
+  if (limitNum == null) {
+    return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
+  }
   const limitInfo = emailService.checkDailyLimit();
   if (limitInfo.enabled && limitInfo.remaining <= 0) {
     return res.status(400).json({
@@ -1443,7 +1479,10 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     const subject = String(body.subject || '').trim();
     const emailText = String(body.body || '');
     const rows = normalizeRegistryRows(body.rows || [], subject, emailText);
-    const limit = Math.min(Math.max(parseInt(String(body.limit), 10) || 100, 1), EMAIL_MAX_PER_RUN);
+    const limit = parseEmailLimitOrDefault(body.limit, 100);
+    if (limit == null) {
+      return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
+    }
     if (!rows.length) {
       return res.status(400).json({ success: false, error: 'Registro vuoto o non valido' });
     }
