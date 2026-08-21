@@ -228,8 +228,6 @@
     }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
-    .block-btns { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-    .block-btns .btn { min-width: 5rem; }
   </style>
 </head>
 <body>
@@ -353,19 +351,12 @@
         <p class="hint" id="emailAudienceHint" style="margin-bottom: 0.75rem; color: #475569;"></p>
         <div class="form-group">
           <label>Blocco destinatari</label>
-          <div class="block-btns">
-            <button type="button" class="btn btn-secondary" data-limit="100">100</button>
-            <button type="button" class="btn btn-secondary" data-limit="200">200</button>
-            <button type="button" class="btn btn-secondary" data-limit="300">300</button>
-            <button type="button" class="btn btn-secondary" data-limit="400">400</button>
-            <button type="button" class="btn btn-secondary" data-limit="500">500</button>
-          </div>
-          <div class="form-group" style="margin-top: 0.75rem; margin-bottom: 0.5rem;">
-            <label for="emailCustomLimit">Blocco personalizzato</label>
+          <div class="form-group" style="margin-bottom: 0.5rem;">
+            <label for="emailCustomLimit">Numero destinatari da inviare</label>
             <input type="number" id="emailCustomLimit" min="1" step="1" placeholder="Es. 1700">
-            <p class="hint" id="emailCustomLimitHint">Se valorizzato, il valore personalizzato sovrascrive il preset selezionato.</p>
+            <p class="hint" id="emailCustomLimitHint">Inserisci liberamente quanti destinatari inviare in questo run (intero maggiore o uguale a 1).</p>
           </div>
-          <p class="hint" id="emailLimitHint">Selezionato: 100 destinatari</p>
+          <p class="hint" id="emailLimitHint">Inserisci il numero di destinatari da inviare in questo blocco.</p>
           <p class="hint" id="emailSystemLimitHint" style="margin-top: 0.25rem; color: #64748b;">Limite giornaliero: caricamento...</p>
           <p class="hint" id="emailBatchHint" style="margin-top: 0.25rem; color: #64748b;"></p>
         </div>
@@ -443,7 +434,6 @@
     let emailSendableCount = 0;
     let emailSendableReady = false;
     let emailTotalAudienceCount = 0;
-    let selectedEmailLimit = 100;
     let emailDailyLimitEnabled = false;
     let emailDailyLimit = null;
     function showOutput(el, logs, extra) {
@@ -633,7 +623,7 @@
     function getEffectiveEmailLimit() {
       const custom = getCustomEmailLimitValue();
       if (custom != null && !Number.isNaN(custom)) return custom;
-      return selectedEmailLimit;
+      return null;
     }
 
     function updateEmailSystemLimitHint() {
@@ -647,19 +637,24 @@
 
     function updateEmailLimitHint() {
       const custom = getCustomEmailLimitValue();
-      const effective = getEffectiveEmailLimit();
-      const sourceText = custom != null && !Number.isNaN(custom) ? ' (custom)' : ' (preset)';
-      document.getElementById('emailLimitHint').textContent = 'Selezionato: ' + effective + ' destinatari' + sourceText;
+      const limitEl = document.getElementById('emailLimitHint');
+      if (Number.isNaN(custom)) {
+        limitEl.textContent = 'Valore non valido: inserisci un intero maggiore o uguale a 1.';
+      } else if (custom == null) {
+        limitEl.textContent = 'Inserisci il numero di destinatari da inviare in questo blocco.';
+      } else {
+        limitEl.textContent = 'Selezionato: ' + custom + ' destinatari.';
+      }
       updateEmailSystemLimitHint();
     }
 
     function validateEmailLimit(outEl) {
       const custom = getCustomEmailLimitValue();
-      if (Number.isNaN(custom)) {
-        outEl.innerHTML = '<div class="error">Blocco personalizzato non valido: inserisci un intero maggiore o uguale a 1.</div>';
+      if (custom == null || Number.isNaN(custom)) {
+        outEl.innerHTML = '<div class="error">Blocco destinatari non valido: inserisci un intero maggiore o uguale a 1.</div>';
         return null;
       }
-      return getEffectiveEmailLimit();
+      return custom;
     }
 
     async function loadEmailLimits() {
@@ -1507,7 +1502,10 @@
         const hasDailyLimit = Number.isFinite(Number(d.dailyLimit)) && Number(d.dailyLimit) > 0;
         const remaining = hasDailyLimit ? Number(d.dailyRemaining ?? 0) : Number.POSITIVE_INFINITY;
         const totalRemaining = Math.max(0, emailTotalAudienceCount - batchSent);
-        const sendableToday = Math.min(getEffectiveEmailLimit(), remaining, totalRemaining);
+        const effectiveLimit = getEffectiveEmailLimit();
+        const sendableToday = Number.isInteger(effectiveLimit) && effectiveLimit > 0
+          ? Math.min(effectiveLimit, remaining, totalRemaining)
+          : 0;
         if (batchSent > 0) {
           hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. In questo invio puoi mandarne fino a ' + sendableToday + (hasDailyLimit ? ' (residuo giornaliero: ' + remaining + ').' : ' (limite giornaliero disattivato).');
         } else {
@@ -1565,24 +1563,10 @@
       };
     });
 
-    // Block buttons
-    document.querySelectorAll('.block-btns [data-limit]').forEach((btn) => {
-      btn.onclick = () => {
-        selectedEmailLimit = parseInt(btn.dataset.limit, 10);
-        document.querySelectorAll('.block-btns [data-limit]').forEach((b) => b.classList.remove('btn-primary'));
-        document.querySelectorAll('.block-btns [data-limit]').forEach((b) => b.classList.add('btn-secondary'));
-        btn.classList.remove('btn-secondary');
-        btn.classList.add('btn-primary');
-        updateEmailLimitHint();
-        resetEmailSendable('Blocco destinatari modificato: ricalcola EMAIL prima dell\'invio.');
-        if (emailSendableReady && emailSendableCount > 0) updateEmailBatchHint();
-      };
-    });
     document.getElementById('emailCustomLimit').oninput = () => {
       updateEmailLimitHint();
       resetEmailSendable('Blocco destinatari modificato: ricalcola EMAIL prima dell\'invio.');
     };
-    document.querySelector('.block-btns [data-limit="100"]').click();
 
     // Test email
     document.getElementById('btnTestEmail').onclick = async () => {
