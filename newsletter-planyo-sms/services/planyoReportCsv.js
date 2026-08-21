@@ -65,8 +65,18 @@ const COL_ALIASES = {
   evento: ['risorsa', 'resource name', 'nome risorsa', 'evento', 'nome evento'],
   idRisorsa: ['idrisorsa', 'id risorsa', 'resource id', 'resource_id', 'id_risorsa'],
   stato: ['status', 'stato', 'state', 'reservation status', 'stato prenotazione'],
-  creazione: ['creazione', 'creation', 'created', 'data creazione', 'creation date', 'insert date', 'insert_date']
+  creazione: ['creazione', 'creation', 'created', 'data creazione', 'creation date', 'insert date', 'insert_date'],
+  startDate: ['start date', 'data inizio', 'start', 'check in', 'check-in', 'giorno', 'data prenotata', 'booking date', 'date'],
+  city: ['city', 'town', 'citta', 'città', 'comune']
 };
+
+function normalizeDateText(value) {
+  const txt = String(value || '').trim();
+  if (!txt) return '';
+  const ms = new Date(txt).getTime();
+  if (!isNaN(ms)) return new Date(ms).toISOString().slice(0, 10);
+  return txt;
+}
 
 function findColumnIndex(headers, aliases) {
   const h = headers.map((x) => String(x || '').toLowerCase().trim());
@@ -200,6 +210,8 @@ async function fetchAndParseCsv(csvUrl) {
   const idxIdRisorsa = findColumnIndex(headers, COL_ALIASES.idRisorsa);
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
   const idxCreazione = findColumnIndex(headers, COL_ALIASES.creazione);
+  const idxStartDate = findColumnIndex(headers, COL_ALIASES.startDate);
+  const idxCity = findColumnIndex(headers, COL_ALIASES.city);
 
   if (idxEmail < 0) {
     const firstLine = rows[0]?.slice(0, 3).join(', ') || '(nessuna intestazione)';
@@ -226,13 +238,21 @@ async function fetchAndParseCsv(csvUrl) {
 
     result.push({
       nome: get(idxNome),
+      first_name: get(idxNome),
       cognome: get(idxCognome),
+      last_name: get(idxCognome),
       email: email.toLowerCase(),
       telefono,
+      phone: telefono,
+      city: get(idxCity),
+      citta: get(idxCity),
       eventoPrenotato: get(idxEvento),
+      name: get(idxEvento),
       idRisorsa: get(idxIdRisorsa),
       stato: get(idxStato),
-      creazione: get(idxCreazione)
+      status: normalizeStatusToFilter(get(idxStato)) || get(idxStato),
+      creazione: get(idxCreazione),
+      start_date: normalizeDateText(get(idxStartDate) || get(idxCreazione))
     });
   }
 
@@ -340,10 +360,19 @@ async function loadListDFromCsv(filters = {}, excludeListA = {}) {
 
   return deduped.map((r) => ({
     nome: r.nome,
+    first_name: r.first_name || r.nome,
     cognome: r.cognome,
+    last_name: r.last_name || r.cognome,
     email: r.email,
     telefono: planyo.normalizePhone(r.telefono) || r.telefono,
+    phone: planyo.normalizePhone(r.telefono) || r.telefono,
+    city: r.city || r.citta || '',
+    citta: r.city || r.citta || '',
     eventoPrenotato: r.eventoPrenotato || '',
+    evento: r.eventoPrenotato || '',
+    name: r.name || r.eventoPrenotato || '',
+    start_date: r.start_date || '',
+    status: r.status || normalizeStatusToFilter(r.stato) || '',
     segment: 'D'
   }));
 }

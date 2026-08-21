@@ -237,13 +237,14 @@
     <h1>Newsletter</h1>
     <p class="subtitle">Invio SMS e email segmentate da base dati CSV + prenotazioni Planyo</p>
     <div class="tab-bar">
-      <button type="button" class="tab-btn active" data-tab="sms">Newsletter SMS</button>
+      <button type="button" class="tab-btn active" data-tab="audience">SELEZIONA PUBBLICO</button>
+      <button type="button" class="tab-btn" data-tab="sms">INVIO SMS</button>
       <button type="button" class="tab-btn" data-tab="email">INVIO EMAIL</button>
       <button type="button" class="tab-btn" data-tab="privacy">PRIVACY</button>
     </div>
 
-    <!-- Tab SMS -->
-    <div id="tabSms" class="tab-panel active">
+    <!-- Tab SELEZIONA PUBBLICO -->
+    <div id="tabAudience" class="tab-panel active">
     <div class="card">
       <h2>Base Dati</h2>
       <div class="form-group">
@@ -285,7 +286,7 @@
         <div class="checkboxes">
           <label class="checkbox-label"><input type="checkbox" name="smsSource" value="newsletter"> Tutti i contatti da newsletter caricata (CSV)</label>
           <label class="checkbox-label"><input type="checkbox" name="smsSource" value="prenotazioni"> Tutti i contatti Prenotazioni (API Planyo)</label>
-          <label class="checkbox-label"><input type="checkbox" name="smsSource" value="report"> Tutti i contatti dal report (CSV Planyo)</label>
+          <label class="checkbox-label"><input type="checkbox" name="smsSource" value="report"> Tutti i contatti dal report "Tutte prenotazioni per cursor" (CSV Planyo)</label>
         </div>
       </div>
       <div class="form-group" id="smsListDFilters" style="display:none;">
@@ -311,44 +312,47 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2>Invio campagna</h2>
-      <p class="hint" style="margin-bottom: 0.75rem;">Dopo "Calcola contatti", imposta il testo e avvia l'invio reale o simulato.</p>
-      <div class="form-group">
-        <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
-        <textarea id="smsText" rows="3" maxlength="160" placeholder="Scrivi qui il messaggio SMS da inviare"></textarea>
-        <p class="hint">Massimo 160 caratteri.</p>
-      </div>
-      <div class="form-group">
-        <label>Invio prova</label>
-        <p class="hint" style="margin-bottom: 0.5rem;">Invia un SMS di test al tuo numero usando il testo scritto nel campo sopra.</p>
-        <label>Numero telefono</label>
-        <input type="text" id="testPhone" placeholder="+39 333 1234567" maxlength="20">
-      </div>
-      <div class="actions">
-        <button class="btn btn-secondary" id="btnTest">Invia SMS di prova</button>
-        <button class="btn btn-secondary" id="btnCalcSms">CALCOLA SMS</button>
-        <button class="btn btn-primary" id="btnRun" disabled>
-          Avvia invio
-        </button>
-        <button class="btn btn-secondary" id="btnAbort" style="display:none;">
-          Annulla
-        </button>
-      </div>
-      <div class="output" id="testOutput"></div>
-      <p class="hint" id="smsSendableStatus" style="margin-top: 0.5rem;">Calcola SMS per preparare la lista numeri prima dell'invio.</p>
-      <div class="output" id="runOutput"></div>
-    </div>
     </div>
 
+    <!-- Tab SMS -->
+    <div id="tabSms" class="tab-panel">
+      <div class="card">
+        <h2>Invio campagna SMS</h2>
+        <p class="hint" style="margin-bottom: 0.75rem;">Il pubblico viene letto dal tab "SELEZIONA PUBBLICO". Dopo "Calcola contatti", imposta il testo e avvia l'invio reale o simulato.</p>
+        <div class="form-group">
+          <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
+          <textarea id="smsText" rows="3" maxlength="160" placeholder="Scrivi qui il messaggio SMS da inviare"></textarea>
+          <p class="hint">Massimo 160 caratteri.</p>
+        </div>
+        <div class="form-group">
+          <label>Invio prova</label>
+          <p class="hint" style="margin-bottom: 0.5rem;">Invia un SMS di test al tuo numero usando il testo scritto nel campo sopra.</p>
+          <label>Numero telefono</label>
+          <input type="text" id="testPhone" placeholder="+39 333 1234567" maxlength="20">
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary" id="btnTest">Invia SMS di prova</button>
+          <button class="btn btn-secondary" id="btnCalcSms">CALCOLA SMS</button>
+          <button class="btn btn-primary" id="btnRun" disabled>
+            Avvia invio
+          </button>
+          <button class="btn btn-secondary" id="btnAbort" style="display:none;">
+            Annulla
+          </button>
+        </div>
+        <div class="output" id="testOutput"></div>
+        <p class="hint" id="smsSendableStatus" style="margin-top: 0.5rem;">Calcola SMS per preparare la lista numeri prima dell'invio.</p>
+        <div class="output" id="runOutput"></div>
+      </div>
+    </div>
     <!-- Tab EMAIL -->
     <div id="tabEmail" class="tab-panel">
       <div class="card">
         <h2>Newsletter EMAIL</h2>
-        <p class="hint" style="margin-bottom: 1rem;">In questo tab è disponibile solo l'invio email. Pubblico, filtri e ID evento Planyo sono letti automaticamente dal tab Newsletter SMS.</p>
+        <p class="hint" style="margin-bottom: 1rem;">In questo tab è disponibile solo l'invio email. Pubblico, filtri e ID evento Planyo sono letti automaticamente dal tab "SELEZIONA PUBBLICO".</p>
         <p class="hint" id="emailAudienceHint" style="margin-bottom: 0.75rem; color: #475569;"></p>
         <div class="form-group">
-          <label>Blocco destinatari (max 500/giorno)</label>
+          <label>Blocco destinatari</label>
           <div class="block-btns">
             <button type="button" class="btn btn-secondary" data-limit="100">100</button>
             <button type="button" class="btn btn-secondary" data-limit="200">200</button>
@@ -382,20 +386,9 @@
           </div>
           <div class="output" id="emailTestOutput" style="margin-top: 0.5rem;"></div>
         </div>
-        <div class="form-group">
-          <label>Registro invii email (CSV)</label>
-          <input type="file" id="emailRegistryFile" accept=".csv,text/csv">
-          <p class="hint">Carica un file REGISTRO_INVII_EMAIL per continuare invii in giorni successivi senza dipendere dai filtri.</p>
-          <div class="actions" style="margin-top:0.5rem;">
-            <button type="button" class="btn btn-secondary" id="btnConfirmRegistry">CONFERMA REGISTRO CARICATO</button>
-          </div>
-          <p class="hint" id="emailRegistrySummary" style="margin-top:0.5rem;"></p>
-        </div>
         <div class="actions">
           <button type="button" class="btn btn-secondary" id="btnCalcEmail">CALCOLA EMAIL</button>
           <button type="button" class="btn btn-secondary" id="btnExportCleanCsv">SCARICA CSV CONTATTI</button>
-          <button type="button" class="btn btn-secondary" id="btnExportCsv">SCARICA REGISTRO CSV</button>
-          <button type="button" class="btn btn-secondary" id="btnSendFromRegistry">INVIA EMAIL DA REGISTRO</button>
           <button type="button" class="btn btn-primary" id="btnSendEmail" disabled>Invia email</button>
           <button type="button" class="btn btn-danger" id="btnEmailAbort" style="display:none;">Interrompi invio</button>
         </div>
@@ -409,7 +402,7 @@
     <div id="tabPrivacy" class="tab-panel">
       <div class="card">
         <h2>PRIVACY</h2>
-        <p class="hint" style="margin-bottom: 1rem;">Ricerca multi-fonte e cancellazione diretta del contatto da Mailchimp, Planyo e SMS Hosting (quando supportato).</p>
+        <p class="hint" style="margin-bottom: 1rem;">Ricerca multi-fonte e cancellazione diretta del contatto da Mailchimp, Planyo, SMS Hosting e Resend (quando supportato).</p>
         <div class="form-group">
           <label for="privacyEmail">Email contatto</label>
           <input type="email" id="privacyEmail" placeholder="nome@dominio.it" autocomplete="off">
@@ -444,10 +437,6 @@
     let emailSendableCount = 0;
     let emailSendableReady = false;
     let emailTotalAudienceCount = 0;
-    let loadedEmailRegistryRows = [];
-    let loadedEmailRegistryMeta = null;
-    let loadedEmailRegistryValidated = false;
-
     function showOutput(el, logs, extra) {
       let html = '';
       if (logs && logs.length) {
@@ -478,14 +467,12 @@
       emailSendableReady = false;
       const status = document.getElementById('emailSendableStatus');
       const btnSend = document.getElementById('btnSendEmail');
-      const btnExport = document.getElementById('btnExportCsv');
       const btnExportClean = document.getElementById('btnExportCleanCsv');
       if (status) {
         status.textContent = forceMessage || 'Calcola EMAIL per vedere quante email verrebbero inviate con i criteri selezionati.';
         status.style.color = '';
       }
       if (btnSend) btnSend.disabled = true;
-      if (btnExport) btnExport.disabled = true;
       if (btnExportClean) btnExportClean.disabled = true;
     }
 
@@ -498,6 +485,7 @@
       if (key === 'mailchimp') return 'Mailchimp';
       if (key === 'planyo') return 'Planyo';
       if (key === 'smshosting') return 'SMS Hosting';
+      if (key === 'resend') return 'Resend';
       return key;
     }
     function renderPrivacyResult(outputEl, response) {
@@ -506,7 +494,7 @@
       if (response?.message) {
         html += '<div class="log result-ok">' + escapeHtml(response.message) + '</div>';
       }
-      const keys = ['mailchimp', 'planyo', 'smshosting'];
+      const keys = ['mailchimp', 'planyo', 'smshosting', 'resend'];
       for (const key of keys) {
         const item = results[key] || {};
         const status = String(item.status || 'error');
@@ -520,6 +508,12 @@
           css = 'warn';
         } else if (status === 'found_not_deleted') {
           statusText = 'contatto trovato ma non cancellato';
+          css = 'warn';
+        } else if (status === 'found') {
+          statusText = 'contatto trovato';
+          css = 'log result-ok';
+        } else if (status === 'skipped') {
+          statusText = 'saltato (non configurato)';
           css = 'warn';
         } else {
           statusText = 'errore';
@@ -553,16 +547,6 @@
         URL.revokeObjectURL(url);
       }, 100);
     }
-    function decodeBase64Utf8(v) {
-      try {
-        const bin = atob(String(v || ''));
-        const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-        return new TextDecoder('utf-8').decode(bytes);
-      } catch (_) {
-        return '';
-      }
-    }
-
     function getEngagementType() { return 'open'; }
     async function loadPlanyoResourcesHint() {
       const el = document.getElementById('planyoResourcesHint');
@@ -620,7 +604,7 @@
       if (!hint) return;
       const cfg = getEmailAudienceSelectionFromSms();
       if (!cfg.segments.length) {
-        hint.textContent = 'Pubblico email non configurato: seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.';
+        hint.textContent = 'Pubblico email non configurato: seleziona almeno una sorgente in "Crea Pubblico" nel tab "SELEZIONA PUBBLICO".';
         hint.style.color = 'var(--danger)';
         return;
       }
@@ -703,61 +687,6 @@
       }
       return out;
     }
-    function parseRegistryCsvToRows(csvText) {
-      const raw = String(csvText || '').replace(/\r\n/g, '\n');
-      const lines = raw.split('\n');
-      let idxStart = 0;
-      let subject = '';
-      let body = '';
-      const subjectPref = '# OGGETTO_EMAIL_BASE64:';
-      const bodyPref = '# CONTENUTO_EMAIL_BASE64:';
-      while (idxStart < lines.length) {
-        const line = String(lines[idxStart] || '');
-        const trimmed = line.trim();
-        if (!trimmed) { idxStart++; continue; }
-        if (!trimmed.startsWith('#')) break;
-        if (trimmed.startsWith(subjectPref)) {
-          const v = trimmed.slice(subjectPref.length).trim();
-          subject = decodeBase64Utf8(v);
-        } else if (trimmed.startsWith(bodyPref)) {
-          const v = trimmed.slice(bodyPref.length).trim();
-          body = decodeBase64Utf8(v);
-        }
-        idxStart++;
-      }
-      const csvPart = lines.slice(idxStart).join('\n');
-      const rows = parseCsvRows(csvPart);
-      if (rows.length < 2) return { subject, body, rows: [] };
-      const headers = rows[0].map((h) => String(h || '').toLowerCase().trim());
-      const col = (name) => headers.findIndex((h) => h === name || h.includes(name));
-      const idx = {
-        nome: col('nome'),
-        cognome: col('cognome'),
-        email: col('email'),
-        telefono: col('telefono'),
-        data_invio_email: col('data_invio_email')
-      };
-      if (idx.email < 0) throw new Error('Colonna email non trovata nel registro');
-      const out = [];
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const get = (key) => {
-          const p = idx[key];
-          return (p >= 0 && row[p] !== undefined) ? String(row[p] || '').trim() : '';
-        };
-        const email = get('email').toLowerCase();
-        if (!email || !email.includes('@')) continue;
-        out.push({
-          nome: get('nome'),
-          cognome: get('cognome'),
-          email,
-          telefono: get('telefono'),
-          data_invio_email: get('data_invio_email')
-        });
-      }
-      return { subject, body, rows: out };
-    }
-
     document.getElementById('btnRun').onclick = async () => {
       const btn = document.getElementById('btnRun');
       const btnAbort = document.getElementById('btnAbort');
@@ -930,7 +859,7 @@
 
     function updateCacheReadyState(ready) {
       if (!ready) {
-        ['btnSendEmail', 'btnExportCsv', 'btnExportCleanCsv'].forEach(id => {
+        ['btnSendEmail', 'btnExportCleanCsv'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.disabled = true;
         });
@@ -970,21 +899,17 @@
       const btnSmsCalc = document.getElementById('btnSmsCalc');
       const btnRun = document.getElementById('btnRun');
       const btnEmailCalc = document.getElementById('btnEmailCalc');
-      const btnExportCsv = document.getElementById('btnExportCsv');
       const btnExportCleanCsv = document.getElementById('btnExportCleanCsv');
       const btnSendEmail = document.getElementById('btnSendEmail');
       const btnCalcEmail = document.getElementById('btnCalcEmail');
-      const btnSendFromRegistry = document.getElementById('btnSendFromRegistry');
       const btnTest = document.getElementById('btnTest');
       const btnCalcSms = document.getElementById('btnCalcSms');
       if (btnSmsCalc) btnSmsCalc.disabled = busy;
       if (btnRun && busy) btnRun.disabled = true;
       if (btnEmailCalc) btnEmailCalc.disabled = busy;
-      if (btnExportCsv && busy) btnExportCsv.disabled = true;
       if (btnExportCleanCsv && busy) btnExportCleanCsv.disabled = true;
       if (btnSendEmail && busy) btnSendEmail.disabled = true;
       if (btnCalcEmail) btnCalcEmail.disabled = busy;
-      if (btnSendFromRegistry) btnSendFromRegistry.disabled = busy;
       if (btnTest) btnTest.disabled = busy;
       if (btnCalcSms) btnCalcSms.disabled = busy;
     }
@@ -1252,19 +1177,11 @@
     };
     
     document.getElementById('emailSubject').oninput = () => {
-      if (loadedEmailRegistryValidated) {
-        scheduleEmailDraftSave();
-        return;
-      }
       if (emailSendableReady && emailSendableCount > 0) updateEmailBatchHint();
       resetEmailSendable('Oggetto modificato: ricalcola EMAIL prima dell\'invio.');
       scheduleEmailDraftSave();
     };
     document.getElementById('emailBody').oninput = () => {
-      if (loadedEmailRegistryValidated) {
-        scheduleEmailDraftSave();
-        return;
-      }
       resetEmailSendable('Messaggio modificato: ricalcola EMAIL prima dell\'invio.');
       scheduleEmailDraftSave();
     };
@@ -1383,7 +1300,7 @@
       const btnCalc = document.getElementById('btnCalcEmail');
       const out = document.getElementById('emailOutput');
       if (!cfg.segments.length) {
-        resetEmailSendable('Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.');
+        resetEmailSendable('Seleziona almeno una sorgente in "Crea Pubblico" nel tab "SELEZIONA PUBBLICO".');
         return;
       }
       btnCalc.disabled = true;
@@ -1426,13 +1343,18 @@
         if (d.error) throw new Error(d.error);
         const total = Number(d.total || 0);
         emailTotalAudienceCount = total;
-        const dailyRemaining = Number(d.dailyLimit?.remaining ?? 500);
+        const hasDailyLimit = !!d.dailyLimit?.enabled && Number.isFinite(Number(d.dailyLimit?.max));
+        const dailyRemaining = hasDailyLimit ? Number(d.dailyLimit?.remaining ?? 0) : Number.POSITIVE_INFINITY;
         emailSendableCount = Math.max(0, Math.min(total, selectedEmailLimit, dailyRemaining));
         emailSendableReady = emailSendableCount > 0;
-        status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + selectedEmailLimit + ', residuo giornaliero ' + dailyRemaining + ').';
+        if (hasDailyLimit) {
+          const dailyMax = Number(d.dailyLimit.max);
+          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + selectedEmailLimit + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
+        } else {
+          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + selectedEmailLimit + ', limite giornaliero disattivato).';
+        }
         status.style.color = emailSendableReady ? 'var(--success)' : 'var(--danger)';
         document.getElementById('btnSendEmail').disabled = !emailSendableReady;
-        document.getElementById('btnExportCsv').disabled = !emailSendableReady;
         document.getElementById('btnExportCleanCsv').disabled = !emailSendableReady;
         if (emailSendableReady) updateEmailBatchHint();
       } catch (e) {
@@ -1441,7 +1363,6 @@
         status.textContent = 'Errore: ' + e.message;
         status.style.color = 'var(--danger)';
         document.getElementById('btnSendEmail').disabled = true;
-        document.getElementById('btnExportCsv').disabled = true;
         document.getElementById('btnExportCleanCsv').disabled = true;
         out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
       } finally {
@@ -1455,7 +1376,7 @@
       const out = document.getElementById('emailOutput');
       const btn = document.getElementById('btnExportCleanCsv');
       if (!cfg.segments.length) {
-        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.</div>';
+        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab "SELEZIONA PUBBLICO".</div>';
         return;
       }
       if (!emailSendableReady || emailSendableCount <= 0) {
@@ -1518,12 +1439,16 @@
         const r = await fetch(API + '/api/email/batch-status?' + params);
         const d = await r.json();
         const batchSent = d.batchSent || 0;
-        const remaining = d.dailyRemaining ?? 500;
+        const hasDailyLimit = Number.isFinite(Number(d.dailyLimit)) && Number(d.dailyLimit) > 0;
+        const remaining = hasDailyLimit ? Number(d.dailyRemaining ?? 0) : Number.POSITIVE_INFINITY;
         const totalRemaining = Math.max(0, emailTotalAudienceCount - batchSent);
+        const sendableToday = Math.min(selectedEmailLimit, remaining, totalRemaining);
         if (batchSent > 0) {
-          hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. Oggi puoi inviarne altri ' + Math.min(selectedEmailLimit, remaining, totalRemaining) + ' (max 500/giorno).';
+          hint.textContent = 'In questo batch: ' + batchSent + ' già inviati. Rimanenti: ' + totalRemaining + '. In questo invio puoi mandarne fino a ' + sendableToday + (hasDailyLimit ? ' (residuo giornaliero: ' + remaining + ').' : ' (limite giornaliero disattivato).');
         } else {
-          hint.textContent = 'Limite 500 email/giorno. Per liste lunghe, invia 500 oggi e domani altre 500 (i già inviati vengono esclusi automaticamente).';
+          hint.textContent = hasDailyLimit
+            ? 'Limite giornaliero attivo: ' + Number(d.dailyLimit) + ' email (residuo oggi: ' + remaining + ').'
+            : 'Limite giornaliero disattivato.';
         }
       } catch (_) {
         hint.textContent = '';
@@ -1564,7 +1489,13 @@
         document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
         btn.classList.add('active');
         const tab = btn.dataset.tab;
-        const panelId = tab === 'sms' ? 'tabSms' : (tab === 'email' ? 'tabEmail' : 'tabPrivacy');
+        const panelMap = {
+          audience: 'tabAudience',
+          sms: 'tabSms',
+          email: 'tabEmail',
+          privacy: 'tabPrivacy'
+        };
+        const panelId = panelMap[tab];
         const panel = document.getElementById(panelId);
         if (panel) panel.classList.add('active');
       };
@@ -1618,189 +1549,6 @@
       btn.disabled = false;
     };
 
-    document.getElementById('emailRegistryFile').onchange = async () => {
-      const out = document.getElementById('emailOutput');
-      const summary = document.getElementById('emailRegistrySummary');
-      const file = document.getElementById('emailRegistryFile').files?.[0];
-      if (!file) {
-        loadedEmailRegistryRows = [];
-        loadedEmailRegistryMeta = null;
-        loadedEmailRegistryValidated = false;
-        if (summary) summary.textContent = '';
-        return;
-      }
-      try {
-        const text = await file.text();
-        loadedEmailRegistryMeta = parseRegistryCsvToRows(text);
-        loadedEmailRegistryRows = loadedEmailRegistryMeta.rows || [];
-        loadedEmailRegistryValidated = false;
-        if (summary) {
-          summary.textContent = 'File caricato. Clicca "CONFERMA REGISTRO CARICATO" per validare e compilare oggetto/testo.';
-          summary.style.color = '';
-        }
-        out.innerHTML = '<div class="log result-ok">Registro caricato: ' + loadedEmailRegistryRows.length + ' contatti. In attesa di conferma.</div>';
-      } catch (e) {
-        loadedEmailRegistryRows = [];
-        loadedEmailRegistryMeta = null;
-        loadedEmailRegistryValidated = false;
-        if (summary) {
-          summary.textContent = 'Errore lettura registro.';
-          summary.style.color = 'var(--danger)';
-        }
-        out.innerHTML = '<div class="error">Errore caricamento registro: ' + escapeHtml(e.message) + '</div>';
-      }
-    };
-
-    document.getElementById('btnConfirmRegistry').onclick = async () => {
-      const out = document.getElementById('emailOutput');
-      const summary = document.getElementById('emailRegistrySummary');
-      if (!loadedEmailRegistryMeta || !Array.isArray(loadedEmailRegistryMeta.rows) || !loadedEmailRegistryMeta.rows.length) {
-        out.innerHTML = '<div class="error">Carica prima un file REGISTRO_INVII_EMAIL valido.</div>';
-        return;
-      }
-      const subject = String(loadedEmailRegistryMeta.subject || '');
-      const body = String(loadedEmailRegistryMeta.body || '');
-      if (!subject.trim() || !body.trim()) {
-        out.innerHTML = '<div class="error">Nel registro mancano oggetto o contenuto email.</div>';
-        return;
-      }
-      loadedEmailRegistryValidated = true;
-      loadedEmailRegistryRows = loadedEmailRegistryMeta.rows;
-      document.getElementById('emailSubject').value = subject;
-      document.getElementById('emailBody').value = body;
-      scheduleEmailDraftSave();
-      const total = loadedEmailRegistryRows.length;
-      const sent = loadedEmailRegistryRows.filter((r) => String(r.data_invio_email || '').trim()).length;
-      const pending = Math.max(0, total - sent);
-      if (summary) {
-        summary.textContent = 'Registro confermato | contatti: ' + total + ' | email inviate: ' + sent + ' | email ancora da inviare: ' + pending;
-        summary.style.color = 'var(--success)';
-      }
-      out.innerHTML = '<div class="log result-ok">Registro confermato. Oggetto e contenuto email compilati automaticamente.</div>';
-    };
-
-    document.getElementById('btnSendFromRegistry').onclick = async () => {
-      const out = document.getElementById('emailOutput');
-      const btn = document.getElementById('btnSendFromRegistry');
-      if (!loadedEmailRegistryRows.length) {
-        out.innerHTML = '<div class="error">Carica prima un file REGISTRO_INVII_EMAIL.</div>';
-        return;
-      }
-      if (!loadedEmailRegistryValidated) {
-        out.innerHTML = '<div class="error">Prima clicca "CONFERMA REGISTRO CARICATO".</div>';
-        return;
-      }
-      const subject = document.getElementById('emailSubject').value;
-      const body = document.getElementById('emailBody').value;
-      const limitCap = Math.min(selectedEmailLimit, 500);
-      if (!confirm('Confermi INVIA EMAIL DA REGISTRO? Verranno inviate fino a ' + limitCap + ' email dal registro caricato.')) return;
-      btn.disabled = true;
-      out.innerHTML = '<div class="log">Invio da registro in corso...</div>';
-      try {
-        const d = await fetchJson(API + '/api/email/send-from-registry', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            rows: loadedEmailRegistryRows,
-            subject,
-            body,
-            limit: selectedEmailLimit
-          })
-        });
-        if (!d.success) throw new Error(d.error || 'Invio da registro fallito');
-        const sent = d.result?.sent || 0;
-        const failed = d.result?.failed || 0;
-        const remaining = d.result?.remaining || 0;
-        out.innerHTML = '<div class="log result-ok">Invio da registro completato. Inviate: ' + sent + (failed ? (' | Fallite: ' + failed) : '') + ' | Rimanenti: ' + remaining + '.</div>';
-        const failureSummary = Array.isArray(d.result?.failureSummary) ? d.result.failureSummary : [];
-        const failureSamples = Array.isArray(d.result?.failureSamples) ? d.result.failureSamples : [];
-        if (failed > 0 && failureSummary.length) {
-          const summaryText = failureSummary
-            .map((x) => (x.reason || 'Errore') + ': ' + (x.count || 0))
-            .join(' | ');
-          out.innerHTML += '<div class="log">Cause fallimento: ' + escapeHtml(summaryText) + '.</div>';
-        }
-        if (failed > 0 && failureSamples.length) {
-          const sampleText = failureSamples
-            .slice(0, 3)
-            .map((x) => (x.email || '-') + ' -> ' + (x.reason || 'errore'))
-            .join(' || ');
-          out.innerHTML += '<div class="log">Esempi: ' + escapeHtml(sampleText) + '.</div>';
-        }
-        if (d.result?.registryCsv) {
-          const fn = d.result.registryFilename || ('REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv');
-          downloadCsvFile(fn, d.result.registryCsv);
-          try {
-            loadedEmailRegistryMeta = parseRegistryCsvToRows(d.result.registryCsv);
-            loadedEmailRegistryRows = loadedEmailRegistryMeta.rows || [];
-            const summary = document.getElementById('emailRegistrySummary');
-            if (summary) {
-              const total = loadedEmailRegistryRows.length;
-              const sentCount = loadedEmailRegistryRows.filter((r) => String(r.data_invio_email || '').trim()).length;
-              summary.textContent = 'Registro aggiornato | contatti: ' + total + ' | email inviate: ' + sentCount + ' | email ancora da inviare: ' + (total - sentCount);
-              summary.style.color = 'var(--success)';
-            }
-          } catch (_) {}
-        }
-      } catch (e) {
-        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
-      } finally {
-        btn.disabled = false;
-      }
-    };
-
-    // Export REGISTRO CSV (nome,cognome,email,telefono + tracking invii)
-    document.getElementById('btnExportCsv').onclick = async () => {
-      const cfg = getEmailAudienceSelectionFromSms();
-      const out = document.getElementById('emailOutput');
-      const btn = document.getElementById('btnExportCsv');
-      if (!cfg.segments.length) {
-        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.</div>';
-        return;
-      }
-      if (!emailSendableReady || emailSendableCount <= 0) {
-        out.innerHTML = '<div class="error">Prima clicca "CALCOLA EMAIL" per validare il pubblico da esportare.</div>';
-        return;
-      }
-      btn.disabled = true;
-      out.innerHTML = '<div class="log">Generazione registro CSV in corso...</div>';
-      try {
-        const params = new URLSearchParams({
-          campaignId: NEWSLETTER_SOURCE_ID,
-          engagementType: getEngagementType(),
-          segments: cfg.segments.join(','),
-          excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0',
-          registry: '1',
-          subject: document.getElementById('emailSubject').value.trim(),
-          body: document.getElementById('emailBody').value
-        });
-        if (cfg.targetResourceId) {
-          params.set('targetResourceId', cfg.targetResourceId);
-          params.set('eventIds', cfg.targetResourceId);
-        }
-        const lf = cfg.listDFilters || {};
-        Object.keys(lf).forEach((k) => params.set(k, lf[k]));
-
-        const r = await fetch(API + '/api/email/export?' + params.toString());
-        if (!r.ok) {
-          let msg = 'Errore export CSV';
-          try {
-            const d = await r.json();
-            msg = d.error || msg;
-          } catch (_) {}
-          throw new Error(msg);
-        }
-        const csvText = await r.text();
-        const fn = 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv';
-        downloadCsvFile(fn, csvText);
-        out.innerHTML = '<div class="log result-ok">Registro CSV scaricato con successo.</div>';
-      } catch (e) {
-        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
-      } finally {
-        btn.disabled = false;
-      }
-    };
-
     // Send email
     document.getElementById('btnSendEmail').onclick = async () => {
       const campaignId = NEWSLETTER_SOURCE_ID;
@@ -1816,15 +1564,15 @@
         return;
       }
       if (!emailSegs.length) {
-        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab SMS.</div>';
+        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Crea Pubblico" nel tab "SELEZIONA PUBBLICO".</div>';
         return;
       }
       if (!emailSendableReady || emailSendableCount <= 0) {
         out.innerHTML = '<div class="error">Prima devi cliccare "CALCOLA EMAIL" e ottenere un valore maggiore di zero.</div>';
         return;
       }
-      const limitCap = Math.min(selectedEmailLimit, 500);
-      if (!confirm('Confermi l\'invio? Verranno inviate fino a ' + limitCap + ' email (limite giornaliero 500). I destinatari già inviati in questo batch verranno esclusi automaticamente.' + (emailSegs.length ? ' Liste: ' + emailSegs.join(', ') : ''))) return;
+      const limitCap = selectedEmailLimit;
+      if (!confirm('Confermi l\'invio? Verranno inviate fino a ' + limitCap + ' email in questo blocco. I destinatari già inviati in questo batch verranno esclusi automaticamente.' + (emailSegs.length ? ' Liste: ' + emailSegs.join(', ') : ''))) return;
 
       btn.disabled = true;
       btnAbort.disabled = false;
@@ -1863,13 +1611,13 @@
           const { sent, failed, batchSent, batchRemaining } = d.result;
           out.innerHTML += '<div class="log result-ok">Inviate: ' + sent + (failed > 0 ? ' | Fallite: ' + failed : '') + '</div>';
           if (batchSent != null && batchRemaining != null) {
-            out.innerHTML += '<div class="log">Totale batch: ' + batchSent + ' inviati. Rimanenti: ' + batchRemaining + '. Domani puoi inviarne altri 500.</div>';
+            out.innerHTML += '<div class="log">Totale batch: ' + batchSent + ' inviati. Rimanenti: ' + batchRemaining + '.</div>';
           }
           if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata.</div>';
           resetEmailSendable('Invio completato: clicca "CALCOLA EMAIL" per eventuale nuovo invio.');
           updateEmailBatchHint();
           if (d.result.registryCsv) {
-            const fn = d.result.registryFilename || ('REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv');
+            const fn = d.result.registryFilename || ('registro-invii-email_' + new Date().toISOString().slice(0, 10) + '.csv');
             downloadCsvFile(fn, d.result.registryCsv);
           }
         }

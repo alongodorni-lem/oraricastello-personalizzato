@@ -12,9 +12,47 @@ function looksLikeNumericResource(value) {
   return !!s && /^\d+$/.test(s);
 }
 
-function pickEventNameFromReservations(entry) {
+function pickFirstNonEmpty(...values) {
+  for (const value of values) {
+    const str = String(value ?? '').trim();
+    if (str) return str;
+  }
+  return '';
+}
+
+function formatStartDate(value) {
+  if (value == null) return '';
+  if (typeof value === 'number') {
+    const ms = value > 1e12 ? value : value * 1000;
+    const date = new Date(ms);
+    if (!isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+    return '';
+  }
+  const txt = String(value).trim();
+  if (!txt) return '';
+  const ms = new Date(txt).getTime();
+  if (!isNaN(ms)) return new Date(ms).toISOString().slice(0, 10);
+  return txt;
+}
+
+function normalizeReservationStatus(value) {
+  if (value == null) return '';
+  if (typeof value === 'number') {
+    if (value === 4) return 'confermato';
+    return String(value);
+  }
+  const raw = String(value).trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (lower.includes('confirm') || lower.includes('conferm')) return 'confermato';
+  if (lower.includes('cancel') || lower.includes('cancell')) return 'cancellato';
+  if (lower.includes('reserv') || lower.includes('riserv')) return 'riservato';
+  return raw;
+}
+
+function pickLatestReservationDetails(entry) {
   const reservations = entry?.reservations || [];
-  if (!reservations.length) return '';
+  if (!reservations.length) return { eventName: '', startDate: '', status: '', city: '' };
 
   const sorted = [...reservations].sort((a, b) => {
     const at = Number(a?.start_time || 0);
@@ -23,11 +61,24 @@ function pickEventNameFromReservations(entry) {
   });
 
   // Priorita alla prenotazione piu recente con nome testuale.
+  const fallback = sorted[0];
   for (const r of sorted) {
     const name = String(r?.resource_name || '').trim();
-    if (name && !looksLikeNumericResource(name)) return name;
+    if (name && !looksLikeNumericResource(name)) {
+      return {
+        eventName: name,
+        startDate: formatStartDate(r?.start_time),
+        status: normalizeReservationStatus(r?.status),
+        city: pickFirstNonEmpty(r?.city, r?.town)
+      };
+    }
   }
-  return '';
+  return {
+    eventName: '',
+    startDate: formatStartDate(fallback?.start_time),
+    status: normalizeReservationStatus(fallback?.status),
+    city: pickFirstNonEmpty(fallback?.city, fallback?.town)
+  };
 }
 
 /**
@@ -66,21 +117,39 @@ async function buildEmailListData(campaignId, options = {}) {
     const nome = (planyoFirst || mc?.firstName || '').trim();
     const cognome = (planyoLast || mc?.lastName || '').trim();
     const telefono = planyo.normalizePhone(planyoPhone || mc?.phone) || (planyoPhone || mc?.phone || '').trim();
+    const city = pickFirstNonEmpty(entry?.city, mc?.city);
 
     const hasReservations18m = !!(entry?.reservations?.length);
     const segmentUpper = emailsInA.has(key) ? 'A' : (hasReservations18m ? 'B' : 'C');
     let eventoPrenotato = '';
+    let startDate = '';
+    let status = '';
+    let eventCity = city;
     if (segmentUpper === 'A' || segmentUpper === 'B') {
       const fromSegment = String((entry?.reservations || [])[((entry?.reservations || []).length - 1)]?.resource_name || '').trim();
-      eventoPrenotato = !looksLikeNumericResource(fromSegment) ? fromSegment : pickEventNameFromReservations(entry);
+      const latest = pickLatestReservationDetails(entry);
+      eventoPrenotato = !looksLikeNumericResource(fromSegment) ? fromSegment : latest.eventName;
+      if (!eventoPrenotato) eventoPrenotato = latest.eventName;
+      startDate = latest.startDate;
+      status = latest.status;
+      eventCity = pickFirstNonEmpty(latest.city, city);
     }
 
     result.push({
       nome,
+      first_name: nome,
       cognome,
+      last_name: cognome,
       email: key,
       telefono,
+      phone: telefono,
+      city: eventCity,
+      citta: eventCity,
       eventoPrenotato,
+      evento: eventoPrenotato,
+      name: eventoPrenotato,
+      start_date: startDate,
+      status,
       segment: segmentUpper,
       resourceIds
     });

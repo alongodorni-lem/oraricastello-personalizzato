@@ -104,20 +104,63 @@ function incrementTodaySent(count) {
   saveSentRegistry(reg);
 }
 
+function pickFirstNonEmpty(...values) {
+  for (const value of values) {
+    const str = String(value ?? '').trim();
+    if (str) return str;
+  }
+  return '';
+}
+
+function buildTemplateData(data = {}) {
+  const seg = String(data.segment || '').toUpperCase();
+  const eventRaw = pickFirstNonEmpty(
+    data.name,
+    data.eventoPrenotato,
+    data.evento,
+    data.resource_name
+  );
+  const eventName = (seg === 'A' || seg === 'B' || seg === 'D') ? eventRaw : '';
+  const firstName = pickFirstNonEmpty(data.first_name, data.nome, data.firstName);
+  const phone = pickFirstNonEmpty(data.phone, data.telefono, data.cellulare);
+  const city = pickFirstNonEmpty(data.city, data.citta);
+  const status = pickFirstNonEmpty(data.status, data.stato);
+  const startDate = pickFirstNonEmpty(data.start_date, data.startDate);
+
+  return {
+    ...data,
+    nome: firstName,
+    first_name: firstName,
+    cognome: pickFirstNonEmpty(data.cognome, data.last_name, data.lastName),
+    email: pickFirstNonEmpty(data.email),
+    telefono: phone,
+    phone,
+    citta: city,
+    city,
+    evento: eventName,
+    eventoPrenotato: eventName,
+    name: eventName,
+    start_date: startDate,
+    status
+  };
+}
+
 /**
- * Sostituisce i placeholder nel template
+ * Sostituisce i placeholder nel template.
+ * Supporta sia {{campo}} sia $(campo), con retrocompatibilità sui campi storici.
  * @param {string} template
- * @param {{ nome: string, cognome: string, email: string, eventoPrenotato: string }} data
+ * @param {object} data
  */
 function applyTemplate(template, data) {
-  let out = template || '';
-  out = out.replace(/\{\{nome\}\}/g, data.nome || '');
-  out = out.replace(/\{\{cognome\}\}/g, data.cognome || '');
-  out = out.replace(/\{\{email\}\}/g, data.email || '');
-  const seg = String(data.segment || '').toUpperCase();
-  const evento = (seg === 'A' || seg === 'B' || seg === 'D') ? (data.eventoPrenotato || '') : '';
-  out = out.replace(/\{\{evento\}\}/g, evento);
-  return out;
+  const vars = buildTemplateData(data);
+  const normalized = {};
+  for (const [k, v] of Object.entries(vars)) {
+    normalized[String(k || '').toLowerCase()] = String(v ?? '');
+  }
+  return String(template || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}|\$\(\s*([a-zA-Z0-9_]+)\s*\)/g, (_m, braced, dollar) => {
+    const key = String(braced || dollar || '').toLowerCase();
+    return normalized[key] ?? '';
+  });
 }
 
 /**
@@ -354,7 +397,19 @@ function getSentMapForBatch(batchId) {
  * @param {{ to: string, subject: string, body: string }} opts
  */
 async function sendTestEmail({ to, subject, body }) {
-  const data = { nome: 'Mario', cognome: 'Rossi', email: to, eventoPrenotato: 'Castello delle Sorprese' };
+  const data = {
+    nome: 'Mario',
+    first_name: 'Mario',
+    cognome: 'Rossi',
+    email: to,
+    telefono: '393331234567',
+    city: 'Milano',
+    eventoPrenotato: 'Castello delle Sorprese',
+    name: 'Castello delle Sorprese',
+    start_date: '2026-10-15',
+    status: 'confermato',
+    segment: 'A'
+  };
   const cfg = getResendConfig();
   const text = applyTemplate(body, data);
   const html = text.replace(/\n/g, '<br>');

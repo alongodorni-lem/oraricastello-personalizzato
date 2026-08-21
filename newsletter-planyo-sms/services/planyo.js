@@ -61,6 +61,33 @@ function extractPhone(res) {
   return '';
 }
 
+function extractCity(res) {
+  const direct = (res.city || res.town || res.user_city || '').toString().trim();
+  if (direct) return direct;
+  const props = res.properties || res.custom_properties;
+  if (!props || typeof props !== 'object') return '';
+  const cityLike = /(city|town|citta|città|comune)/i;
+  const toStr = (v) => {
+    const x = (v && typeof v === 'object') ? (v.value ?? v.text ?? '') : v;
+    return (x || '').toString().trim();
+  };
+  if (Array.isArray(props)) {
+    for (const item of props) {
+      if (item && cityLike.test(String(item.name || item.key || ''))) {
+        const val = toStr(item.value ?? item.text);
+        if (val) return val;
+      }
+    }
+  } else {
+    for (const k of Object.keys(props)) {
+      if (!cityLike.test(k)) continue;
+      const val = toStr(props[k]);
+      if (val) return val;
+    }
+  }
+  return '';
+}
+
 function normalizePhone(phone) {
   const raw = String(phone || '').trim();
   if (!raw) return '';
@@ -161,10 +188,11 @@ async function loadReservationsByEmail(monthsLookback = 18) {
       if (!email) continue;
 
       const phone = extractPhone(res);
+      const city = extractCity(res);
       const resourceId = res.resource_id || res.resource?.id;
 
       if (!byEmail.has(email)) {
-        byEmail.set(email, { reservations: [], phone: '', firstName: '', lastName: '' });
+        byEmail.set(email, { reservations: [], phone: '', firstName: '', lastName: '', city: '' });
       }
       const entry = byEmail.get(email);
       entry.reservations.push({
@@ -172,11 +200,14 @@ async function loadReservationsByEmail(monthsLookback = 18) {
         user_id: res.user_id != null ? Number(res.user_id) : null,
         resource_id: resourceId,
         start_time: res.start_time,
-        resource_name: res.resource_name || res.resource?.name || res.name
+        resource_name: res.resource_name || res.resource?.name || res.name,
+        status: res.status ?? 4,
+        city: city || ''
       });
       if (phone && !entry.phone) entry.phone = phone;
       if (res.first_name && typeof res.first_name === 'string') entry.firstName = res.first_name.trim();
       if (res.last_name && typeof res.last_name === 'string') entry.lastName = res.last_name.trim();
+      if (city && !entry.city) entry.city = city;
     }
 
     hasMore = reservations.length >= PAGE_SIZE;
