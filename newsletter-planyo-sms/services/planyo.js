@@ -293,8 +293,15 @@ function collectResourceIds(value, out = new Set(), depth = 0) {
 async function getPlanyoResourceIds() {
   if (resourcesCache && Date.now() < resourcesCacheExpiry) return resourcesCache;
   const siteId = process.env.PLANYO_SITE_ID || '8895';
-  const data = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2 });
-  const ids = [...collectResourceIds(data)];
+  const first = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2, page: 1 });
+  const idsSet = collectResourceIds(first, new Set());
+  const maxPageRaw = Number(first?.data?.max_page || first?.max_page || 1);
+  const maxPage = Number.isFinite(maxPageRaw) && maxPageRaw > 1 ? Math.min(maxPageRaw, 20) : 1;
+  for (let page = 2; page <= maxPage; page++) {
+    const next = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2, page });
+    collectResourceIds(next, idsSet);
+  }
+  const ids = [...idsSet];
   resourcesCache = ids;
   resourcesCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
   return ids;
@@ -312,12 +319,33 @@ function parseBoolLike(v) {
 
 function inferPublishedFlag(obj) {
   if (!obj || typeof obj !== 'object') return false;
-  const boolKeys = ['published', 'is_published', 'isPublished', 'active', 'enabled', 'visible'];
-  for (const k of boolKeys) {
-    if (Object.prototype.hasOwnProperty.call(obj, k)) {
-      return parseBoolLike(obj[k]);
+  const pickFlag = (keys) => {
+    for (const k of keys) {
+      if (Object.prototype.hasOwnProperty.call(obj, k)) {
+        return parseBoolLike(obj[k]);
+      }
     }
+    return null;
+  };
+
+  // Fonte primaria: usare solo il flag "published" quando presente.
+  const publishedRawKeys = ['published', 'is_published', 'isPublished'];
+  const hasPublishedField = publishedRawKeys.some((k) => Object.prototype.hasOwnProperty.call(obj, k));
+  if (hasPublishedField) {
+    return pickFlag(publishedRawKeys) === true;
   }
+
+  // Fallback: is_listed solo se published non è presente.
+  const listedFlag = pickFlag(['is_listed', 'listed']);
+  if (listedFlag !== null) {
+    return listedFlag;
+  }
+
+  const visibilityFlag = pickFlag(['active', 'enabled', 'visible']);
+  if (visibilityFlag !== null) {
+    return visibilityFlag;
+  }
+
   const status = String(obj.status || obj.resource_status || '').trim().toLowerCase();
   if (status) {
     if (['inactive', 'disabled', 'hidden', 'deleted', 'archived', 'draft'].includes(status)) return false;
@@ -436,6 +464,48 @@ async function fetchPublishedResourcesFromPublicPage(siteId) {
   return out.sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
 }
 
+function extractResourcesMap(payload) {
+  if (!payload || typeof payload !== 'object') return {};
+  const fromData = payload?.data?.resources;
+  if (fromData && typeof fromData === 'object') return fromData;
+  const direct = payload?.resources;
+  if (direct && typeof direct === 'object') return direct;
+  return {};
+}
+
+function normalizeResourcesFromMap(resourcesMap) {
+  const out = [];
+  for (const [idKey, raw] of Object.entries(resourcesMap || {})) {
+    if (!raw || typeof raw !== 'object') continue;
+    const id = parseInt(String(raw.id ?? idKey).trim(), 10);
+    const name = cleanResourceName(raw.name ?? raw.resource_name ?? raw.title ?? raw.label ?? '');
+    if (!Number.isInteger(id) || id <= 0) continue;
+    if (!looksLikeRealResourceName(name)) continue;
+    out.push({
+      id,
+      name,
+      published: inferPublishedFlag(raw)
+    });
+  }
+  return out;
+}
+
+async function fetchResourcesFromApi(siteId) {
+  const first = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2, page: 1 });
+  const firstMap = extractResourcesMap(first);
+  const all = normalizeResourcesFromMap(firstMap);
+
+  const maxPageRaw = Number(first?.data?.max_page || first?.max_page || 1);
+  const maxPage = Number.isFinite(maxPageRaw) && maxPageRaw > 1 ? Math.min(maxPageRaw, 20) : 1;
+
+  for (let page = 2; page <= maxPage; page++) {
+    const next = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2, page });
+    const nextMap = extractResourcesMap(next);
+    all.push(...normalizeResourcesFromMap(nextMap));
+  }
+  return all;
+}
+
 async function getPublishedResources() {
   if (resourcesListCache && Date.now() < resourcesListCacheExpiry) {
     return resourcesListCache;
@@ -452,8 +522,7 @@ async function getPublishedResources() {
     // Fallback sotto: list_resources API.
   }
 
-  const data = await callPlanyoAPI('list_resources', { site_id: siteId, detail_level: 2 });
-  const entries = collectResourceEntries(data);
+  const entries = await fetchResourcesFromApi(siteId);
   const byId = new Map();
   for (const r of entries) {
     const prev = byId.get(r.id);
@@ -473,7 +542,8 @@ async function getPublishedResources() {
     .sort((a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }));
 
   resourcesListCache = resources.filter((r) => looksLikeRealResourceName(r.name));
-  resourcesListCacheExpiry = Date.now() + RESOURCES_CACHE_TTL_MS;
+  // Evita di "congelare" una lista vuota per un'ora quando Planyo cambia struttura/stati.
+  resourcesListCacheExpiry = Date.now() + (resourcesListCache.length > 0 ? RESOURCES_CACHE_TTL_MS : 60 * 1000);
   return resourcesListCache;
 }
 

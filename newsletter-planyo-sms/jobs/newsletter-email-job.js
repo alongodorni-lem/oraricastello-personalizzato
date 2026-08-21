@@ -176,7 +176,8 @@ function filterByEvent(data, eventFilter) {
  * @param {number} limit - 100, 200, 300, 400, 500
  */
 function takeBlock(data, limit) {
-  const n = Math.min(Math.max(0, parseInt(String(limit), 10)), 500);
+  const maxPerRun = Math.max(1, parseInt(process.env.EMAIL_MAX_PER_RUN || '500', 10) || 500);
+  const n = Math.min(Math.max(0, parseInt(String(limit), 10)), maxPerRun);
   if (isNaN(n) || n < 1) return data.slice(0, 100);
   return data.slice(0, n);
 }

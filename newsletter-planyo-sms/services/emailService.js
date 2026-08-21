@@ -1,35 +1,35 @@
 /**
- * Servizio invio email Newsletter via Gmail (Nodemailer)
+ * Servizio invio email Newsletter via Resend API
  * Placeholder: {{nome}}, {{cognome}}, {{email}}, {{evento}}
- * Batch: traccia email già inviate per soggetto+filtri (max 500/giorno, invii progressivi)
+ * Batch: traccia email già inviate per soggetto+filtri
  */
-const nodemailer = require('nodemailer');
+const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
 const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-sent.json');
 const BATCH_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-batches.json');
-const DAILY_LIMIT = 500;
+const DAILY_LIMIT = Math.max(0, parseInt(process.env.EMAIL_MAX_PER_DAY || '0', 10) || 0);
 const EMAIL_RETRY_MAX = Math.max(0, parseInt(process.env.EMAIL_RETRY_MAX || '2', 10) || 2);
 const EMAIL_RETRY_BASE_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_RETRY_BASE_DELAY_MS || '2500', 10) || 2500);
-let transporterCache = null;
+const RESEND_API_URL = 'https://api.resend.com/emails';
+const RESEND_BATCH_API_URL = 'https://api.resend.com/emails/batch';
 
-function createTransporter() {
-  const user = process.env.GMAIL_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD;
-  if (!user || !pass) {
-    throw new Error('Credenziali Gmail mancanti (GMAIL_USER / GMAIL_APP_PASSWORD)');
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+  if (!apiKey) {
+    throw new Error('Credenziale Resend mancante (RESEND_API_KEY)');
   }
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user, pass }
-  });
-}
-
-function getTransporter() {
-  if (!transporterCache) transporterCache = createTransporter();
-  return transporterCache;
+  if (!from) {
+    throw new Error('Mittente email mancante (EMAIL_FROM)');
+  }
+  return {
+    apiKey,
+    from,
+    replyTo: process.env.EMAIL_REPLY_TO || undefined
+  };
 }
 
 function sleep(ms) {
@@ -38,13 +38,24 @@ function sleep(ms) {
 
 function isRetryableEmailError(err) {
   const code = String(err?.code || '').toUpperCase();
-  const responseCode = String(err?.responseCode || '');
+  const status = Number(err?.response?.status || 0);
+  const responseCode = String(err?.responseCode || status || '');
   const msg = String(err?.message || '').toLowerCase();
+  if (status === 429 || status >= 500) return true;
   if (['ETIMEDOUT', 'ECONNRESET', 'ESOCKET', 'ECONNECTION'].includes(code)) return true;
   if (responseCode.startsWith('4')) return true;
   if (msg.includes('rate') || msg.includes('quota') || msg.includes('too many') || msg.includes('temporar') || msg.includes('try again')) return true;
   if (msg.includes('4.7.0') || msg.includes('421') || msg.includes('450') || msg.includes('451') || msg.includes('452')) return true;
   return false;
+}
+
+function getRetryDelayMs(err, attempt) {
+  const retryAfter = Number(err?.response?.headers?.['retry-after']);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.max(500, Math.floor(retryAfter * 1000));
+  }
+  const jitter = Math.floor(Math.random() * 400);
+  return EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, attempt) + jitter;
 }
 
 function loadSentRegistry() {
@@ -72,15 +83,25 @@ function getTodaySentCount() {
 }
 
 /**
- * Verifica se si può inviare ancora (limite 500/giorno)
- * @returns {{ ok: boolean, remaining: number, today: number }}
+ * Verifica se si può inviare ancora (limite configurabile via EMAIL_MAX_PER_DAY)
+ * @returns {{ ok: boolean, remaining: number, today: number, limit: number, enabled: boolean }}
  */
 function checkDailyLimit() {
   const today = new Date().toISOString().slice(0, 10);
   const reg = loadSentRegistry();
   const sent = reg[today] || 0;
-  const remaining = Math.max(0, DAILY_LIMIT - sent);
-  return { ok: remaining > 0, remaining, today: sent };
+  const enabled = DAILY_LIMIT > 0;
+  const remaining = enabled ? Math.max(0, DAILY_LIMIT - sent) : null;
+  const ok = enabled ? remaining > 0 : true;
+  return { ok, remaining, today: sent, limit: DAILY_LIMIT, enabled };
+}
+
+function incrementTodaySent(count) {
+  if (!Number.isFinite(count) || count < 1) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const reg = loadSentRegistry();
+  reg[today] = (reg[today] || 0) + count;
+  saveSentRegistry(reg);
 }
 
 /**
@@ -104,37 +125,130 @@ function applyTemplate(template, data) {
  * @param {{ to: string, subject: string, body: string, data: object }} opts
  */
 async function sendPersonalizedEmail({ to, subject, body, data }) {
-  const transporter = getTransporter();
-  const fromAddress = process.env.GMAIL_FROM || process.env.GMAIL_USER;
+  const cfg = getResendConfig();
   const text = applyTemplate(body, data || {});
   const html = text.replace(/\n/g, '<br>');
   const mail = {
-    from: fromAddress,
+    from: cfg.from,
     to,
     subject: applyTemplate(subject, data || {}),
     text,
-    html
+    html,
+    reply_to: cfg.replyTo,
+    tags: [
+      { name: 'source', value: 'newsletter-sms' },
+      { name: 'channel', value: 'email-batch' }
+    ]
   };
   let lastErr = null;
+  let messageId = null;
   for (let attempt = 0; attempt <= EMAIL_RETRY_MAX; attempt++) {
     try {
-      await transporter.sendMail(mail);
+      const response = await axios.post(RESEND_API_URL, mail, {
+        headers: {
+          Authorization: `Bearer ${cfg.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      });
+      messageId = response?.data?.id || null;
       lastErr = null;
       break;
     } catch (err) {
       lastErr = err;
       if (attempt >= EMAIL_RETRY_MAX || !isRetryableEmailError(err)) break;
-      const jitter = Math.floor(Math.random() * 400);
-      const waitMs = EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, attempt) + jitter;
+      const waitMs = getRetryDelayMs(err, attempt);
       await sleep(waitMs);
     }
   }
   if (lastErr) throw lastErr;
+  incrementTodaySent(1);
+  return { id: messageId };
+}
 
-  const today = new Date().toISOString().slice(0, 10);
-  const reg = loadSentRegistry();
-  reg[today] = (reg[today] || 0) + 1;
-  saveSentRegistry(reg);
+function buildMailPayload({ row, subject, body, cfg, channel }) {
+  const text = applyTemplate(body, row || {});
+  return {
+    from: cfg.from,
+    to: String(row?.email || '').trim(),
+    subject: applyTemplate(subject, row || {}),
+    text,
+    html: text.replace(/\n/g, '<br>'),
+    reply_to: cfg.replyTo,
+    tags: [
+      { name: 'source', value: 'newsletter-sms' },
+      { name: 'channel', value: channel }
+    ]
+  };
+}
+
+/**
+ * Invia fino a 100 email in un'unica richiesta Resend
+ * @param {{ rows: Array<object>, subject: string, body: string, abortCheck?: Function }} opts
+ * @returns {Promise<{ sentEmails: string[], failed: Array<{email:string,error:string}> }>}
+ */
+async function sendPersonalizedBatch({ rows, subject, body, abortCheck }) {
+  const cfg = getResendConfig();
+  const validRows = [];
+  const failed = [];
+  for (const row of rows || []) {
+    const email = String(row?.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      failed.push({ email, error: 'Email non valida' });
+      continue;
+    }
+    validRows.push({ ...row, email });
+  }
+  if (typeof abortCheck === 'function' && abortCheck()) {
+    return { sentEmails: [], failed };
+  }
+  if (!validRows.length) return { sentEmails: [], failed };
+
+  const payload = validRows.map((row) => buildMailPayload({
+    row,
+    subject,
+    body,
+    cfg,
+    channel: 'email-batch'
+  }));
+
+  let lastErr = null;
+  let response = null;
+  for (let attempt = 0; attempt <= EMAIL_RETRY_MAX; attempt++) {
+    try {
+      response = await axios.post(RESEND_BATCH_API_URL, payload, {
+        headers: {
+          Authorization: `Bearer ${cfg.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      });
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= EMAIL_RETRY_MAX || !isRetryableEmailError(err)) break;
+      const waitMs = getRetryDelayMs(err, attempt);
+      await sleep(waitMs);
+      if (typeof abortCheck === 'function' && abortCheck()) break;
+    }
+  }
+  if (lastErr) throw lastErr;
+
+  const raw = response?.data;
+  const items = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+  const sentEmails = [];
+  validRows.forEach((row, idx) => {
+    const item = items[idx];
+    if (item && (item.error || item.message)) {
+      failed.push({ email: row.email, error: String(item.error || item.message) });
+      return;
+    }
+    sentEmails.push(row.email);
+  });
+
+  incrementTodaySent(sentEmails.length);
+  return { sentEmails, failed };
 }
 
 /**
@@ -241,22 +355,33 @@ function getSentMapForBatch(batchId) {
  */
 async function sendTestEmail({ to, subject, body }) {
   const data = { nome: 'Mario', cognome: 'Rossi', email: to, eventoPrenotato: 'Castello delle Sorprese' };
-  const transporter = getTransporter();
-  const fromAddress = process.env.GMAIL_FROM || process.env.GMAIL_USER;
+  const cfg = getResendConfig();
   const text = applyTemplate(body, data);
   const html = text.replace(/\n/g, '<br>');
-
-  await transporter.sendMail({
-    from: fromAddress,
-    to,
+  const payload = {
+    from: cfg.from,
+    to: String(to || '').trim(),
     subject: applyTemplate(subject, data),
     text,
-    html
+    html,
+    reply_to: cfg.replyTo,
+    tags: [
+      { name: 'source', value: 'newsletter-sms' },
+      { name: 'channel', value: 'email-test' }
+    ]
+  };
+  await axios.post(RESEND_API_URL, payload, {
+    headers: {
+      Authorization: `Bearer ${cfg.apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    timeout: 30000
   });
 }
 
 module.exports = {
   sendPersonalizedEmail,
+  sendPersonalizedBatch,
   sendTestEmail,
   applyTemplate,
   checkDailyLimit,

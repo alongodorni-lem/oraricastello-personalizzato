@@ -50,21 +50,16 @@ router.use(basicAuthMiddleware);
 
 let runAbortRequested = false;
 let smsRunInProgress = false;
-const EMAIL_SEND_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_SEND_DELAY_MS || '1200', 10) || 1200);
-const EMAIL_BATCH_PAUSE_EVERY = Math.max(0, parseInt(process.env.EMAIL_BATCH_PAUSE_EVERY || '40', 10) || 40);
-const EMAIL_BATCH_PAUSE_MS = Math.max(0, parseInt(process.env.EMAIL_BATCH_PAUSE_MS || '15000', 10) || 15000);
+const EMAIL_MAX_PER_RUN = Math.max(1, parseInt(process.env.EMAIL_MAX_PER_RUN || '500', 10) || 500);
+const RESEND_BATCH_SIZE = Math.min(100, Math.max(1, parseInt(process.env.RESEND_BATCH_SIZE || '100', 10) || 100));
+const RESEND_BATCH_CONCURRENCY = Math.min(5, Math.max(1, parseInt(process.env.RESEND_BATCH_CONCURRENCY || '2', 10) || 2));
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitEmailSendThrottle(processedCount) {
-  if (EMAIL_SEND_DELAY_MS > 0) {
-    await sleep(EMAIL_SEND_DELAY_MS);
+function chunkArray(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
   }
-  if (EMAIL_BATCH_PAUSE_EVERY > 0 && EMAIL_BATCH_PAUSE_MS > 0 && processedCount > 0 && processedCount % EMAIL_BATCH_PAUSE_EVERY === 0) {
-    await sleep(EMAIL_BATCH_PAUSE_MS);
-  }
+  return out;
 }
 
 function loadUiConfig() {
@@ -1044,7 +1039,17 @@ router.post('/api/email/preview/start', (req, res) => {
         const job = previewJobs.get(jobId);
         if (job) {
           job.status = 'done';
-          job.result = { total, limit: block.length, preview, dailyLimit: { sent: limitInfo.today, remaining: limitInfo.remaining, max: emailService.DAILY_LIMIT } };
+          job.result = {
+            total,
+            limit: block.length,
+            preview,
+            dailyLimit: {
+              enabled: limitInfo.enabled,
+              sent: limitInfo.today,
+              remaining: limitInfo.remaining,
+              max: limitInfo.enabled ? limitInfo.limit : null
+            }
+          };
         }
       } catch (err) {
         const job = previewJobs.get(jobId);
@@ -1165,7 +1170,12 @@ router.get('/api/email/preview', async (req, res) => {
       total,
       limit: block.length,
       preview,
-      dailyLimit: { sent: limitInfo.today, remaining: limitInfo.remaining, max: emailService.DAILY_LIMIT }
+      dailyLimit: {
+        enabled: limitInfo.enabled,
+        sent: limitInfo.today,
+        remaining: limitInfo.remaining,
+        max: limitInfo.enabled ? limitInfo.limit : null
+      }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1203,7 +1213,7 @@ router.get('/api/email/batch-status', (req, res) => {
       batchId,
       batchSent: sentCount,
       dailyRemaining: limitInfo.remaining,
-      dailyLimit: emailService.DAILY_LIMIT
+      dailyLimit: limitInfo.enabled ? limitInfo.limit : null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1248,12 +1258,12 @@ router.post('/api/email/send', async (req, res) => {
     return res.status(400).json({ success: false, error: 'PLANYO_LISTD_CSV_URL richiesto per invio solo Lista D' });
   }
 
-  const limitNum = Math.min(Math.max(parseInt(String(limit), 10) || 100, 100), 500);
+  const limitNum = Math.min(Math.max(parseInt(String(limit), 10) || 100, 1), EMAIL_MAX_PER_RUN);
   const limitInfo = emailService.checkDailyLimit();
-  if (limitInfo.remaining <= 0) {
+  if (limitInfo.enabled && limitInfo.remaining <= 0) {
     return res.status(400).json({
       success: false,
-      error: `Limite giornaliero raggiunto (500/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
+      error: `Limite giornaliero raggiunto (${limitInfo.limit}/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
     });
   }
 
@@ -1267,7 +1277,7 @@ router.post('/api/email/send', async (req, res) => {
   });
   const sentSet = emailService.getSentForBatch(batchId);
   const sentMap = emailService.getSentMapForBatch(batchId);
-  const maxToSend = Math.min(limitNum, limitInfo.remaining);
+  const maxToSend = limitInfo.enabled ? Math.min(limitNum, limitInfo.remaining) : limitNum;
 
   const cap = captureLogs(async () => {
     const targetId = targetResourceId != null ? targetResourceId : getConfiguredTargetResourceId();
@@ -1287,29 +1297,49 @@ router.post('/api/email/send', async (req, res) => {
     let failed = 0;
     const successfullySent = [];
     const sentAtByEmail = {};
+    const failureByReason = new Map();
+    const failureSamples = [];
 
-    for (const row of toSend) {
+    const chunks = chunkArray(toSend, RESEND_BATCH_SIZE);
+    for (let i = 0; i < chunks.length; i += RESEND_BATCH_CONCURRENCY) {
       if (emailAbortRequested) break;
-      try {
-        await emailService.sendPersonalizedEmail({
-          to: row.email,
-          subject,
-          body: emailBody,
-          data: row
-        });
-        sent++;
-        successfullySent.push(row.email);
-        sentAtByEmail[String(row.email || '').toLowerCase()] = toRegistryTimestamp();
-        const rr = registryRows.find((x) => x.email === String(row.email || '').toLowerCase());
-        if (rr) {
-          rr.data_invio_email = sentAtByEmail[String(row.email || '').toLowerCase()];
+      const group = chunks.slice(i, i + RESEND_BATCH_CONCURRENCY);
+      const results = await Promise.all(group.map(async (chunk) => {
+        try {
+          return await emailService.sendPersonalizedBatch({
+            rows: chunk,
+            subject,
+            body: emailBody,
+            abortCheck: () => emailAbortRequested
+          });
+        } catch (err) {
+          return {
+            sentEmails: [],
+            failed: chunk.map((r) => ({ email: String(r.email || '').toLowerCase(), error: err.message || 'Errore invio batch' }))
+          };
         }
-        if (sent % 50 === 0) console.log('[Email] Inviati:', sent);
-      } catch (err) {
-        failed++;
-        console.error('[Email] Errore per', row.email, err.message);
+      }));
+
+      for (const result of results) {
+        for (const email of result.sentEmails || []) {
+          const key = String(email || '').toLowerCase();
+          sent++;
+          successfullySent.push(key);
+          sentAtByEmail[key] = toRegistryTimestamp();
+          const rr = registryRows.find((x) => x.email === key);
+          if (rr) rr.data_invio_email = sentAtByEmail[key];
+        }
+        for (const f of result.failed || []) {
+          failed++;
+          const reason = String(f.error || 'Errore invio provider');
+          failureByReason.set(reason, (failureByReason.get(reason) || 0) + 1);
+          if (failureSamples.length < 8) {
+            failureSamples.push({ email: String(f.email || '').toLowerCase(), reason });
+          }
+          console.error('[Email] Errore per', f.email, reason);
+        }
       }
-      await waitEmailSendThrottle(sent + failed);
+      if (sent > 0 && sent % 100 === 0) console.log('[Email] Inviati:', sent);
     }
 
     if (successfullySent.length > 0) {
@@ -1322,6 +1352,10 @@ router.post('/api/email/send', async (req, res) => {
       total: toSend.length,
       batchSent: sentSet.size + successfullySent.length,
       batchRemaining: pendingData.length - successfullySent.length,
+      failureSummary: [...failureByReason.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => ({ reason, count })),
+      failureSamples,
       registryCsv: registryRowsToCsv(registryRows, subject, emailBody),
       registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
     };
@@ -1338,7 +1372,7 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     const subject = String(body.subject || '').trim();
     const emailText = String(body.body || '');
     const rows = normalizeRegistryRows(body.rows || [], subject, emailText);
-    const limit = Math.min(Math.max(parseInt(String(body.limit), 10) || 100, 1), 500);
+    const limit = Math.min(Math.max(parseInt(String(body.limit), 10) || 100, 1), EMAIL_MAX_PER_RUN);
     if (!rows.length) {
       return res.status(400).json({ success: false, error: 'Registro vuoto o non valido' });
     }
@@ -1347,13 +1381,13 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     }
 
     const limitInfo = emailService.checkDailyLimit();
-    if (limitInfo.remaining <= 0) {
+    if (limitInfo.enabled && limitInfo.remaining <= 0) {
       return res.status(400).json({
         success: false,
-        error: `Limite giornaliero raggiunto (500/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
+        error: `Limite giornaliero raggiunto (${limitInfo.limit}/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
       });
     }
-    const maxToSend = Math.min(limit, limitInfo.remaining);
+    const maxToSend = limitInfo.enabled ? Math.min(limit, limitInfo.remaining) : limit;
     const pending = rows.filter((r) => {
       return !String(r.data_invio_email || '').trim();
     }).slice(0, maxToSend);
@@ -1363,31 +1397,45 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     let failed = 0;
     const failureByReason = new Map();
     const failureSamples = [];
-    for (const row of pending) {
+    const chunks = chunkArray(pending, RESEND_BATCH_SIZE);
+    for (let i = 0; i < chunks.length; i += RESEND_BATCH_CONCURRENCY) {
       if (emailAbortRequested) break;
-      try {
-        await emailService.sendPersonalizedEmail({
-          to: row.email,
-          subject,
-          body: emailText,
-          data: row
-        });
-        sent++;
-        row.data_invio_email = toRegistryTimestamp();
-      } catch (err) {
-        failed++;
-        const info = classifyEmailError(err);
-        failureByReason.set(info.reason, (failureByReason.get(info.reason) || 0) + 1);
-        if (failureSamples.length < 8) {
-          failureSamples.push({
-            email: String(row.email || '').toLowerCase(),
-            reason: info.detail
+      const group = chunks.slice(i, i + RESEND_BATCH_CONCURRENCY);
+      const results = await Promise.all(group.map(async (chunk) => {
+        try {
+          return await emailService.sendPersonalizedBatch({
+            rows: chunk,
+            subject,
+            body: emailText,
+            abortCheck: () => emailAbortRequested
           });
+        } catch (err) {
+          return {
+            sentEmails: [],
+            failed: chunk.map((r) => ({ email: String(r.email || '').toLowerCase(), error: err.message || 'Errore invio batch' }))
+          };
         }
-        console.error('[Email-Registro] Errore invio', row.email, info.detail);
-        // Mantiene vuota la data per consentire ritentativo nel prossimo caricamento.
+      }));
+      for (const result of results) {
+        for (const email of result.sentEmails || []) {
+          sent++;
+          const key = String(email || '').toLowerCase();
+          const row = rows.find((r) => String(r.email || '').toLowerCase() === key);
+          if (row) row.data_invio_email = toRegistryTimestamp();
+        }
+        for (const f of result.failed || []) {
+          failed++;
+          const info = classifyEmailError({ message: f.error });
+          failureByReason.set(info.reason, (failureByReason.get(info.reason) || 0) + 1);
+          if (failureSamples.length < 8) {
+            failureSamples.push({
+              email: String(f.email || '').toLowerCase(),
+              reason: info.detail
+            });
+          }
+          console.error('[Email-Registro] Errore invio', f.email, info.detail);
+        }
       }
-      await waitEmailSendThrottle(sent + failed);
     }
 
     return res.json({
@@ -1402,9 +1450,9 @@ router.post('/api/email/send-from-registry', async (req, res) => {
           .map(([reason, count]) => ({ reason, count })),
         failureSamples,
         throttle: {
-          perEmailDelayMs: EMAIL_SEND_DELAY_MS,
-          pauseEvery: EMAIL_BATCH_PAUSE_EVERY,
-          pauseMs: EMAIL_BATCH_PAUSE_MS
+          batchSize: RESEND_BATCH_SIZE,
+          batchConcurrency: RESEND_BATCH_CONCURRENCY,
+          dailyLimit: limitInfo.enabled ? limitInfo.limit : null
         },
         registryCsv: registryRowsToCsv(rows, subject, emailText),
         registryFilename: 'REGISTRO_INVII_EMAIL_' + new Date().toISOString().slice(0, 10) + '.csv'
