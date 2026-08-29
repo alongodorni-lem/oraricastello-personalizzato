@@ -13,10 +13,11 @@ const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-sent.json
 const BATCH_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-batches.json');
 const DAILY_LIMIT = Math.max(0, parseInt(process.env.EMAIL_MAX_PER_DAY || '0', 10) || 0);
 const EMAIL_RETRY_MAX = Math.max(0, parseInt(process.env.EMAIL_RETRY_MAX || '2', 10) || 2);
-const EMAIL_RATE_LIMIT_RETRY_MAX = Math.max(EMAIL_RETRY_MAX, parseInt(process.env.EMAIL_RATE_LIMIT_RETRY_MAX || '8', 10) || 8);
+const EMAIL_RATE_LIMIT_RETRY_MAX = Math.max(40, EMAIL_RETRY_MAX, parseInt(process.env.EMAIL_RATE_LIMIT_RETRY_MAX || '40', 10) || 40);
 const EMAIL_RETRY_BASE_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_RETRY_BASE_DELAY_MS || '2500', 10) || 2500);
 const RESEND_API_URL = 'https://api.resend.com/emails';
 const RESEND_BATCH_API_URL = 'https://api.resend.com/emails/batch';
+const RESEND_LIST_LOOKBACK_HOURS = Math.max(6, parseInt(process.env.RESEND_SENT_LOOKBACK_HOURS || '72', 10) || 72);
 
 function getResendConfig() {
   const apiKey = process.env.RESEND_API_KEY;
@@ -38,7 +39,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getResendErrorPayload(err) {
+  const data = err?.response?.data;
+  if (!data) return '';
+  if (typeof data === 'string') return data;
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return String(data?.name || data?.message || '');
+  }
+}
+
+function isQuotaError(err) {
+  return /quota|daily_quota|monthly_quota/i.test(getResendErrorPayload(err));
+}
+
 function isRateLimitError(err) {
+  if (isQuotaError(err)) return false;
   const status = Number(err?.response?.status || 0);
   const msg = String(err?.message || '');
   return status === 429 || /status code 429|too many requests|rate limit/i.test(msg);
@@ -61,16 +78,21 @@ function getMaxRetries(err) {
   return isRateLimitError(err) ? EMAIL_RATE_LIMIT_RETRY_MAX : EMAIL_RETRY_MAX;
 }
 
+function parseRetryAfterMs(err) {
+  const raw = err?.response?.headers?.['retry-after'];
+  if (raw == null || raw === '') return 0;
+  const sec = Number(raw);
+  if (!Number.isFinite(sec) || sec <= 0) return 0;
+  return Math.floor(sec * 1000);
+}
+
 function getRetryDelayMs(err, attempt) {
-  const retryAfter = Number(err?.response?.headers?.['retry-after']);
-  if (Number.isFinite(retryAfter) && retryAfter > 0) {
-    return Math.max(1000, Math.floor(retryAfter * 1000));
-  }
+  const retryAfterMs = parseRetryAfterMs(err);
   const jitter = Math.floor(Math.random() * 400);
-  if (isRateLimitError(err)) {
-    return Math.min(60000, 5000 * Math.pow(2, attempt)) + jitter;
-  }
-  return EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, attempt) + jitter;
+  const exponential = isRateLimitError(err)
+    ? Math.min(60000, 2000 * Math.pow(2, Math.max(0, attempt)))
+    : EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, Math.max(0, attempt));
+  return Math.max(retryAfterMs, exponential, isRateLimitError(err) ? 2000 : 0) + jitter;
 }
 
 function loadSentRegistry() {
@@ -299,6 +321,11 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
     cfg,
     channel: 'email-batch'
   }));
+  const idempotencyKey = crypto.createHash('sha256').update(JSON.stringify({
+    subject: String(subject || ''),
+    emails: validRows.map((row) => row.email).sort(),
+    hasHtml: !!html
+  })).digest('hex');
 
   let lastErr = null;
   let response = null;
@@ -307,7 +334,8 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
       response = await axios.post(RESEND_BATCH_API_URL, payload, {
         headers: {
           Authorization: `Bearer ${cfg.apiKey}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
         },
         timeout: 30000
       });
@@ -315,9 +343,15 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
       break;
     } catch (err) {
       lastErr = err;
-      if (attempt >= getMaxRetries(err) || !isRetryableEmailError(err)) break;
+      if (isQuotaError(err)) {
+        const quotaMsg = getResendErrorPayload(err) || err.message;
+        throw new Error('Quota Resend raggiunta: ' + quotaMsg);
+      }
+      const maxRetries = getMaxRetries(err);
+      if (attempt >= maxRetries || !isRetryableEmailError(err)) break;
       const waitMs = getRetryDelayMs(err, attempt);
-      console.warn('[Email] Rate/retry Resend, attesa ' + waitMs + 'ms (tentativo ' + (attempt + 1) + ')');
+      const kind = isRateLimitError(err) ? 'Rate limit 429' : 'Retry';
+      console.warn('[Email] ' + kind + ' Resend, attesa ' + waitMs + 'ms (tentativo ' + (attempt + 1) + '/' + maxRetries + ')');
       await sleep(waitMs);
       if (typeof abortCheck === 'function' && abortCheck()) break;
     }
@@ -377,6 +411,125 @@ function saveBatches(batches) {
 function getSentForBatch(batchId) {
   const map = getSentMapForBatch(batchId);
   return new Set([...map.keys()]);
+}
+
+function normalizeSubjectKey(subject) {
+  return String(subject || '').trim().toLowerCase().slice(0, 80);
+}
+
+function subjectsLikelyMatch(template, sentSubject) {
+  const raw = String(template || '').trim().toLowerCase();
+  const sent = String(sentSubject || '').trim().toLowerCase();
+  if (!raw || !sent) return false;
+  if (raw === sent) return true;
+  if (normalizeSubjectKey(raw) === normalizeSubjectKey(sent)) return true;
+  const staticParts = raw.split(/\{\{[^}]+\}\}|\$\([^)]+\)/g).map((part) => part.trim()).filter((part) => part.length >= 4);
+  if (!staticParts.length) return false;
+  return staticParts.every((part) => sent.includes(part));
+}
+
+/**
+ * Unisce gli invii locali di tutti i batch con lo stesso oggetto
+ */
+function getSentForSubject(subject) {
+  const batches = loadBatches();
+  const out = new Set();
+  for (const batch of Object.values(batches || {})) {
+    if (!subjectsLikelyMatch(subject, batch?.subject || '')) continue;
+    if (batch.sentMap && typeof batch.sentMap === 'object') {
+      for (const key of Object.keys(batch.sentMap)) {
+        const email = String(key || '').toLowerCase();
+        if (email) out.add(email);
+      }
+    }
+    if (Array.isArray(batch.sent)) {
+      batch.sent.forEach((value) => {
+        const email = String(value || '').toLowerCase();
+        if (email) out.add(email);
+      });
+    }
+  }
+  return out;
+}
+
+async function resendGetWithRetry(url, apiKey) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= 8; attempt++) {
+    try {
+      return await axios.get(url, {
+        headers: { Authorization: 'Bearer ' + apiKey },
+        timeout: 30000
+      });
+    } catch (err) {
+      lastErr = err;
+      if (isQuotaError(err) || !isRetryableEmailError(err) || attempt >= 8) break;
+      await sleep(getRetryDelayMs(err, attempt));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Recupera da Resend gli indirizzi già destinatari dello stesso oggetto (ultime ore).
+ * Serve dopo un redeploy Render, quando il file locale del registro viene azzerato.
+ */
+async function fetchSentEmailsFromResendBySubject(subject, opts = {}) {
+  const cfg = getResendConfig();
+  const lookbackHours = Number(opts.lookbackHours || RESEND_LIST_LOOKBACK_HOURS);
+  const cutoff = Date.now() - (lookbackHours * 60 * 60 * 1000);
+  const found = new Set();
+  let after = '';
+  let pages = 0;
+  const maxPages = Math.max(20, parseInt(process.env.RESEND_SENT_LIST_MAX_PAGES || '200', 10) || 200);
+
+  while (pages < maxPages) {
+    const qs = new URLSearchParams({ limit: '100' });
+    if (after) qs.set('after', after);
+    const response = await resendGetWithRetry(RESEND_API_URL + '?' + qs.toString(), cfg.apiKey);
+    const payload = response?.data || {};
+    const items = Array.isArray(payload.data) ? payload.data : (Array.isArray(payload) ? payload : []);
+    if (!items.length) break;
+    let olderThanCutoff = false;
+    for (const item of items) {
+      const createdAt = Date.parse(item?.created_at || '');
+      if (Number.isFinite(createdAt) && createdAt < cutoff) {
+        olderThanCutoff = true;
+        continue;
+      }
+      if (!subjectsLikelyMatch(subject, item?.subject || '')) continue;
+      const recipients = Array.isArray(item?.to) ? item.to : [item?.to];
+      recipients.forEach((value) => {
+        const email = String(value || '').trim().toLowerCase();
+        if (email.includes('@')) found.add(email);
+      });
+    }
+    pages += 1;
+    if (olderThanCutoff || payload.has_more === false) break;
+    const lastId = items[items.length - 1]?.id;
+    if (!lastId || lastId === after) break;
+    after = lastId;
+    await sleep(200);
+  }
+  return found;
+}
+
+async function collectAlreadySentEmails(batchId, subject) {
+  const merged = new Set([
+    ...getSentForBatch(batchId),
+    ...getSentForSubject(subject)
+  ]);
+  const localCount = merged.size;
+  try {
+    const fromResend = await fetchSentEmailsFromResendBySubject(subject);
+    for (const email of fromResend) merged.add(email);
+    if (fromResend.size) {
+      addSentToBatch(batchId, [...fromResend], subject);
+    }
+    console.log('[Email] Gia inviate (registro locale: ' + localCount + ', Resend stesso oggetto: ' + fromResend.size + ', tot uniche: ' + merged.size + ')');
+  } catch (err) {
+    console.warn('[Email] Recupero invii da Resend non riuscito, uso solo registro locale (' + localCount + '): ' + (err.message || err));
+  }
+  return merged;
 }
 
 /**
@@ -498,7 +651,9 @@ module.exports = {
   getTodaySentCount,
   getBatchId,
   getSentForBatch,
+  getSentForSubject,
   getSentMapForBatch,
   addSentToBatch,
+  collectAlreadySentEmails,
   DAILY_LIMIT
 };

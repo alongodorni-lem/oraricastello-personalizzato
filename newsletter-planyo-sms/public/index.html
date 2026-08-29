@@ -528,7 +528,7 @@
         '<div class="log"><strong>Report invio automatico</strong></div>',
         '<div class="log">Richieste API batch: ' + Number(report.batchApiCalls || 0) + ' (pianificate: ' + Number(report.batchCountPlanned || 0) + ', batch size: ' + Number(report.resendBatchSize || 0) + ', concorrenza: ' + Number(report.resendBatchConcurrency || 0) + ')</div>',
         '<div class="log">Destinatari richiesti: ' + Number(report.requestedRecipients || 0) + ' | Accettati da Resend: ' + Number(report.acceptedByResend || 0) + ' | Falliti: ' + Number(report.failedByResend || 0) + '</div>',
-        '<div class="log">Gia inviati in batch (saltati): ' + Number(report.skippedAlreadySentInBatch || 0) + ' | Rimanenti dopo invio: ' + Number(report.pendingAfterRun || 0) + '</div>',
+        '<div class="log">Gia ricevuta questa email (saltati): ' + Number(report.skippedAlreadySentInBatch || 0) + ' | Rimanenti dopo invio: ' + Number(report.pendingAfterRun || 0) + '</div>',
         '<div class="log">Limite giornaliero: ' + dailyText + (report.dailyLimitEnabled ? (' | inviati oggi: ' + Number(report.dailySentAfterRun || 0) + ' | residuo: ' + Number(report.dailyRemainingAfterRun || 0)) : '') + '</div>',
         report.aborted ? '<div class="warn">Invio interrotto manualmente prima del completamento.</div>' : ''
       ].filter(Boolean).join('');
