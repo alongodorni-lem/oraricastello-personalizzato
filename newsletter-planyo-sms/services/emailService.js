@@ -13,6 +13,7 @@ const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-sent.json
 const BATCH_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-batches.json');
 const DAILY_LIMIT = Math.max(0, parseInt(process.env.EMAIL_MAX_PER_DAY || '0', 10) || 0);
 const EMAIL_RETRY_MAX = Math.max(0, parseInt(process.env.EMAIL_RETRY_MAX || '2', 10) || 2);
+const EMAIL_RATE_LIMIT_RETRY_MAX = Math.max(EMAIL_RETRY_MAX, parseInt(process.env.EMAIL_RATE_LIMIT_RETRY_MAX || '8', 10) || 8);
 const EMAIL_RETRY_BASE_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_RETRY_BASE_DELAY_MS || '2500', 10) || 2500);
 const RESEND_API_URL = 'https://api.resend.com/emails';
 const RESEND_BATCH_API_URL = 'https://api.resend.com/emails/batch';
@@ -37,6 +38,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isRateLimitError(err) {
+  const status = Number(err?.response?.status || 0);
+  const msg = String(err?.message || '');
+  return status === 429 || /status code 429|too many requests|rate limit/i.test(msg);
+}
+
 function isRetryableEmailError(err) {
   const code = String(err?.code || '').toUpperCase();
   const status = Number(err?.response?.status || 0);
@@ -50,12 +57,19 @@ function isRetryableEmailError(err) {
   return false;
 }
 
+function getMaxRetries(err) {
+  return isRateLimitError(err) ? EMAIL_RATE_LIMIT_RETRY_MAX : EMAIL_RETRY_MAX;
+}
+
 function getRetryDelayMs(err, attempt) {
   const retryAfter = Number(err?.response?.headers?.['retry-after']);
   if (Number.isFinite(retryAfter) && retryAfter > 0) {
-    return Math.max(500, Math.floor(retryAfter * 1000));
+    return Math.max(1000, Math.floor(retryAfter * 1000));
   }
   const jitter = Math.floor(Math.random() * 400);
+  if (isRateLimitError(err)) {
+    return Math.min(60000, 5000 * Math.pow(2, attempt)) + jitter;
+  }
   return EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, attempt) + jitter;
 }
 
@@ -210,7 +224,7 @@ async function sendPersonalizedEmail({ to, subject, body, html, data }) {
   };
   let lastErr = null;
   let messageId = null;
-  for (let attempt = 0; attempt <= EMAIL_RETRY_MAX; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       const response = await axios.post(RESEND_API_URL, mail, {
         headers: {
@@ -224,7 +238,7 @@ async function sendPersonalizedEmail({ to, subject, body, html, data }) {
       break;
     } catch (err) {
       lastErr = err;
-      if (attempt >= EMAIL_RETRY_MAX || !isRetryableEmailError(err)) break;
+      if (attempt >= getMaxRetries(err) || !isRetryableEmailError(err)) break;
       const waitMs = getRetryDelayMs(err, attempt);
       await sleep(waitMs);
     }
@@ -288,7 +302,7 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
 
   let lastErr = null;
   let response = null;
-  for (let attempt = 0; attempt <= EMAIL_RETRY_MAX; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       response = await axios.post(RESEND_BATCH_API_URL, payload, {
         headers: {
@@ -301,8 +315,9 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
       break;
     } catch (err) {
       lastErr = err;
-      if (attempt >= EMAIL_RETRY_MAX || !isRetryableEmailError(err)) break;
+      if (attempt >= getMaxRetries(err) || !isRetryableEmailError(err)) break;
       const waitMs = getRetryDelayMs(err, attempt);
+      console.warn('[Email] Rate/retry Resend, attesa ' + waitMs + 'ms (tentativo ' + (attempt + 1) + ')');
       await sleep(waitMs);
       if (typeof abortCheck === 'function' && abortCheck()) break;
     }

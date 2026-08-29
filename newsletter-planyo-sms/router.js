@@ -52,7 +52,12 @@ router.use(basicAuthMiddleware);
 let runAbortRequested = false;
 let smsRunInProgress = false;
 const RESEND_BATCH_SIZE = Math.min(100, Math.max(1, parseInt(process.env.RESEND_BATCH_SIZE || '100', 10) || 100));
-const RESEND_BATCH_CONCURRENCY = Math.min(5, Math.max(1, parseInt(process.env.RESEND_BATCH_CONCURRENCY || '2', 10) || 2));
+const RESEND_BATCH_CONCURRENCY = Math.min(5, Math.max(1, parseInt(process.env.RESEND_BATCH_CONCURRENCY || '1', 10) || 1));
+const RESEND_BATCH_PAUSE_MS = Math.max(0, parseInt(process.env.RESEND_BATCH_PAUSE_MS || '800', 10) || 800);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function chunkArray(items, size) {
   const out = [];
@@ -1476,6 +1481,9 @@ router.post('/api/email/send', async (req, res) => {
         }
       }
       if (sent > 0 && sent % 100 === 0) console.log('[Email] Inviati:', sent);
+      if (i + RESEND_BATCH_CONCURRENCY < chunks.length && RESEND_BATCH_PAUSE_MS > 0) {
+        await sleep(RESEND_BATCH_PAUSE_MS);
+      }
     }
 
     if (successfullySent.length > 0) {
@@ -1499,7 +1507,7 @@ router.post('/api/email/send', async (req, res) => {
         failedByResend: failed,
         skippedAlreadySentInBatch: Math.max(0, pendingData.length - toSend.length),
         pendingAfterRun: Math.max(0, pendingData.length - successfullySent.length),
-        batchApiCalls,
+        batchApiCalls: apiBatchCalls,
         batchCountPlanned: chunks.length,
         resendBatchSize: RESEND_BATCH_SIZE,
         resendBatchConcurrency: RESEND_BATCH_CONCURRENCY,
@@ -1591,6 +1599,9 @@ router.post('/api/email/send-from-registry', async (req, res) => {
           }
           console.error('[Email-Registro] Errore invio', f.email, info.detail);
         }
+      }
+      if (i + RESEND_BATCH_CONCURRENCY < chunks.length && RESEND_BATCH_PAUSE_MS > 0) {
+        await sleep(RESEND_BATCH_PAUSE_MS);
       }
     }
 
