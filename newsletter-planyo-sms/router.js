@@ -956,6 +956,35 @@ function parseEmailLimitOrDefault(val, fallback = 100) {
   return parsePositiveInteger(String(val).trim());
 }
 
+async function resolveAlreadySentForAudience({ subject, campaignId, segments, engagementType, listDFilters }) {
+  const batchId = emailService.getBatchId({
+    subject: subject || '',
+    campaignId: campaignId || '',
+    segments,
+    engagementType,
+    listDEventNameContains: listDFilters?.eventNameContains,
+    listDStatuses: listDFilters?.statuses?.join(',')
+  });
+  const sentSet = subject
+    ? await emailService.collectAlreadySentEmails(batchId, subject)
+    : emailService.getSentForBatch(batchId);
+  return { batchId, sentSet };
+}
+
+function splitAudienceBySent(data, sentSet) {
+  const pending = [];
+  let alreadySent = 0;
+  for (const row of data || []) {
+    const email = String(row?.email || '').toLowerCase();
+    if (email && sentSet.has(email)) {
+      alreadySent += 1;
+    } else {
+      pending.push(row);
+    }
+  }
+  return { pending, alreadySent };
+}
+
 async function validateExcludeTargetSetup(excludeTargetBooked, targetResourceId) {
   if (!excludeTargetBooked) return;
   const targetIds = parseTargetResourceIdsParam(targetResourceId);
@@ -1121,6 +1150,7 @@ router.post('/api/email/preview/start', (req, res) => {
     const segments = parseSegmentsParam(q.segments);
     const listDFilters = parseListDFilters(q);
     const excludeTargetBooked = parseBoolParam(q.excludeTargetBooked);
+    const subject = String(q.subject || '').trim();
     const limit = parseEmailLimitOrDefault(q.limit, 100);
     if (limit == null) {
       return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
@@ -1142,8 +1172,16 @@ router.post('/api/email/preview/start', (req, res) => {
         data = filterBySegment(data, segments);
         data = filterByEvent(data, eventFilter);
         data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
+        const { sentSet } = await resolveAlreadySentForAudience({
+          subject,
+          campaignId: cid,
+          segments,
+          engagementType,
+          listDFilters
+        });
+        const { pending, alreadySent } = splitAudienceBySent(data, sentSet);
         const total = data.length;
-        const block = takeBlock(data, limit);
+        const block = takeBlock(pending, limit);
         const preview = block.slice(0, 10);
         const limitInfo = emailService.checkDailyLimit();
         const job = previewJobs.get(jobId);
@@ -1151,6 +1189,8 @@ router.post('/api/email/preview/start', (req, res) => {
           job.status = 'done';
           job.result = {
             total,
+            alreadySent,
+            pending: pending.length,
             limit: block.length,
             preview,
             dailyLimit: {
@@ -1257,6 +1297,7 @@ router.get('/api/email/preview', async (req, res) => {
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
     const excludeTargetBooked = parseBoolParam(req.query.excludeTargetBooked);
+    const subject = String(req.query.subject || '').trim();
     const limit = parseEmailLimitOrDefault(req.query.limit, 100);
     if (limit == null) {
       return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
@@ -1272,8 +1313,16 @@ router.get('/api/email/preview', async (req, res) => {
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
     data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
+    const { sentSet } = await resolveAlreadySentForAudience({
+      subject,
+      campaignId: cid,
+      segments,
+      engagementType,
+      listDFilters
+    });
+    const { pending, alreadySent } = splitAudienceBySent(data, sentSet);
     const total = data.length;
-    const block = takeBlock(data, limit);
+    const block = takeBlock(pending, limit);
     const preview = block.slice(0, 10);
 
     const limitInfo = emailService.checkDailyLimit();
@@ -1281,6 +1330,8 @@ router.get('/api/email/preview', async (req, res) => {
     res.json({
       success: true,
       total,
+      alreadySent,
+      pending: pending.length,
       limit: block.length,
       preview,
       dailyLimit: {
@@ -1322,26 +1373,24 @@ router.get('/api/listd/debug', async (req, res) => {
   }
 });
 
-router.get('/api/email/batch-status', (req, res) => {
+router.get('/api/email/batch-status', async (req, res) => {
   try {
     const subject = (req.query.subject || '').trim();
     const campaignId = (req.query.campaignId || '').trim();
     const segments = parseSegmentsParam(req.query.segments);
     const listDFilters = parseListDFilters(req.query);
     const engagementType = parseEngagementType(req.query.engagementType || loadUiConfig().mailchimpEngagementType || 'open');
-    const batchId = emailService.getBatchId({
+    const { batchId, sentSet } = await resolveAlreadySentForAudience({
       subject,
       campaignId,
       segments,
       engagementType,
-      listDEventNameContains: listDFilters.eventNameContains,
-      listDStatuses: listDFilters.statuses?.join(',')
+      listDFilters
     });
-    const sentCount = emailService.getSentForBatch(batchId).size;
     const limitInfo = emailService.checkDailyLimit();
     res.json({
       batchId,
-      batchSent: sentCount,
+      batchSent: sentSet.size,
       dailyRemaining: limitInfo.remaining,
       dailyLimit: limitInfo.enabled ? limitInfo.limit : null
     });

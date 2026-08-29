@@ -396,7 +396,7 @@
         </div>
         <div class="form-group">
           <label>Oggetto email</label>
-          <input type="text" id="emailSubject" placeholder="Oggetto (es. Ciao {{nome}} / $(first_name))">
+          <input type="text" id="emailSubject" placeholder="Oggetto (es. Ciao {{nome}} / $(first_name) / ${first_name})">
         </div>
         <div class="form-group">
           <label>Formato messaggio</label>
@@ -504,6 +504,7 @@
     let emailSendableCount = 0;
     let emailSendableReady = false;
     let emailTotalAudienceCount = 0;
+    let emailAlreadySentCount = 0;
     let emailDailyLimitEnabled = false;
     let emailDailyLimit = null;
     let emailComposeMode = 'text';
@@ -549,6 +550,7 @@
       emailTotalAudienceCount = 0;
       emailSendableCount = 0;
       emailSendableReady = false;
+      emailAlreadySentCount = 0;
       const status = document.getElementById('emailSendableStatus');
       const btnSend = document.getElementById('btnSendEmail');
       const btnExportClean = document.getElementById('btnExportCleanCsv');
@@ -1524,9 +1526,15 @@
         resetEmailSendable('Blocco non valido: correggi il valore e ricalcola EMAIL.');
         return;
       }
+      const subject = document.getElementById('emailSubject').value.trim();
+      if (!subject) {
+        resetEmailSendable('Inserisci l\'oggetto email: serve per escludere chi ha gia ricevuto questo invio.');
+        return;
+      }
       btnCalc.disabled = true;
-      status.textContent = 'Calcolo EMAIL in corso...';
+      status.textContent = 'Calcolo EMAIL in corso (escludo chi ha gia ricevuto questo oggetto)...';
       status.style.color = '';
+      out.innerHTML = '';
       try {
         const baseParams = {
           campaignId: NEWSLETTER_SOURCE_ID,
@@ -1534,7 +1542,8 @@
           engagementType: getEngagementType(),
           limit: limitCap,
           segments: cfg.segments.join(','),
-          excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0'
+          excludeTargetBooked: cfg.excludeTargetBooked ? '1' : '0',
+          subject
         };
         Object.assign(baseParams, cfg.listDFilters || {});
         let d;
@@ -1563,16 +1572,24 @@
         }
         if (d.error) throw new Error(d.error);
         const total = Number(d.total || 0);
+        emailAlreadySentCount = Number(d.alreadySent || 0);
+        const pending = Number(d.pending != null ? d.pending : Math.max(0, total - emailAlreadySentCount));
         emailTotalAudienceCount = total;
         const hasDailyLimit = !!d.dailyLimit?.enabled && Number.isFinite(Number(d.dailyLimit?.max));
         const dailyRemaining = hasDailyLimit ? Number(d.dailyLimit?.remaining ?? 0) : Number.POSITIVE_INFINITY;
-        emailSendableCount = Math.max(0, Math.min(total, limitCap, dailyRemaining));
+        emailSendableCount = Math.max(0, Math.min(pending, limitCap, dailyRemaining));
         emailSendableReady = emailSendableCount > 0;
+        const skipText = ' | Gia ricevuta questa email: ' + emailAlreadySentCount;
         if (hasDailyLimit) {
           const dailyMax = Number(d.dailyLimit.max);
-          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
+          status.textContent = 'Email totali: ' + total + skipText + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
         } else {
-          status.textContent = 'Email totali: ' + total + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', nessun limite giornaliero impostato).';
+          status.textContent = 'Email totali: ' + total + skipText + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', nessun limite giornaliero impostato).';
+        }
+        if (emailAlreadySentCount === 0) {
+          out.innerHTML = '<div class="warn">Nessun invio precedente trovato per questo oggetto. Se hai gia inviato, verifica che l\'oggetto sia identico a quello usato prima.</div>';
+        } else {
+          out.innerHTML = '<div class="log">Esclusi ' + emailAlreadySentCount + ' contatti che hanno gia ricevuto questa email. Restano ' + pending + ' da inviare.</div>';
         }
         status.style.color = emailSendableReady ? 'var(--success)' : 'var(--danger)';
         document.getElementById('btnSendEmail').disabled = !emailSendableReady;

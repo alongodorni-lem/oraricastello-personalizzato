@@ -187,7 +187,7 @@ function buildTemplateData(data = {}) {
 
 /**
  * Sostituisce i placeholder nel template.
- * Supporta sia {{campo}} sia $(campo), con retrocompatibilità sui campi storici.
+ * Supporta {{campo}}, $(campo) e ${campo}, con retrocompatibilità sui campi storici.
  * @param {string} template
  * @param {object} data
  */
@@ -197,8 +197,8 @@ function applyTemplate(template, data) {
   for (const [k, v] of Object.entries(vars)) {
     normalized[String(k || '').toLowerCase()] = String(v ?? '');
   }
-  return String(template || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}|\$\(\s*([a-zA-Z0-9_]+)\s*\)/g, (_m, braced, dollar) => {
-    const key = String(braced || dollar || '').toLowerCase();
+  return String(template || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}|\$\(\s*([a-zA-Z0-9_]+)\s*\)|\$\{\s*([a-zA-Z0-9_]+)\s*\}/g, (_m, braced, dollar, dollarBrace) => {
+    const key = String(braced || dollar || dollarBrace || '').toLowerCase();
     return normalized[key] ?? '';
   });
 }
@@ -423,7 +423,7 @@ function subjectsLikelyMatch(template, sentSubject) {
   if (!raw || !sent) return false;
   if (raw === sent) return true;
   if (normalizeSubjectKey(raw) === normalizeSubjectKey(sent)) return true;
-  const staticParts = raw.split(/\{\{[^}]+\}\}|\$\([^)]+\)/g).map((part) => part.trim()).filter((part) => part.length >= 4);
+  const staticParts = raw.split(/\{\{[^}]+\}\}|\$\([^)]+\)|\$\{[^}]+\}/g).map((part) => part.trim()).filter((part) => part.length >= 4);
   if (!staticParts.length) return false;
   return staticParts.every((part) => sent.includes(part));
 }
