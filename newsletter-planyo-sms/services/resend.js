@@ -39,7 +39,51 @@ async function listAudiences(apiKey) {
     .filter(Boolean);
 }
 
+async function getGlobalContactByEmail(apiKey, email) {
+  const res = await axios.get(`${BASE_URL}/contacts/${encodeURIComponent(email)}`, {
+    headers: getAuthHeaders(apiKey),
+    timeout: 30000,
+    validateStatus: (s) => s < 500
+  });
+  if (res.status === 404) return { status: 'not_found', contacts: [] };
+  if (res.status >= 400) {
+    return { status: 'error', reason: `Resend rubrica globale: HTTP ${res.status}` };
+  }
+  const row = res.data && typeof res.data === 'object' ? (res.data.data || res.data) : null;
+  const id = String(row?.id || '').trim();
+  const rowEmail = normalizeEmail(row?.email);
+  if (!id || (rowEmail && rowEmail !== email)) return { status: 'not_found', contacts: [] };
+  return {
+    status: 'found',
+    contacts: [{
+      id,
+      email: rowEmail || email,
+      scope: 'global'
+    }]
+  };
+}
+
 async function listAudienceContactsByEmail(apiKey, audienceId, email) {
+  const direct = await axios.get(`${BASE_URL}/audiences/${encodeURIComponent(audienceId)}/contacts/${encodeURIComponent(email)}`, {
+    headers: getAuthHeaders(apiKey),
+    timeout: 30000,
+    validateStatus: (s) => s < 500
+  });
+  if (direct.status === 200) {
+    const row = direct.data && typeof direct.data === 'object' ? (direct.data.data || direct.data) : null;
+    const id = String(row?.id || '').trim();
+    const rowEmail = normalizeEmail(row?.email || email);
+    if (id) {
+      return {
+        status: 'found',
+        contacts: [{ id, email: rowEmail, audienceId, scope: 'audience' }]
+      };
+    }
+  }
+  if (direct.status && direct.status !== 404 && direct.status < 500) {
+    return { status: 'error', reason: `Resend lookup audience ${audienceId}: HTTP ${direct.status}` };
+  }
+
   const res = await axios.get(`${BASE_URL}/audiences/${encodeURIComponent(audienceId)}/contacts`, {
     headers: getAuthHeaders(apiKey),
     params: { email },
@@ -59,7 +103,8 @@ async function listAudienceContactsByEmail(apiKey, audienceId, email) {
     .map((row) => ({
       id: String(row?.id || '').trim(),
       email: normalizeEmail(row?.email),
-      audienceId
+      audienceId,
+      scope: 'audience'
     }))
     .filter((row) => row.id && row.email === email);
 
@@ -83,21 +128,26 @@ async function findContactByEmailForPrivacy(email) {
     return { source: 'resend', status: 'skipped', found: false, reason: 'RESEND_API_KEY non configurata' };
   }
 
-  const audienceIds = await getAudienceIdsForPrivacy(apiKey).catch((err) => {
-    throw new Error(`Resend audiences: ${err.message}`);
-  });
-
-  if (!audienceIds.length) {
-    return {
-      source: 'resend',
-      status: 'skipped',
-      found: false,
-      reason: 'Nessuna audience Resend disponibile (imposta RESEND_AUDIENCE_ID o crea una audience)'
-    };
-  }
-
   const matches = [];
   const errors = [];
+  const searchedIn = ['rubrica globale'];
+
+  try {
+    const globalFound = await getGlobalContactByEmail(apiKey, normalized);
+    if (globalFound.status === 'error') {
+      errors.push(globalFound.reason || 'Errore rubrica globale Resend');
+    } else if (Array.isArray(globalFound.contacts) && globalFound.contacts.length) {
+      matches.push(...globalFound.contacts);
+    }
+  } catch (err) {
+    errors.push(err.message);
+  }
+
+  const audienceIds = await getAudienceIdsForPrivacy(apiKey).catch((err) => {
+    errors.push(`Resend audiences: ${err.message}`);
+    return [];
+  });
+  if (audienceIds.length) searchedIn.push('audience (' + audienceIds.length + ')');
 
   for (const audienceId of audienceIds) {
     try {
@@ -115,14 +165,16 @@ async function findContactByEmailForPrivacy(email) {
   }
 
   if (matches.length) {
+    const via = matches.some((c) => c.scope === 'global') ? 'rubrica globale' : 'audience';
     return {
       source: 'resend',
       status: 'found',
       found: true,
-      contacts: matches
+      contacts: matches,
+      reason: 'Trovato in ' + via
     };
   }
-  if (errors.length) {
+  if (errors.length && !audienceIds.length && !matches.length) {
     return {
       source: 'resend',
       status: 'error',
@@ -130,7 +182,12 @@ async function findContactByEmailForPrivacy(email) {
       reason: errors.slice(0, 2).join(' | ')
     };
   }
-  return { source: 'resend', status: 'not_found', found: false };
+  return {
+    source: 'resend',
+    status: 'not_found',
+    found: false,
+    reason: 'Non presente in ' + searchedIn.join(' e ')
+  };
 }
 
 async function deleteContactByEmailForPrivacy(email) {
@@ -148,7 +205,10 @@ async function deleteContactByEmailForPrivacy(email) {
 
   for (const c of contacts) {
     try {
-      const res = await axios.delete(`${BASE_URL}/audiences/${encodeURIComponent(c.audienceId)}/contacts/${encodeURIComponent(c.id)}`, {
+      const url = c.audienceId
+        ? `${BASE_URL}/audiences/${encodeURIComponent(c.audienceId)}/contacts/${encodeURIComponent(c.id || email)}`
+        : `${BASE_URL}/contacts/${encodeURIComponent(c.id || email)}`;
+      const res = await axios.delete(url, {
         headers: getAuthHeaders(apiKey),
         timeout: 30000,
         validateStatus: (s) => s < 500
@@ -159,7 +219,7 @@ async function deleteContactByEmailForPrivacy(email) {
         notFoundCount++;
       } else {
         failedCount++;
-        failReasons.push(`HTTP ${res.status} su audience ${c.audienceId}`);
+        failReasons.push(`HTTP ${res.status}` + (c.audienceId ? ` su audience ${c.audienceId}` : ' su rubrica globale'));
       }
     } catch (err) {
       failedCount++;
