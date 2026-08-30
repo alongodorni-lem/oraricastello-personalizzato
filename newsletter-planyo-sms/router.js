@@ -473,7 +473,7 @@ router.post('/api/privacy/delete', async (req, res) => {
 
     const cacheResult = dataCache.removeContactFromCaches(email, smsPhoneCandidate || phoneRaw);
 
-    const smsResult = await smshosting.deleteContactByPhoneForPrivacy(smsPhoneCandidate)
+    const smsResult = await smshosting.deleteContactByPhoneForPrivacy(smsPhoneCandidate, email)
       .catch((err) => ({ source: 'smshosting', status: 'error', reason: err.message }));
 
     const results = {

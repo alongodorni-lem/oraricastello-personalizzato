@@ -181,60 +181,115 @@ async function tryDeleteWithEndpoint(url, auth, phone) {
   return { status: 'found_not_deleted', reason: 'Delete endpoint non ha confermato la cancellazione' };
 }
 
+function nationalMobileFromNormalized(normalized) {
+  const digits = String(normalized || '').replace(/\D/g, '');
+  if (/^393\d{9}$/.test(digits)) return digits.slice(2);
+  if (/^3\d{9}$/.test(digits)) return digits;
+  return '';
+}
+
+function phonebookMsisdnCandidates(phone) {
+  const normalized = normalizePhone(phone);
+  const national = nationalMobileFromNormalized(normalized) || nationalMobileFromNormalized(String(phone || '').replace(/\D/g, ''));
+  const out = [];
+  const push = (value) => {
+    const v = String(value || '').trim();
+    if (v && !out.includes(v)) out.push(v);
+  };
+  push(normalized);
+  if (national) {
+    push(national);
+    push('39' + national);
+    push('+39' + national);
+  }
+  return out;
+}
+
+function phonesLikelyMatch(a, b) {
+  const left = normalizePhone(a) || String(a || '').replace(/\D/g, '');
+  const right = normalizePhone(b) || String(b || '').replace(/\D/g, '');
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.slice(-9) === right.slice(-9);
+}
+
 function extractSmsContacts(data) {
   if (!data) return [];
-  const rows = Array.isArray(data.contacts)
-    ? data.contacts
-    : (Array.isArray(data.contactList)
-      ? data.contactList
-      : (Array.isArray(data.data)
-        ? data.data
-        : (Array.isArray(data.results) ? data.results : (data.id || data.msisdn || data.email ? [data] : []))));
+  const payload = data.contacts ? data : (data.contactSearchResult || data.data || data);
+  const rows = Array.isArray(payload?.contacts)
+    ? payload.contacts
+    : (Array.isArray(payload?.contactList)
+      ? payload.contactList
+      : (Array.isArray(payload)
+        ? payload
+        : (Array.isArray(data?.results) ? data.results : (data.id || data.msisdn || data.email ? [data] : []))));
   return rows
     .map((row) => ({
-      id: String(row?.id || row?.contactId || '').trim(),
+      id: String(row?.id || row?.contactId || row?.uuid || '').trim(),
       email: String(row?.email || '').toLowerCase().trim(),
-      msisdn: normalizePhone(row?.msisdn || row?.phone || row?.mobile || '')
+      msisdn: normalizePhone(row?.msisdn || row?.phone || row?.mobile || row?.to || ''),
+      rawMsisdn: String(row?.msisdn || row?.phone || row?.mobile || '').trim(),
+      name: String(row?.name || '').trim(),
+      lastname: String(row?.lastname || '').trim()
     }))
-    .filter((row) => row.id || row.email || row.msisdn);
+    .filter((row) => row.id || row.email || row.msisdn || row.rawMsisdn);
+}
+
+async function requestPhonebookSearch(auth, params) {
+  const res = await axios.get(`${BASE_URL}/phonebook/contact/search`, {
+    params,
+    auth,
+    headers: { Accept: 'application/json' },
+    timeout: 20000,
+    validateStatus: (s) => s < 500
+  });
+  return res;
 }
 
 async function searchSmsHostingContacts(auth, { email, phone }) {
-  const params = {};
-  if (phone) params.msisdn = phone;
-  if (email) params.email = email;
-  const urls = [
-    `${BASE_URL}/contact/search`,
-    `${BASE_URL}/contacts/search`,
-    `${BASE_URL}/addressbook/contact/search`
-  ];
+  const queries = [];
+  for (const msisdn of phonebookMsisdnCandidates(phone)) {
+    queries.push({ msisdn });
+  }
+  if (email && String(email).includes('@')) {
+    queries.push({ email: String(email).toLowerCase().trim() });
+  }
+  if (!queries.length) {
+    return { status: 'not_found', contacts: [], reason: 'Email o cellulare richiesti' };
+  }
+
   let lastError = '';
-  let searched = false;
-  for (const url of urls) {
+  for (const params of queries) {
     try {
-      const res = await axios.get(url, {
-        params,
-        auth,
-        timeout: 20000,
-        validateStatus: (s) => s < 500
-      });
-      if (res.status === 404) continue;
-      if (res.status >= 400) {
-        lastError = `HTTP ${res.status}`;
+      console.log('[Smshosting][Privacy] cerca rubrica', params.msisdn ? ('msisdn=' + params.msisdn) : ('email=' + params.email));
+      const res = await requestPhonebookSearch(auth, { ...params, limit: 50, offset: 0 });
+      if (res.status === 401) {
+        return { status: 'error', contacts: [], reason: 'Credenziali SMS Hosting non valide' };
+      }
+      if (res.status === 404) {
+        lastError = 'HTTP 404';
         continue;
       }
-      searched = true;
-      const contacts = extractSmsContacts(res.data);
-      if (contacts.length) return { status: 'found', contacts };
-      return { status: 'not_found', contacts: [] };
+      if (res.status >= 400) {
+        lastError = res.data?.errorMsg || `HTTP ${res.status}`;
+        continue;
+      }
+      let contacts = extractSmsContacts(res.data);
+      if (params.msisdn) {
+        contacts = contacts.filter((c) => phonesLikelyMatch(c.msisdn || c.rawMsisdn, params.msisdn));
+      }
+      if (params.email) {
+        contacts = contacts.filter((c) => String(c.email || '').toLowerCase() === params.email);
+      }
+      if (contacts.length) return { status: 'found', contacts, query: params };
     } catch (err) {
-      lastError = err.message;
+      lastError = err.response?.data?.errorMsg || err.message;
     }
   }
   return {
-    status: searched ? 'not_found' : 'error',
+    status: lastError && /401|credenziali|BAD_CREDENTIALS/i.test(lastError) ? 'error' : 'not_found',
     contacts: [],
-    reason: searched ? '' : (lastError || 'Lookup rubrica SMS Hosting non disponibile')
+    reason: lastError && /401|credenziali|BAD_CREDENTIALS/i.test(lastError) ? lastError : ''
   };
 }
 
@@ -253,7 +308,7 @@ async function findContactForPrivacy({ email, phone } = {}) {
   const auth = { username: authKey, password: authSecret };
   const lookup = await searchSmsHostingContacts(auth, {
     email: normalizedEmail.includes('@') ? normalizedEmail : '',
-    phone: normalizedPhone
+    phone: phone || normalizedPhone
   });
   if (lookup.status === 'error') {
     return { source: 'smshosting', status: 'error', found: false, reason: lookup.reason };
@@ -266,66 +321,82 @@ async function findContactForPrivacy({ email, phone } = {}) {
       found: true,
       contacts: lookup.contacts,
       email: first.email || normalizedEmail,
-      phone: first.msisdn || normalizedPhone
+      phone: first.msisdn || normalizedPhone,
+      reason: 'Trovato in rubrica' + (lookup.query?.msisdn ? (' (msisdn ' + lookup.query.msisdn + ')') : '')
     };
   }
   return { source: 'smshosting', status: 'not_found', found: false };
 }
 
-async function deleteContactByPhoneForPrivacy(phone) {
+async function deletePhonebookContactById(auth, id) {
+  const res = await axios.delete(`${BASE_URL}/phonebook/contact/${encodeURIComponent(id)}`, {
+    auth,
+    headers: { Accept: 'application/json' },
+    timeout: 20000,
+    validateStatus: (s) => s < 500
+  });
+  if (res.status === 200 || res.status === 204) return { status: 'deleted' };
+  if (res.status === 404 || looksLikeNotFoundPayload(res.data || {})) return { status: 'not_found' };
+  return { status: 'found_not_deleted', reason: res.data?.errorMsg || `HTTP ${res.status}` };
+}
+
+async function deleteContactByPhoneForPrivacy(phone, email) {
   const authKey = process.env.SMSHOSTING_AUTH_KEY;
   const authSecret = process.env.SMSHOSTING_AUTH_SECRET;
   if (!authKey || !authSecret) {
     return { source: 'smshosting', status: 'error', reason: 'SMSHOSTING_AUTH_KEY/SMSHOSTING_AUTH_SECRET non configurate' };
   }
   const normalized = normalizePhone(phone);
-  if (!normalized) {
-    return { source: 'smshosting', status: 'not_found', reason: 'Cellulare non disponibile o non valido' };
-  }
-
   const auth = { username: authKey, password: authSecret };
-  const configuredDeleteUrl = String(process.env.SMSHOSTING_LIST_DELETE_URL || '').trim();
-  const configuredLookupUrl = String(process.env.SMSHOSTING_LIST_LOOKUP_URL || '').trim();
+  const found = await findContactForPrivacy({ email, phone: phone || normalized });
+  if (found.status === 'error') return found;
+  if (!found.found) return { source: 'smshosting', status: 'not_found', phone: normalized };
 
-  // Se disponibile, prima prova lookup dedicato per distinguere not_found.
-  if (configuredLookupUrl) {
+  const contacts = Array.isArray(found.contacts) ? found.contacts : [];
+  let deletedCount = 0;
+  let failReasons = [];
+  for (const c of contacts) {
+    if (!c.id) continue;
     try {
-      const r = await axios.post(configuredLookupUrl, new URLSearchParams({ phone: normalized }).toString(), {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        auth,
-        timeout: 20000,
-        validateStatus: (s) => s < 500
-      });
-      if (r.status === 404 || looksLikeNotFoundPayload(r.data || {})) {
-        return { source: 'smshosting', status: 'not_found' };
-      }
-    } catch (_) {}
+      const out = await deletePhonebookContactById(auth, c.id);
+      if (out.status === 'deleted') deletedCount += 1;
+      else failReasons.push(out.reason || 'Delete non confermato');
+    } catch (err) {
+      failReasons.push(err.message);
+    }
+  }
+  if (deletedCount > 0 && failReasons.length === 0) {
+    return { source: 'smshosting', status: 'deleted', phone: normalized || found.phone, deletedContacts: deletedCount };
+  }
+  if (deletedCount > 0) {
+    return {
+      source: 'smshosting',
+      status: 'found_not_deleted',
+      phone: normalized || found.phone,
+      reason: `Cancellazione parziale (${deletedCount}/${contacts.length})`
+    };
   }
 
+  const configuredDeleteUrl = String(process.env.SMSHOSTING_LIST_DELETE_URL || '').trim();
   const candidates = [];
   if (configuredDeleteUrl) candidates.push(configuredDeleteUrl);
   candidates.push(
+    `${BASE_URL}/phonebook/contact/delete`,
     `${BASE_URL}/contacts/delete`,
-    `${BASE_URL}/contact/delete`,
-    `${BASE_URL}/addressbook/contact/delete`
+    `${BASE_URL}/contact/delete`
   );
-
   for (const url of candidates) {
     try {
-      const out = await tryDeleteWithEndpoint(url, auth, normalized);
-      if (out.status === 'deleted') return { source: 'smshosting', status: 'deleted', phone: normalized };
-      if (out.status === 'not_found') return { source: 'smshosting', status: 'not_found', phone: normalized };
-      if (out.status === 'found_not_deleted') {
-        return { source: 'smshosting', status: 'found_not_deleted', phone: normalized, reason: out.reason };
-      }
+      const out = await tryDeleteWithEndpoint(url, auth, normalized || found.phone);
+      if (out.status === 'deleted') return { source: 'smshosting', status: 'deleted', phone: normalized || found.phone };
     } catch (_) {}
   }
 
   return {
     source: 'smshosting',
     status: 'found_not_deleted',
-    phone: normalized,
-    reason: 'API gestione liste SMS Hosting non disponibile o endpoint delete non configurato'
+    phone: normalized || found.phone,
+    reason: failReasons[0] || 'Contatto trovato in rubrica ma delete non confermato'
   };
 }
 
@@ -339,6 +410,7 @@ if (process.env.NODE_ENV !== 'test') {
 module.exports = {
   sendSms,
   normalizePhone,
+  phonebookMsisdnCandidates,
   findContactForPrivacy,
   deleteContactByPhoneForPrivacy
 };
