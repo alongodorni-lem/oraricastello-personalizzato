@@ -181,6 +181,97 @@ async function tryDeleteWithEndpoint(url, auth, phone) {
   return { status: 'found_not_deleted', reason: 'Delete endpoint non ha confermato la cancellazione' };
 }
 
+function extractSmsContacts(data) {
+  if (!data) return [];
+  const rows = Array.isArray(data.contacts)
+    ? data.contacts
+    : (Array.isArray(data.contactList)
+      ? data.contactList
+      : (Array.isArray(data.data)
+        ? data.data
+        : (Array.isArray(data.results) ? data.results : (data.id || data.msisdn || data.email ? [data] : []))));
+  return rows
+    .map((row) => ({
+      id: String(row?.id || row?.contactId || '').trim(),
+      email: String(row?.email || '').toLowerCase().trim(),
+      msisdn: normalizePhone(row?.msisdn || row?.phone || row?.mobile || '')
+    }))
+    .filter((row) => row.id || row.email || row.msisdn);
+}
+
+async function searchSmsHostingContacts(auth, { email, phone }) {
+  const params = {};
+  if (phone) params.msisdn = phone;
+  if (email) params.email = email;
+  const urls = [
+    `${BASE_URL}/contact/search`,
+    `${BASE_URL}/contacts/search`,
+    `${BASE_URL}/addressbook/contact/search`
+  ];
+  let lastError = '';
+  let searched = false;
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, {
+        params,
+        auth,
+        timeout: 20000,
+        validateStatus: (s) => s < 500
+      });
+      if (res.status === 404) continue;
+      if (res.status >= 400) {
+        lastError = `HTTP ${res.status}`;
+        continue;
+      }
+      searched = true;
+      const contacts = extractSmsContacts(res.data);
+      if (contacts.length) return { status: 'found', contacts };
+      return { status: 'not_found', contacts: [] };
+    } catch (err) {
+      lastError = err.message;
+    }
+  }
+  return {
+    status: searched ? 'not_found' : 'error',
+    contacts: [],
+    reason: searched ? '' : (lastError || 'Lookup rubrica SMS Hosting non disponibile')
+  };
+}
+
+async function findContactForPrivacy({ email, phone } = {}) {
+  const authKey = process.env.SMSHOSTING_AUTH_KEY;
+  const authSecret = process.env.SMSHOSTING_AUTH_SECRET;
+  if (!authKey || !authSecret) {
+    return { source: 'smshosting', status: 'error', found: false, reason: 'SMSHOSTING_AUTH_KEY/SMSHOSTING_AUTH_SECRET non configurate' };
+  }
+  const normalizedPhone = normalizePhone(phone);
+  const normalizedEmail = String(email || '').toLowerCase().trim();
+  if (!normalizedPhone && !(normalizedEmail && normalizedEmail.includes('@'))) {
+    return { source: 'smshosting', status: 'not_found', found: false, reason: 'Email o cellulare richiesti' };
+  }
+
+  const auth = { username: authKey, password: authSecret };
+  const lookup = await searchSmsHostingContacts(auth, {
+    email: normalizedEmail.includes('@') ? normalizedEmail : '',
+    phone: normalizedPhone
+  });
+  if (lookup.status === 'error') {
+    return { source: 'smshosting', status: 'error', found: false, reason: lookup.reason };
+  }
+  if (lookup.status === 'found') {
+    const first = lookup.contacts[0] || {};
+    return {
+      source: 'smshosting',
+      status: 'found',
+      found: true,
+      contacts: lookup.contacts,
+      email: first.email || normalizedEmail,
+      phone: first.msisdn || normalizedPhone
+    };
+  }
+  return { source: 'smshosting', status: 'not_found', found: false };
+}
+
 async function deleteContactByPhoneForPrivacy(phone) {
   const authKey = process.env.SMSHOSTING_AUTH_KEY;
   const authSecret = process.env.SMSHOSTING_AUTH_SECRET;
@@ -248,5 +339,6 @@ if (process.env.NODE_ENV !== 'test') {
 module.exports = {
   sendSms,
   normalizePhone,
+  findContactForPrivacy,
   deleteContactByPhoneForPrivacy
 };

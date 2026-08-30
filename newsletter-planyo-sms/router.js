@@ -359,33 +359,77 @@ router.get('/api/planyo/resources', async (_req, res) => {
   }
 });
 
+function collectFoundPrivacySources(results) {
+  return ['planyo', 'mailchimp', 'smshosting', 'resend']
+    .filter((key) => results?.[key]?.status === 'found' || results?.[key]?.status === 'found_not_deleted')
+    .map((key) => sourceLabel(key));
+}
+
+function buildPrivacyFoundPrompt(foundSources) {
+  if (!foundSources.length) {
+    return 'Contatto non trovato in: Planyo, Mailchimp, SMS Hosting, Resend.';
+  }
+  return 'Contatto trovato in: ' + foundSources.join(', ') + ' - VUOI ELIMINARLO?';
+}
+
+async function runPrivacyLookup(emailInput, phoneInput) {
+  const cached = dataCache.findContactInCaches(emailInput, phoneInput);
+  let email = normalizePrivacyEmail(emailInput || cached.email);
+  let phone = smshosting.normalizePhone(phoneInput || cached.phone);
+
+  const smsRaw = await smshosting.findContactForPrivacy({ email, phone })
+    .catch((err) => ({ source: 'smshosting', status: 'error', found: false, reason: err.message }));
+  if (smsRaw?.email && (!email || !email.includes('@'))) email = normalizePrivacyEmail(smsRaw.email);
+  if (smsRaw?.phone && !phone) phone = smshosting.normalizePhone(smsRaw.phone);
+
+  const hasEmail = !!(email && email.includes('@'));
+  const [mailchimpRaw, planyoRaw, resendRaw] = await Promise.all([
+    hasEmail
+      ? mailchimp.findMemberByEmailAcrossLists(email).catch((err) => ({ status: 'error', reason: err.message }))
+      : Promise.resolve({ status: 'not_found', reason: 'Email non disponibile per la ricerca Mailchimp' }),
+    hasEmail
+      ? require('./services/planyo').findContactByEmail(email, config.monthsLookback).catch((err) => ({ status: 'error', reason: err.message }))
+      : Promise.resolve({ source: 'planyo', status: 'not_found', found: false, reason: 'Email non disponibile per la ricerca Planyo' }),
+    hasEmail
+      ? resendPrivacy.findContactByEmailForPrivacy(email).catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))
+      : Promise.resolve({ source: 'resend', status: 'not_found', found: false, reason: 'Resend cerca in rubrica per email' })
+  ]);
+
+  const results = {
+    mailchimp: mapMailchimpPrivacyLookup(mailchimpRaw),
+    planyo: mapPlanyoPrivacyLookup(planyoRaw),
+    smshosting: smsRaw?.source ? smsRaw : { source: 'smshosting', status: 'error', reason: 'Lookup SMS Hosting non disponibile' },
+    resend: resendRaw?.source ? resendRaw : { source: 'resend', status: 'error', reason: 'Lookup Resend non disponibile' }
+  };
+  const foundSources = collectFoundPrivacySources(results);
+  return {
+    email: hasEmail ? email : '',
+    phone: phone || '',
+    results,
+    foundSources,
+    found: foundSources.length > 0,
+    message: buildPrivacyFoundPrompt(foundSources)
+  };
+}
+
 router.post('/api/privacy/check', async (req, res) => {
   try {
     const email = normalizePrivacyEmail(req.body?.email);
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ success: false, error: 'Email contatto obbligatoria e valida.' });
+    const phone = String(req.body?.phone || '').trim();
+    if ((!email || !email.includes('@')) && !smshosting.normalizePhone(phone)) {
+      return res.status(400).json({ success: false, error: 'Inserisci una email valida oppure un cellulare.' });
     }
 
-    const [mailchimpRaw, planyoRaw, resendRaw] = await Promise.all([
-      mailchimp.findMemberByEmailAcrossLists(email).catch((err) => ({ status: 'error', reason: err.message })),
-      require('./services/planyo').findContactByEmail(email, config.monthsLookback).catch((err) => ({ status: 'error', reason: err.message })),
-      resendPrivacy.findContactByEmailForPrivacy(email).catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))
-    ]);
-
-    const results = {
-      mailchimp: mapMailchimpPrivacyLookup(mailchimpRaw),
-      planyo: mapPlanyoPrivacyLookup(planyoRaw),
-      smshosting: { source: 'smshosting', status: 'skipped', reason: 'Lookup diretto non disponibile: usare CERCA E CANCELLA con cellulare' },
-      resend: resendRaw?.source ? resendRaw : { source: 'resend', status: 'error', reason: 'Lookup Resend non disponibile' }
-    };
-
-    const hasError = Object.values(results).some((r) => r?.status === 'error');
-    const message = buildPrivacyMessage(results);
+    const lookup = await runPrivacyLookup(email, phone);
+    const hasError = Object.values(lookup.results).some((r) => r?.status === 'error');
     return res.status(hasError ? 207 : 200).json({
       success: !hasError,
-      email,
-      message,
-      results
+      email: lookup.email,
+      phone: lookup.phone,
+      found: lookup.found,
+      foundSources: lookup.foundSources,
+      message: lookup.message,
+      results: lookup.results
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -394,19 +438,33 @@ router.post('/api/privacy/check', async (req, res) => {
 
 router.post('/api/privacy/delete', async (req, res) => {
   try {
-    const email = normalizePrivacyEmail(req.body?.email);
+    const emailInput = normalizePrivacyEmail(req.body?.email);
     const phoneRaw = String(req.body?.phone || '').trim();
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ success: false, error: 'Email contatto obbligatoria e valida.' });
+    if ((!emailInput || !emailInput.includes('@')) && !smshosting.normalizePhone(phoneRaw)) {
+      return res.status(400).json({ success: false, error: 'Inserisci una email valida oppure un cellulare.' });
     }
+    const resolved = dataCache.findContactInCaches(emailInput, phoneRaw);
+    let email = (emailInput && emailInput.includes('@')) ? emailInput : normalizePrivacyEmail(resolved.email);
+    let phone = smshosting.normalizePhone(phoneRaw || resolved.phone);
+    if ((!email || !email.includes('@')) && phone) {
+      const smsLookup = await smshosting.findContactForPrivacy({ phone }).catch(() => null);
+      if (smsLookup?.email) email = normalizePrivacyEmail(smsLookup.email);
+    }
+    const hasEmail = !!(email && email.includes('@'));
 
     const [mailchimpResult, planyoResult, resendResult] = await Promise.all([
-      mailchimp.deleteMemberByEmailForPrivacy(email).catch((err) => ({ source: 'mailchimp', status: 'error', reason: err.message })),
-      require('./services/planyo').deleteContactByEmailForPrivacy(email, config.monthsLookback).catch((err) => ({ source: 'planyo', status: 'error', reason: err.message })),
-      resendPrivacy.deleteContactByEmailForPrivacy(email).catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))
+      hasEmail
+        ? mailchimp.deleteMemberByEmailForPrivacy(email).catch((err) => ({ source: 'mailchimp', status: 'error', reason: err.message }))
+        : Promise.resolve({ source: 'mailchimp', status: 'not_found', reason: 'Email non disponibile per la cancellazione Mailchimp' }),
+      hasEmail
+        ? require('./services/planyo').deleteContactByEmailForPrivacy(email, config.monthsLookback).catch((err) => ({ source: 'planyo', status: 'error', reason: err.message }))
+        : Promise.resolve({ source: 'planyo', status: 'not_found', reason: 'Email non disponibile per la cancellazione Planyo' }),
+      hasEmail
+        ? resendPrivacy.deleteContactByEmailForPrivacy(email).catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))
+        : Promise.resolve({ source: 'resend', status: 'not_found', reason: 'Resend cancella dalla rubrica per email' })
     ]);
 
-    const smsPhoneCandidate = phoneRaw
+    const smsPhoneCandidate = phone
       || (() => {
         const mc = dataCache.loadMailchimpCache();
         const c = mc?.contacts?.[email];

@@ -419,6 +419,58 @@ function getCacheStatus() {
   };
 }
 
+function phonesMatch(a, b) {
+  const left = normalizeMobilePhone(a) || String(a || '').replace(/\D/g, '');
+  const right = normalizeMobilePhone(b) || String(b || '').replace(/\D/g, '');
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.slice(-9) === right.slice(-9);
+}
+
+function findContactInCaches(email, phone = '') {
+  const normEmail = String(email || '').toLowerCase().trim();
+  const normPhone = normalizeMobilePhone(phone);
+  let foundEmail = normEmail && normEmail.includes('@') ? normEmail : '';
+  let foundPhone = normPhone || '';
+
+  try {
+    const mc = normalizeCacheShape(loadMailchimpCache());
+    const contacts = mc?.contacts && typeof mc.contacts === 'object' ? mc.contacts : {};
+    if (foundEmail && contacts[foundEmail]) {
+      foundPhone = foundPhone || normalizeMobilePhone(contacts[foundEmail].telefono || contacts[foundEmail].cellulare || '');
+    } else if (foundPhone) {
+      for (const [em, c] of Object.entries(contacts)) {
+        if (phonesMatch(c?.telefono || c?.cellulare, foundPhone)) {
+          foundEmail = String(em || '').toLowerCase().trim();
+          break;
+        }
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const pc = loadPlanyoCache();
+    const rows = Array.isArray(pc?.contacts) ? pc.contacts : [];
+    for (const row of rows) {
+      const rowEmail = String(row?.email || '').toLowerCase().trim();
+      const rowPhone = normalizeMobilePhone(row?.telefono || row?.cellulare || '');
+      if (foundEmail && rowEmail === foundEmail) {
+        foundPhone = foundPhone || rowPhone;
+        break;
+      }
+      if (!foundEmail && foundPhone && phonesMatch(rowPhone, foundPhone) && rowEmail.includes('@')) {
+        foundEmail = rowEmail;
+        break;
+      }
+    }
+  } catch (_) {}
+
+  return {
+    email: foundEmail || '',
+    phone: foundPhone || ''
+  };
+}
+
 function removeContactFromCaches(email, phone = '') {
   const normEmail = String(email || '').toLowerCase().trim();
   const normPhone = normalizeMobilePhone(phone) || String(phone || '').replace(/\D/g, '');
@@ -488,6 +540,7 @@ module.exports = {
   runUpdatePrenotazioni,
   isReadyForOperations,
   getCacheStatus,
+  findContactInCaches,
   removeContactFromCaches,
   importNewsletterCsv,
   importNewsletterContacts,
