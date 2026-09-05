@@ -121,6 +121,71 @@ function normalizeEmail(email) {
   return String(email || '').toLowerCase().trim();
 }
 
+function extractPlanyoCollection(payload, ...keys) {
+  if (!payload) return [];
+  const nodes = [payload, payload.data];
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    for (const key of keys) {
+      if (Array.isArray(node[key])) return node[key];
+    }
+  }
+  if (Array.isArray(payload.data)) return payload.data;
+  return [];
+}
+
+function phonesLikelyMatch(a, b) {
+  const left = normalizePhone(a) || String(a || '').replace(/\D/g, '');
+  const right = normalizePhone(b) || String(b || '').replace(/\D/g, '');
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.slice(-9) === right.slice(-9);
+}
+
+function nationalMobileFromPhone(phone) {
+  const normalized = normalizePhone(phone);
+  if (/^393\d{9}$/.test(normalized)) return normalized.slice(2);
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (/^3\d{9}$/.test(digits)) return digits;
+  const tail = digits.match(/3\d{9}$/);
+  return tail ? tail[0] : '';
+}
+
+function uniqueEmails(values) {
+  const out = [];
+  for (const value of values || []) {
+    const email = normalizeEmail(value);
+    if (email && email.includes('@') && !out.includes(email)) out.push(email);
+  }
+  return out;
+}
+
+function uniquePositiveIds(values) {
+  const out = [];
+  for (const value of values || []) {
+    const id = Number(value);
+    if (Number.isInteger(id) && id > 0 && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+function userRecordPhoneMatches(user, phone) {
+  if (!user || typeof user !== 'object') return false;
+  const candidates = [
+    user.mobile_number,
+    user.phone_number,
+    user.phone,
+    user.mobile
+  ];
+  if (user.mobile_country_code && user.mobile_number) {
+    candidates.push(String(user.mobile_country_code) + String(user.mobile_number));
+  }
+  if (user.phone_country_code && user.phone_number) {
+    candidates.push(String(user.phone_country_code) + String(user.phone_number));
+  }
+  return candidates.some((value) => value && phonesLikelyMatch(value, phone));
+}
+
 function isTransientLookupError(err) {
   const msg = String(err?.message || '').toLowerCase();
   return (
@@ -733,7 +798,7 @@ async function findContactByEmail(email, monthsLookback = 18) {
           }
         }
         if (lastErr) throw lastErr;
-        const users = Array.isArray(data?.users) ? data.users : (Array.isArray(data?.results) ? data.results : []);
+        const users = extractPlanyoCollection(data, 'users', 'results');
         const elapsed = Date.now() - startedAt;
         const modeLabel = mode.list_created_by_admin ? 'admin_users' : 'reservation_users';
         console.log('[Planyo][Privacy] list_users lookup', queryEmail === normEmail ? 'exact' : 'wildcard', modeLabel, 'users:', users.length, 'elapsed_ms:', elapsed);
@@ -759,6 +824,178 @@ async function findContactByEmail(email, monthsLookback = 18) {
     // fallback sotto: not_found
   }
 
+  return { source: 'planyo', status: 'not_found', found: false };
+}
+
+function mapReservationSearchRow(row) {
+  return {
+    reservation_id: row?.rental_id || row?.reservation_id || row?.id || null,
+    user_id: row?.user_id != null ? Number(row.user_id) : null,
+    resource_id: row?.resource_id || row?.resource?.id || null,
+    start_time: row?.start_time || null,
+    status: row?.status != null ? row.status : null,
+    resource_name: row?.name || row?.resource_name || row?.resource?.name || '',
+    email: normalizeEmail(row?.email),
+    phone: extractPhone(row) || normalizePhone(row?.mobile_number || row?.phone || '')
+  };
+}
+
+function buildPhoneMatchResult(phone, matches, foundVia) {
+  const national = nationalMobileFromPhone(phone);
+  const emails = uniqueEmails(matches.map((m) => m.email));
+  const userIds = uniquePositiveIds(matches.map((m) => m.planyoUserId || m.user_id));
+  const reservations = matches.flatMap((m) => m.reservations || []);
+  const sorted = matches.slice().sort((a, b) => (
+    String(b.lastReservation || b.start_time || '').localeCompare(String(a.lastReservation || a.start_time || ''))
+  ));
+  const primary = sorted[0] || {};
+  return {
+    source: 'planyo',
+    status: 'found',
+    found: true,
+    email: primary.email || emails[0] || '',
+    emails,
+    phone: normalizePhone(primary.phone || phone) || national,
+    foundVia,
+    planyoUserId: primary.planyoUserId || userIds[0],
+    planyoUserIds: userIds,
+    reservations,
+    reason: 'Trovato per cellulare' + (national ? (' (' + national + ')') : '') + (emails.length > 1 ? (' - ' + emails.length + ' anagrafiche') : '')
+  };
+}
+
+async function findUsersByMobile(siteId, national) {
+  const filters = [
+    { mobile_number: national },
+    { mobile_number: national, mobile_country_code: '39' },
+    { phone_number: national },
+    { phone_number: national, phone_country_code: '39' }
+  ];
+  const modes = [
+    { list_unconfirmed: true },
+    { list_unconfirmed: true, list_created_by_admin: true }
+  ];
+  const matches = [];
+  const seen = new Set();
+  for (const filter of filters) {
+    for (const mode of modes) {
+      try {
+        const data = await callPlanyoAPI('list_users', {
+          site_id: siteId,
+          detail_level: 1,
+          page: 0,
+          page_size: 1000,
+          ...filter,
+          ...mode
+        }, { timeoutMs: 60000 });
+        const users = extractPlanyoCollection(data, 'users', 'results');
+        for (const user of users) {
+          if (!userRecordPhoneMatches(user, national) && users.length > 8) continue;
+          if (!userRecordPhoneMatches(user, national) && (user.mobile_number || user.phone_number)) continue;
+          const email = normalizeEmail(user.email);
+          const userId = Number(user.id ?? user.user_id);
+          const key = String(userId || email);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          matches.push({
+            email,
+            planyoUserId: Number.isInteger(userId) && userId > 0 ? userId : undefined,
+            phone: normalizePhone(user.mobile_number || user.phone_number || ''),
+            lastReservation: user.last_reservation || '',
+            reservations: []
+          });
+        }
+        if (matches.length) return matches;
+      } catch (_) {}
+    }
+  }
+  return matches;
+}
+
+async function findContactByPhone(phone, monthsLookback = 18) {
+  const national = nationalMobileFromPhone(phone);
+  const normalized = normalizePhone(phone);
+  if (!national && !normalized) {
+    return { source: 'planyo', status: 'not_found', found: false, reason: 'Cellulare non valido' };
+  }
+  const siteId = process.env.PLANYO_SITE_ID || '8895';
+  void monthsLookback;
+
+  if (reservationsCache?.data) {
+    const cacheMatches = [];
+    for (const [email, entry] of reservationsCache.data.entries()) {
+      if (!phonesLikelyMatch(entry?.phone, phone)) continue;
+      cacheMatches.push({
+        email,
+        phone: entry.phone,
+        planyoUserId: uniquePositiveIds((entry.reservations || []).map((r) => r.user_id))[0],
+        reservations: entry.reservations || [],
+        lastReservation: (entry.reservations || []).map((r) => r.start_time || '').sort().slice(-1)[0] || ''
+      });
+    }
+    if (cacheMatches.length) return buildPhoneMatchResult(phone, cacheMatches, 'reservations_lookback');
+  }
+
+  const users = await findUsersByMobile(siteId, national || normalized);
+  if (users.length) {
+    console.log('[Planyo][Privacy] list_users cellulare users:', users.length);
+    return buildPhoneMatchResult(phone, users, 'list_users_mobile');
+  }
+
+  try {
+    const queries = [];
+    if (national) queries.push(national, '+39' + national, '39' + national);
+    if (normalized && !queries.includes(normalized)) queries.push(normalized);
+    for (const query of queries) {
+      const data = await callPlanyoAPI('reservation_search', {
+        site_id: siteId,
+        query
+      }, { timeoutMs: 60000 });
+      const rows = extractPlanyoCollection(data, 'results').filter((row) => (
+        phonesLikelyMatch(row?.mobile_number || row?.phone || extractPhone(row), phone)
+      ));
+      if (!rows.length) continue;
+      const grouped = new Map();
+      for (const row of rows) {
+        const mapped = mapReservationSearchRow(row);
+        const key = String(mapped.user_id || mapped.email || mapped.reservation_id);
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            email: mapped.email,
+            planyoUserId: mapped.user_id,
+            phone: mapped.phone,
+            lastReservation: mapped.start_time || '',
+            reservations: []
+          });
+        }
+        grouped.get(key).reservations.push(mapped);
+        if (mapped.start_time && mapped.start_time > grouped.get(key).lastReservation) {
+          grouped.get(key).lastReservation = mapped.start_time;
+        }
+      }
+      const matches = [...grouped.values()];
+      if (matches.length) {
+        console.log('[Planyo][Privacy] reservation_search cellulare matches:', matches.length);
+        return buildPhoneMatchResult(phone, matches, 'reservation_search');
+      }
+    }
+  } catch (_) {}
+
+  return { source: 'planyo', status: 'not_found', found: false };
+}
+
+async function findContactForPrivacy({ email, phone } = {}, monthsLookback = 18) {
+  const normEmail = normalizeEmail(email);
+  const hasEmail = !!(normEmail && normEmail.includes('@'));
+  const hasPhone = !!(normalizePhone(phone) || nationalMobileFromPhone(phone));
+  if (!hasEmail && !hasPhone) {
+    return { source: 'planyo', status: 'not_found', found: false, reason: 'Email o cellulare richiesti' };
+  }
+  if (hasEmail) {
+    const byEmail = await findContactByEmail(normEmail, monthsLookback);
+    if (byEmail.found) return byEmail;
+  }
+  if (hasPhone) return findContactByPhone(phone, monthsLookback);
   return { source: 'planyo', status: 'not_found', found: false };
 }
 
@@ -948,6 +1185,59 @@ async function deleteContactByEmailForPrivacy(email, monthsLookback = 18) {
   };
 }
 
+async function deleteContactForPrivacy({ email, phone } = {}, monthsLookback = 18) {
+  if (!process.env.PLANYO_API_KEY) return { source: 'planyo', status: 'error', reason: 'PLANYO_API_KEY non configurata' };
+  const found = await findContactForPrivacy({ email, phone }, monthsLookback);
+  if (!found.found) return { source: 'planyo', status: 'not_found' };
+
+  const emails = uniqueEmails([found.email, ...(found.emails || []), email]);
+  let lastFail = '';
+  if (emails.length) {
+    let deleted = 0;
+    let foundNotDeleted = 0;
+    let lastDeleted = null;
+    for (const itemEmail of emails) {
+      const out = await deleteContactByEmailForPrivacy(itemEmail, monthsLookback);
+      if (out.status === 'deleted') {
+        deleted += 1;
+        lastDeleted = out;
+      } else if (out.status === 'found_not_deleted') {
+        foundNotDeleted += 1;
+        lastFail = out.reason || lastFail;
+      }
+    }
+    if (deleted > 0 && foundNotDeleted === 0) {
+      return lastDeleted || { source: 'planyo', status: 'deleted' };
+    }
+    if (deleted > 0) {
+      return {
+        source: 'planyo',
+        status: 'found_not_deleted',
+        reason: `Cancellazione parziale Planyo (${deleted}/${emails.length})` + (lastFail ? (': ' + lastFail) : '')
+      };
+    }
+    if (foundNotDeleted > 0) {
+      return { source: 'planyo', status: 'found_not_deleted', reason: lastFail || 'Contatto trovato ma non cancellato' };
+    }
+  }
+
+  const userIds = uniquePositiveIds([found.planyoUserId, ...(found.planyoUserIds || [])]);
+  const siteId = process.env.PLANYO_SITE_ID || '8895';
+  for (const userId of userIds) {
+    try {
+      await tryRemovePlanyoUser(siteId, userId);
+      return { source: 'planyo', status: 'deleted', method: 'remove_user', userId };
+    } catch (err) {
+      lastFail = err.message;
+    }
+  }
+  return {
+    source: 'planyo',
+    status: 'found_not_deleted',
+    reason: lastFail || 'Contatto trovato in Planyo ma delete non confermato'
+  };
+}
+
 module.exports = {
   callPlanyoAPI,
   loadReservationsByEmail,
@@ -957,7 +1247,10 @@ module.exports = {
   getPublishedResources,
   getCachedListAAndB,
   findContactByEmail,
+  findContactByPhone,
+  findContactForPrivacy,
   deleteContactByEmailForPrivacy,
+  deleteContactForPrivacy,
   extractPhone,
   normalizePhone
 };

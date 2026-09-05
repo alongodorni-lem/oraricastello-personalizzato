@@ -82,6 +82,27 @@ function markAsSent(campaignId, email, segment) {
   saveSentRegistry(reg);
 }
 
+async function sendAdminControlSms(texts) {
+  const phone = smshosting.normalizePhone(config.adminPhone || '+393394773418');
+  if (!phone) return;
+  const unique = [...new Set((texts || []).map((text) => String(text || '').trim()).filter(Boolean))];
+  for (const text of unique) {
+    try {
+      const result = await smshosting.sendSms(phone, text);
+      if (result.success) console.log('[Job] SMS controllo admin inviato');
+      else console.warn('[Job] SMS controllo admin non inviato:', result.error);
+    } catch (err) {
+      console.warn('[Job] SMS controllo admin errore:', err.message);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+function rememberAdminPhone(seenPhonesInRun) {
+  const phone = smshosting.normalizePhone(config.adminPhone || '+393394773418');
+  if (phone) seenPhonesInRun.add(phone);
+}
+
 /**
  * Esegue il job di segmentazione e invio SMS
  * @param {string} campaignId - ID campagna Mailchimp
@@ -124,6 +145,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     let duplicates = 0;
     let skipped = 0;
     const textD = getText();
+    if (!dryRun && !prepareOnly) {
+      await sendAdminControlSms([textD]);
+      rememberAdminPhone(seenPhonesInRun);
+    }
     for (const { email, telefono: phone } of withPhone) {
       if (!prepareOnly) {
         if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
@@ -267,6 +292,16 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   let skipped = 0;
 
   const getText = (seg) => customSmsText || (smsTexts['list' + seg] || '');
+  if (!dryRun && !prepareOnly) {
+    const controlTexts = [];
+    for (const segment of ['A', 'B', 'C']) {
+      if (!segmentsToProcess.includes(segment)) continue;
+      controlTexts.push(getText(segment));
+    }
+    if (segmentsFilter && segmentsFilter.includes('D')) controlTexts.push(getText('D'));
+    await sendAdminControlSms(controlTexts);
+    rememberAdminPhone(seenPhonesInRun);
+  }
   for (const segment of ['A', 'B', 'C']) {
     const text = getText(segment);
     if (!segmentsToProcess.includes(segment)) continue;

@@ -18,6 +18,7 @@ const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, ta
 const planyoReportCsv = require('./services/planyoReportCsv');
 const dataCache = require('./services/dataCache');
 const config = require('./config/segments');
+const adminControl = require('./services/adminControl');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
 const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
@@ -293,13 +294,34 @@ function mapPlanyoPrivacyLookup(found) {
     if (found?.status === 'error') {
       return { source: 'planyo', status: 'error', reason: found.reason || 'Lookup fallito' };
     }
-    return { source: 'planyo', status: 'not_found' };
+    return { source: 'planyo', status: 'not_found', reason: found?.reason || undefined };
   }
   return {
     source: 'planyo',
     status: 'found',
-    reservations: Array.isArray(found.reservations) ? found.reservations.length : undefined
+    email: found.email || '',
+    reservations: Array.isArray(found.reservations) ? found.reservations.length : undefined,
+    reason: found.reason || (found.foundVia ? ('Trovato (' + found.foundVia + ')') : undefined)
   };
+}
+
+function uniquePrivacyEmails(...values) {
+  const out = [];
+  for (const value of values.flat()) {
+    const email = normalizePrivacyEmail(value);
+    if (email && email.includes('@') && !out.includes(email)) out.push(email);
+  }
+  return out;
+}
+
+async function firstPrivacyFound(tasks, fallback) {
+  const results = await Promise.all(tasks);
+  return results.find((item) => item?.status === 'deleted')
+    || results.find((item) => item?.found || item?.status === 'found')
+    || results.find((item) => item?.status === 'found_not_deleted')
+    || results.find((item) => item?.status === 'error')
+    || results[0]
+    || fallback;
 }
 
 // Pagina principale
@@ -376,22 +398,35 @@ async function runPrivacyLookup(emailInput, phoneInput) {
   const cached = dataCache.findContactInCaches(emailInput, phoneInput);
   let email = normalizePrivacyEmail(emailInput || cached.email);
   let phone = smshosting.normalizePhone(phoneInput || cached.phone);
+  const planyo = require('./services/planyo');
 
-  const smsRaw = await smshosting.findContactForPrivacy({ email, phone })
-    .catch((err) => ({ source: 'smshosting', status: 'error', found: false, reason: err.message }));
+  const [smsRaw, planyoRaw] = await Promise.all([
+    smshosting.findContactForPrivacy({ email, phone })
+      .catch((err) => ({ source: 'smshosting', status: 'error', found: false, reason: err.message })),
+    planyo.findContactForPrivacy({ email, phone }, config.monthsLookback)
+      .catch((err) => ({ source: 'planyo', status: 'error', found: false, reason: err.message }))
+  ]);
   if (smsRaw?.email && (!email || !email.includes('@'))) email = normalizePrivacyEmail(smsRaw.email);
+  if (planyoRaw?.email && (!email || !email.includes('@'))) email = normalizePrivacyEmail(planyoRaw.email);
   if (smsRaw?.phone && !phone) phone = smshosting.normalizePhone(smsRaw.phone);
+  if (planyoRaw?.phone && !phone) phone = smshosting.normalizePhone(planyoRaw.phone) || phone;
 
-  const hasEmail = !!(email && email.includes('@'));
-  const [mailchimpRaw, planyoRaw, resendRaw] = await Promise.all([
+  const emails = uniquePrivacyEmails(email, smsRaw?.email, planyoRaw?.email, planyoRaw?.emails);
+  const hasEmail = emails.length > 0;
+  const [mailchimpRaw, resendRaw] = await Promise.all([
     hasEmail
-      ? mailchimp.findMemberByEmailAcrossLists(email).catch((err) => ({ status: 'error', reason: err.message }))
+      ? firstPrivacyFound(
+        emails.map((itemEmail) => mailchimp.findMemberByEmailAcrossLists(itemEmail)
+          .catch((err) => ({ status: 'error', reason: err.message }))),
+        { status: 'not_found' }
+      )
       : Promise.resolve({ status: 'not_found', reason: 'Email non disponibile per la ricerca Mailchimp' }),
     hasEmail
-      ? require('./services/planyo').findContactByEmail(email, config.monthsLookback).catch((err) => ({ status: 'error', reason: err.message }))
-      : Promise.resolve({ source: 'planyo', status: 'not_found', found: false, reason: 'Email non disponibile per la ricerca Planyo' }),
-    hasEmail
-      ? resendPrivacy.findContactByEmailForPrivacy(email).catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))
+      ? firstPrivacyFound(
+        emails.map((itemEmail) => resendPrivacy.findContactByEmailForPrivacy(itemEmail)
+          .catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))),
+        { source: 'resend', status: 'not_found', found: false }
+      )
       : Promise.resolve({ source: 'resend', status: 'not_found', found: false, reason: 'Resend cerca in rubrica per email' })
   ]);
 
@@ -446,21 +481,36 @@ router.post('/api/privacy/delete', async (req, res) => {
     const resolved = dataCache.findContactInCaches(emailInput, phoneRaw);
     let email = (emailInput && emailInput.includes('@')) ? emailInput : normalizePrivacyEmail(resolved.email);
     let phone = smshosting.normalizePhone(phoneRaw || resolved.phone);
+    let extraPlanyoEmails = [];
+    const planyo = require('./services/planyo');
     if ((!email || !email.includes('@')) && phone) {
-      const smsLookup = await smshosting.findContactForPrivacy({ phone }).catch(() => null);
+      const [smsLookup, planyoLookup] = await Promise.all([
+        smshosting.findContactForPrivacy({ phone }).catch(() => null),
+        planyo.findContactForPrivacy({ phone }, config.monthsLookback).catch(() => null)
+      ]);
       if (smsLookup?.email) email = normalizePrivacyEmail(smsLookup.email);
+      if ((!email || !email.includes('@')) && planyoLookup?.email) email = normalizePrivacyEmail(planyoLookup.email);
+      extraPlanyoEmails = uniquePrivacyEmails(planyoLookup?.email, planyoLookup?.emails);
     }
-    const hasEmail = !!(email && email.includes('@'));
+    const emails = uniquePrivacyEmails(email, extraPlanyoEmails);
+    const hasEmail = emails.length > 0;
 
     const [mailchimpResult, planyoResult, resendResult] = await Promise.all([
       hasEmail
-        ? mailchimp.deleteMemberByEmailForPrivacy(email).catch((err) => ({ source: 'mailchimp', status: 'error', reason: err.message }))
+        ? firstPrivacyFound(
+          emails.map((itemEmail) => mailchimp.deleteMemberByEmailForPrivacy(itemEmail)
+            .catch((err) => ({ source: 'mailchimp', status: 'error', reason: err.message }))),
+          { source: 'mailchimp', status: 'not_found' }
+        )
         : Promise.resolve({ source: 'mailchimp', status: 'not_found', reason: 'Email non disponibile per la cancellazione Mailchimp' }),
+      planyo.deleteContactForPrivacy({ email, phone }, config.monthsLookback)
+        .catch((err) => ({ source: 'planyo', status: 'error', reason: err.message })),
       hasEmail
-        ? require('./services/planyo').deleteContactByEmailForPrivacy(email, config.monthsLookback).catch((err) => ({ source: 'planyo', status: 'error', reason: err.message }))
-        : Promise.resolve({ source: 'planyo', status: 'not_found', reason: 'Email non disponibile per la cancellazione Planyo' }),
-      hasEmail
-        ? resendPrivacy.deleteContactByEmailForPrivacy(email).catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))
+        ? firstPrivacyFound(
+          emails.map((itemEmail) => resendPrivacy.deleteContactByEmailForPrivacy(itemEmail)
+            .catch((err) => ({ source: 'resend', status: 'error', reason: err.message }))),
+          { source: 'resend', status: 'not_found' }
+        )
         : Promise.resolve({ source: 'resend', status: 'not_found', reason: 'Resend cancella dalla rubrica per email' })
     ]);
 
@@ -1014,6 +1064,24 @@ function parseEmailLimitOrDefault(val, fallback = 100) {
   return parsePositiveInteger(String(val).trim());
 }
 
+async function sendAdminControlEmail({ subject, body, html }) {
+  const row = adminControl.buildAdminEmailRow();
+  try {
+    await emailService.sendPersonalizedEmail({
+      to: row.email,
+      subject,
+      body,
+      html,
+      data: row
+    });
+    console.log('[Email] Copia di controllo inviata a', row.email);
+    return { ok: true, email: row.email };
+  } catch (err) {
+    console.error('[Email] Copia di controllo non inviata:', err.message);
+    return { ok: false, email: row.email, error: err.message };
+  }
+}
+
 async function resolveAlreadySentForAudience({ subject, campaignId, segments, engagementType, listDFilters }) {
   const batchId = emailService.getBatchId({
     subject: subject || '',
@@ -1505,13 +1573,6 @@ router.post('/api/email/send', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
   }
   const limitInfo = emailService.checkDailyLimit();
-  if (limitInfo.enabled && limitInfo.remaining <= 0) {
-    return res.status(400).json({
-      success: false,
-      error: `Limite giornaliero raggiunto (${limitInfo.limit}/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
-    });
-  }
-
   const batchId = emailService.getBatchId({
     subject,
     campaignId: campaignId || '',
@@ -1520,7 +1581,9 @@ router.post('/api/email/send', async (req, res) => {
     listDEventNameContains: listDFilters.eventNameContains,
     listDStatuses: listDFilters.statuses?.join(',')
   });
-  const maxToSend = limitInfo.enabled ? Math.min(limitNum, limitInfo.remaining) : limitNum;
+  const maxToSend = limitInfo.enabled
+    ? Math.max(0, Math.min(limitNum, limitInfo.remaining))
+    : limitNum;
 
   const cap = captureLogs(async () => {
     const sentSet = await emailService.collectAlreadySentEmails(batchId, subject);
@@ -1534,9 +1597,9 @@ router.post('/api/email/send', async (req, res) => {
     data = filterByEvent(data, (eventFilter || '').trim());
     data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
     const registryRows = buildRegistryRowsFromData(data, subject, emailBodyText, sentSet, sentMap);
-    const pendingData = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()));
-    const toSend = takeBlock(pendingData, maxToSend);
-    console.log('[Email] Destinatari da inviare: ' + toSend.length + ' (saltati gia ricevuti: ' + Math.max(0, data.length - pendingData.length) + ')');
+    const pendingData = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()) && !adminControl.isAdminEmail(r.email));
+    const toSend = maxToSend > 0 ? takeBlock(pendingData, maxToSend) : [];
+    console.log('[Email] Destinatari da inviare: ' + toSend.length + ' + copia controllo admin (saltati gia ricevuti: ' + Math.max(0, data.length - pendingData.length) + ')');
 
     emailAbortRequested = false;
     let sent = 0;
@@ -1546,6 +1609,17 @@ router.post('/api/email/send', async (req, res) => {
     const failureByReason = new Map();
     const failureSamples = [];
     let apiBatchCalls = 0;
+
+    const adminCopy = await sendAdminControlEmail({
+      subject,
+      body: emailBodyText || undefined,
+      html: emailHtmlText || undefined
+    });
+    if (adminCopy.ok) sent += 1;
+    else {
+      failed += 1;
+      failureByReason.set(adminCopy.error || 'Copia controllo admin non inviata', 1);
+    }
 
     const chunks = chunkArray(toSend, RESEND_BATCH_SIZE);
     for (let i = 0; i < chunks.length; i++) {
@@ -1600,7 +1674,7 @@ router.post('/api/email/send', async (req, res) => {
     return {
       sent,
       failed,
-      total: toSend.length,
+      total: toSend.length + 1,
       batchSent: sentSet.size + successfullySent.length,
       batchRemaining: pendingData.length - successfullySent.length,
       failureSummary: [...failureByReason.entries()]
@@ -1608,7 +1682,7 @@ router.post('/api/email/send', async (req, res) => {
         .map(([reason, count]) => ({ reason, count })),
       failureSamples,
       sendReport: {
-        requestedRecipients: toSend.length,
+        requestedRecipients: toSend.length + 1,
         acceptedByResend: sent,
         failedByResend: failed,
         skippedAlreadySentInBatch: Math.max(0, data.length - pendingData.length),
@@ -1651,15 +1725,9 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     }
 
     const limitInfo = emailService.checkDailyLimit();
-    if (limitInfo.enabled && limitInfo.remaining <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: `Limite giornaliero raggiunto (${limitInfo.limit}/giorno). Inviati oggi: ${limitInfo.today}. Riprova domani.`
-      });
-    }
-    const maxToSend = limitInfo.enabled ? Math.min(limit, limitInfo.remaining) : limit;
+    const maxToSend = limitInfo.enabled ? Math.max(0, Math.min(limit, limitInfo.remaining)) : limit;
     const pending = rows.filter((r) => {
-      return !String(r.data_invio_email || '').trim();
+      return !adminControl.isAdminEmail(r.email) && !String(r.data_invio_email || '').trim();
     }).slice(0, maxToSend);
 
     emailAbortRequested = false;
@@ -1667,6 +1735,15 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     let failed = 0;
     const failureByReason = new Map();
     const failureSamples = [];
+    const adminCopy = await sendAdminControlEmail({
+      subject,
+      body: emailText
+    });
+    if (adminCopy.ok) sent += 1;
+    else {
+      failed += 1;
+      failureByReason.set(adminCopy.error || 'Copia controllo admin non inviata', 1);
+    }
     const chunks = chunkArray(pending, RESEND_BATCH_SIZE);
     for (let i = 0; i < chunks.length; i++) {
       if (emailAbortRequested) break;
@@ -1713,7 +1790,7 @@ router.post('/api/email/send-from-registry', async (req, res) => {
       result: {
         sent,
         failed,
-        total: pending.length,
+        total: pending.length + 1,
         remaining: rows.filter((r) => !String(r.data_invio_email || '').trim()).length,
         failureSummary: [...failureByReason.entries()]
           .sort((a, b) => b[1] - a[1])

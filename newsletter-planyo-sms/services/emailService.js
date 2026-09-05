@@ -8,6 +8,7 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const adminControl = require('./adminControl');
 
 const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-sent.json');
 const BATCH_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-batches.json');
@@ -266,7 +267,7 @@ async function sendPersonalizedEmail({ to, subject, body, html, data }) {
     }
   }
   if (lastErr) throw lastErr;
-  incrementTodaySent(1);
+  if (!adminControl.isAdminEmail(to)) incrementTodaySent(1);
   return { id: messageId };
 }
 
@@ -370,7 +371,7 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
     sentEmails.push(row.email);
   });
 
-  incrementTodaySent(sentEmails.length);
+  incrementTodaySent(sentEmails.filter((email) => !adminControl.isAdminEmail(email)).length);
   return { sentEmails, failed };
 }
 

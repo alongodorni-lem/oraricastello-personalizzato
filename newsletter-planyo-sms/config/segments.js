@@ -6,7 +6,8 @@
  * Lista D: CSV Planyo esclusi Lista A
  */
 module.exports = {
-  // Numero admin: riceve un SMS di conferma a ogni campagna inviata
+  // Destinatari di controllo: ricevono sempre una copia di ogni invio email/SMS
+  adminEmail: 'alongodorni@gmail.com',
   adminPhone: '+393394773418',
   // Risorsa Planyo dell'evento target (es. Castello delle Sorprese 2026)
   targetResourceId: 236955,
