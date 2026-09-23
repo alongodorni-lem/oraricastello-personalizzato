@@ -14,7 +14,7 @@ const smshosting = require('./services/smshosting');
 const resendPrivacy = require('./services/resend');
 const emailService = require('./services/emailService');
 const { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview } = require('./jobs/newsletter-sms-job');
-const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock, mergeListDFromCsv } = require('./jobs/newsletter-email-job');
+const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock, mergeListDFromCsv, mergeListEFromManual } = require('./jobs/newsletter-email-job');
 const planyoReportCsv = require('./services/planyoReportCsv');
 const dataCache = require('./services/dataCache');
 const config = require('./config/segments');
@@ -633,6 +633,36 @@ router.post('/api/upload-newsletter-csv', (req, res) => {
   }
 });
 
+router.post('/api/upload-manual-file', (req, res) => {
+  try {
+    const filename = String(req.body?.filename || '');
+    const contentBase64 = String(req.body?.contentBase64 || '');
+    if (!filename.trim() || !contentBase64.trim()) {
+      return res.status(400).json({ success: false, error: 'File manuale mancante' });
+    }
+    const out = dataCache.importManualFile(filename, contentBase64);
+    res.json({ success: true, ...out, cacheStatus: dataCache.getCacheStatus() });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/api/upload-manual-contacts', (req, res) => {
+  try {
+    const contacts = req.body?.contacts;
+    if (!Array.isArray(contacts)) {
+      return res.status(400).json({ success: false, error: 'Formato contatti non valido' });
+    }
+    const out = dataCache.importManualContacts(contacts, {
+      replace: !!req.body?.replace,
+      filename: String(req.body?.filename || '')
+    });
+    res.json({ success: true, ...out, cacheStatus: dataCache.getCacheStatus() });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/api/upload-newsletter-contacts', (req, res) => {
   try {
     const contacts = req.body?.contacts;
@@ -825,7 +855,7 @@ router.post('/api/run', async (req, res) => {
 
   const cap = captureLogs(async () => {
     const seg = forceReportOnly ? ['D'] : (Array.isArray(segments) ? segments : [segments]);
-    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D'].includes(String(s).toUpperCase())) : null;
+    const segFilter = seg.length > 0 ? seg.filter((s) => ['A', 'B', 'C', 'D', 'E'].includes(String(s).toUpperCase())) : null;
     const onlyD = segFilter && segFilter.length === 1 && segFilter[0].toUpperCase() === 'D';
 
     let ids = [];
@@ -1012,8 +1042,14 @@ function registryRowsToCsv(rows, subject = '', body = '') {
 function parseSegmentsParam(val) {
   if (!val) return null;
   const arr = Array.isArray(val) ? val : (typeof val === 'string' ? val.split(',') : []);
-  const seg = arr.map((s) => String(s).toUpperCase()).filter((s) => ['A', 'B', 'C', 'D'].includes(s));
+  const seg = arr.map((s) => String(s).toUpperCase()).filter((s) => ['A', 'B', 'C', 'D', 'E'].includes(s));
   return seg.length > 0 ? seg : null;
+}
+
+function usesOnlyExtraLists(segments) {
+  const set = new Set((segments || []).map((s) => String(s).toUpperCase()));
+  if (!set.size) return false;
+  return [...set].every((s) => s === 'D' || s === 'E');
 }
 
 function parseEventIdsParam(val) {
@@ -1293,11 +1329,12 @@ router.post('/api/email/preview/start', (req, res) => {
     setImmediate(async () => {
       try {
         const excludeListA = excludeTargetBooked ? await getListAExclusions(targetId) : { emailsInA: new Set() };
-        let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
+        let data = usesOnlyExtraLists(segments) ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
         data = filterByEventIds(data, eventIds);
         data = filterBySegment(data, segments);
         data = filterByEvent(data, eventFilter);
         data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
+        data = mergeListEFromManual(data, segments || [], excludeListA);
         const { sentSet } = await resolveAlreadySentForAudience({
           subject,
           campaignId: cid,
@@ -1371,16 +1408,16 @@ router.get('/api/email/export', async (req, res) => {
     const subject = String(req.query.subject || '').trim();
     const emailBody = String(req.query.body || '').trim();
 
-    const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     const excludeListA = excludeTargetBooked ? await getListAExclusions(targetId) : { emailsInA: new Set() };
-    let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
+    let data = usesOnlyExtraLists(segments) ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
     data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
+    data = mergeListEFromManual(data, segments || [], excludeListA);
 
     let csv;
     let filename;
@@ -1429,16 +1466,16 @@ router.get('/api/email/preview', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Il blocco email deve essere un intero maggiore o uguale a 1.' });
     }
 
-    const onlyD = segments && segments.length === 1 && segments[0].toUpperCase() === 'D';
     const cid = campaignId || dataCache.UPLOADED_CAMPAIGN_ID;
 
     const targetId = targetResourceId ?? getConfiguredTargetResourceId();
     const excludeListA = excludeTargetBooked ? await getListAExclusions(targetId) : { emailsInA: new Set() };
-    let data = onlyD ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
+    let data = usesOnlyExtraLists(segments) ? [] : await buildEmailListData(cid, { targetResourceId: targetId, engagementType });
     data = filterByEventIds(data, eventIds);
     data = filterBySegment(data, segments);
     data = filterByEvent(data, eventFilter);
     data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
+    data = mergeListEFromManual(data, segments || [], excludeListA);
     const { sentSet } = await resolveAlreadySentForAudience({
       subject,
       campaignId: cid,
@@ -1591,11 +1628,12 @@ router.post('/api/email/send', async (req, res) => {
     const targetId = targetResourceId != null ? targetResourceId : getConfiguredTargetResourceId();
     const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
     const excludeListA = parseBoolParam(excludeTargetBooked) ? await getListAExclusions(targetId) : { emailsInA: new Set() };
-    let data = onlyD ? [] : await buildEmailListData(campaignId || dataCache.UPLOADED_CAMPAIGN_ID, { targetResourceId: targetId, engagementType: mode });
+    let data = usesOnlyExtraLists(segFilter) ? [] : await buildEmailListData(campaignId || dataCache.UPLOADED_CAMPAIGN_ID, { targetResourceId: targetId, engagementType: mode });
     data = filterByEventIds(data, evIds);
     data = filterBySegment(data, segFilter);
     data = filterByEvent(data, (eventFilter || '').trim());
     data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
+    data = mergeListEFromManual(data, segFilter || [], excludeListA);
     const registryRows = buildRegistryRowsFromData(data, subject, emailBodyText, sentSet, sentMap);
     const pendingData = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()) && !adminControl.isAdminEmail(r.email));
     const toSend = maxToSend > 0 ? takeBlock(pendingData, maxToSend) : [];

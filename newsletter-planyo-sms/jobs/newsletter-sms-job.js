@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const mailchimp = require('../services/mailchimp');
 const planyo = require('../services/planyo');
 const planyoReportCsv = require('../services/planyoReportCsv');
+const dataCache = require('../services/dataCache');
 const smshosting = require('../services/smshosting');
 const config = require('../config/segments');
 
@@ -114,12 +115,14 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   const targetResourceId = overrideTargetId != null ? overrideTargetId : configTargetId;
 
   const onlyD = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'D';
+  const onlyE = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'E';
+  const hasE = !!(segmentsFilter && segmentsFilter.map((s) => String(s).toUpperCase()).includes('E'));
   const engagementLabel = engagementType === 'click' ? 'click' : 'open';
   const trackId = campaignId || 'list-d-only';
   const seenPhonesInRun = new Set();
 
   console.log('[Job] Avvio newsletter-sms-job');
-  console.log('[Job] Campagna:', trackId, '| Solo Lista D:', !!onlyD, '| Dry run:', dryRun);
+  console.log('[Job] Campagna:', trackId, '| Solo Lista D:', !!onlyD, '| Solo file manuale:', !!onlyE, '| Dry run:', dryRun);
 
   // Sempre creare Lista A per prima (serve per escludere da B, C, D)
   let emailsInA = new Set();
@@ -183,6 +186,50 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     return { processed: 0, inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
   }
 
+  if (onlyE) {
+    const excludeListA = excludeTargetBooked ? { emailsInA } : {};
+    const listE = dataCache.getManualContacts(excludeListA);
+    const withPhone = listE.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
+    console.log('[Job] Lista E da file manuale:', withPhone.length, 'contatti con telefono');
+    const textE = customSmsText || (config.smsTexts?.listD || '');
+    let inserted = 0;
+    let notInserted = 0;
+    let duplicates = 0;
+    let skipped = 0;
+    if (!dryRun && !prepareOnly) {
+      await sendAdminControlSms([textE]);
+      rememberAdminPhone(seenPhonesInRun);
+    }
+    for (const { email, telefono: phone } of withPhone) {
+      const id = email && email.includes('@') ? email : ('phone:' + phone);
+      if (!prepareOnly) {
+        if (wasAlreadySent(trackId, id, 'E')) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, textE)) { skipped++; continue; }
+      }
+      const normPhone = smshosting.normalizePhone(phone);
+      if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
+      seenPhonesInRun.add(normPhone);
+      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (dryRun) { inserted++; continue; }
+      const result = await smshosting.sendSms(normPhone, textE);
+      if (result.success) {
+        markAsSent(trackId, id, 'E');
+        markMessageSentForSpamGuard(phone, textE);
+        inserted++;
+      } else {
+        notInserted++;
+        if (result.isDuplicate) duplicates++;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (!dryRun && adminPhone) {
+      try {
+        await smshosting.sendSms(adminPhone, `Newsletter SMS file manuale: ${inserted} inseriti | ${notInserted} non inseriti`);
+      } catch (_) {}
+    }
+    return { processed: withPhone.length, inserted, notInserted, duplicates, skipped };
+  }
+
   const evIds = options.eventIds && Array.isArray(options.eventIds) ? options.eventIds.map(Number).filter((n) => !isNaN(n)) : null;
   const hasEventFilter = evIds && evIds.length > 0;
 
@@ -226,7 +273,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   }
 
   // 3. Lista C: utenti newsletter (open/click) esclusi Lista A, con controllo solo email
-  const segmentsToProcess = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D') : ['A', 'B', 'C'];
+  const segmentsToProcess = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D' && s !== 'E') : ['A', 'B', 'C'];
   const needC = segmentsToProcess.includes('C');
   if (needC) {
     let mailchimpEmails = [];
@@ -299,6 +346,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       controlTexts.push(getText(segment));
     }
     if (segmentsFilter && segmentsFilter.includes('D')) controlTexts.push(getText('D'));
+    if (hasE) controlTexts.push(getText('E') || getText('D'));
     await sendAdminControlSms(controlTexts);
     rememberAdminPhone(seenPhonesInRun);
   }
@@ -386,6 +434,37 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     }
   }
 
+  if (hasE) {
+    const text = getText('E') || getText('D');
+    const excludeListA = excludeTargetBooked ? { emailsInA: emailsInASet } : {};
+    const listE = dataCache.getManualContacts(excludeListA);
+    console.log('[Job] Lista E da file manuale:', listE.length, 'contatti');
+    for (const row of listE) {
+      const phone = row.telefono || row.phone;
+      const email = String(row.email || '').toLowerCase().trim() || ('phone:' + phone);
+      if (!prepareOnly) {
+        if (wasAlreadySent(campaignId, email, 'E')) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, text)) { skipped++; continue; }
+      }
+      if (!phone || phone.length < 10 || String(phone).includes('@')) { skipped++; continue; }
+      const normPhone = smshosting.normalizePhone(phone);
+      if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
+      seenPhonesInRun.add(normPhone);
+      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (dryRun) { inserted++; continue; }
+      const result = await smshosting.sendSms(normPhone, text);
+      if (result.success) {
+        markAsSent(campaignId, email, 'E');
+        markMessageSentForSpamGuard(phone, text);
+        inserted++;
+      } else {
+        notInserted++;
+        if (result.isDuplicate) duplicates++;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
   const dupInfo = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
   console.log('[Job] Fine. Inseriti:', inserted, '| Non inseriti:', notInserted + dupInfo);
 
@@ -461,7 +540,7 @@ async function getSmsPreview(campaignId, options = {}) {
   const { targetResourceId: overrideId, eventIds, segments: segmentsFilter, listDFilters, engagementType = 'open', excludeTargetBooked = false } = options;
   const { targetResourceId: configId, monthsLookback } = config;
   const targetResourceId = overrideId != null ? overrideId : configId;
-  const segFilter = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D') : ['A', 'B', 'C'];
+  const segFilter = segmentsFilter && segmentsFilter.length ? segmentsFilter.filter((s) => s !== 'D' && s !== 'E') : ['A', 'B', 'C'];
 
   const onlyD = segmentsFilter && segmentsFilter.length === 1 && segmentsFilter[0].toUpperCase() === 'D';
   if (onlyD && process.env.PLANYO_LISTD_CSV_URL) {
@@ -475,7 +554,20 @@ async function getSmsPreview(campaignId, options = {}) {
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
     const count = listD.length;
-    return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count } };
+    return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count, E: 0 } };
+  }
+
+  const onlyE = segmentsFilter && segmentsFilter.length === 1 && String(segmentsFilter[0]).toUpperCase() === 'E';
+  if (onlyE) {
+    let emailsInA = new Set();
+    if (excludeTargetBooked && process.env.PLANYO_API_KEY) {
+      try {
+        const segmented = await planyo.getCachedListAAndB(targetResourceId, monthsLookback);
+        emailsInA = segmented.emailsInA;
+      } catch (_) {}
+    }
+    const count = dataCache.getManualContacts(excludeTargetBooked ? { emailsInA } : {}).length;
+    return { total: count, bySegment: { A: 0, B: 0, C: 0, D: 0, E: count } };
   }
 
   const eventIdsNum = eventIds && Array.isArray(eventIds) ? eventIds.map(Number).filter((n) => !isNaN(n)) : null;
@@ -546,9 +638,16 @@ async function getSmsPreview(campaignId, options = {}) {
     } catch (_) {}
   }
 
+  let listECount = 0;
+  if (segmentsFilter && segmentsFilter.map((s) => String(s).toUpperCase()).includes('E')) {
+    const excludeListA = excludeTargetBooked ? { emailsInA } : {};
+    listECount = dataCache.getManualContacts(excludeListA).length;
+    total += listECount;
+  }
+
   return {
     total,
-    bySegment: { A: lists.A.length, B: lists.B.length, C: lists.C.length, D: listDCount }
+    bySegment: { A: lists.A.length, B: lists.B.length, C: lists.C.length, D: listDCount, E: listECount }
   };
 }
 

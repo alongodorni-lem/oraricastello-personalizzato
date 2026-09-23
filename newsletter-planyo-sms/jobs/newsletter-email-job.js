@@ -5,6 +5,7 @@
 const mailchimp = require('../services/mailchimp');
 const planyo = require('../services/planyo');
 const planyoReportCsv = require('../services/planyoReportCsv');
+const dataCache = require('../services/dataCache');
 const config = require('../config/segments');
 
 function looksLikeNumericResource(value) {
@@ -227,6 +228,14 @@ async function mergeListDFromCsv(apiData, segments, listDFilters = {}, excludeLi
   return [...baseData, ...fromD];
 }
 
+function mergeListEFromManual(apiData, segments, excludeListA = {}) {
+  if (!segments || !segments.map((s) => String(s).toUpperCase()).includes('E')) return apiData;
+  const rows = dataCache.getManualContacts(excludeListA).filter((r) => r.email && r.email.includes('@'));
+  const existingEmails = new Set((apiData || []).map((r) => String(r.email || '').toLowerCase()).filter(Boolean));
+  const fromE = rows.filter((r) => !existingEmails.has(r.email.toLowerCase()));
+  return [...(apiData || []), ...fromE];
+}
+
 /**
  * Filtra i dati per nome evento (case-insensitive, contiene)
  * @param {Array} data - output di buildEmailListData
@@ -256,5 +265,6 @@ module.exports = {
   filterBySegment,
   filterByEvent,
   takeBlock,
-  mergeListDFromCsv
+  mergeListDFromCsv,
+  mergeListEFromManual
 };

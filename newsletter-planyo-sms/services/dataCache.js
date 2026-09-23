@@ -11,6 +11,7 @@ const planyo = require('./planyo');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const MAILCHIMP_CACHE_FILE = path.join(DATA_DIR, 'mailchimp-cache.json');
 const PLANYO_CACHE_FILE = path.join(DATA_DIR, 'planyo-cache.json');
+const MANUAL_CACHE_FILE = path.join(DATA_DIR, 'manual-contacts-cache.json');
 const NEWSLETTER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const UPLOADED_CAMPAIGN_ID = 'uploaded-file';
 
@@ -92,6 +93,20 @@ function savePlanyoCache(data) {
   fs.writeFileSync(PLANYO_CACHE_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
+function loadManualCache() {
+  try {
+    if (fs.existsSync(MANUAL_CACHE_FILE)) {
+      return JSON.parse(fs.readFileSync(MANUAL_CACHE_FILE, 'utf8'));
+    }
+  } catch (_) {}
+  return null;
+}
+
+function saveManualCache(data) {
+  ensureDataDir();
+  fs.writeFileSync(MANUAL_CACHE_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
 function parseCsvRows(text) {
   const rows = [];
   let field = '';
@@ -166,6 +181,136 @@ function mergeContact(current, incoming) {
     telefono: current.telefono || incoming.telefono || '',
     cellulare: current.cellulare || incoming.cellulare || ''
   };
+}
+
+function extractContactsFromTable(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return [];
+  const headers = rows[0] || [];
+  const idxEmail = findColumn(headers, ['email', 'e-mail', 'mail']);
+  const idxNome = findColumn(headers, ['nome', 'first name', 'firstname', 'name', 'fname']);
+  const idxCognome = findColumn(headers, ['cognome', 'last name', 'lastname', 'surname', 'lname']);
+  const idxTelefono = findColumn(headers, ['telefono', 'phone', 'mobile', 'cellulare', 'tel']);
+  const idxAltTelefono = findColumn(headers, ['altro tel', 'altro telefono', 'telefono 2', 'phone 2', 'mobile 2']);
+  if (idxEmail < 0 && idxTelefono < 0 && idxAltTelefono < 0) {
+    throw new Error('Nel file serve almeno una colonna email oppure telefono');
+  }
+
+  const out = [];
+  const seen = new Set();
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const get = (idx) => (idx >= 0 && row[idx] !== undefined ? String(row[idx] || '').trim() : '');
+    const email = get(idxEmail).toLowerCase().trim();
+    const rawPhone = get(idxTelefono);
+    const rawAltPhone = get(idxAltTelefono);
+    const telefono = normalizeMobilePhone(rawPhone) || normalizeMobilePhone(rawAltPhone) || '';
+    const validEmail = !!(email && email.includes('@'));
+    if (!validEmail && !telefono) continue;
+    const key = validEmail ? ('e:' + email) : ('p:' + telefono);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      nome: get(idxNome),
+      cognome: get(idxCognome),
+      email: validEmail ? email : '',
+      telefono,
+      cellulare: telefono
+    });
+  }
+  return out;
+}
+
+function importManualContacts(items, options = {}) {
+  const { replace = false, filename = '' } = options;
+  const previous = loadManualCache();
+  const base = replace ? [] : (Array.isArray(previous?.contacts) ? previous.contacts.slice() : []);
+  const byKey = new Map();
+  for (const row of base) {
+    const email = String(row?.email || '').toLowerCase().trim();
+    const phone = normalizeMobilePhone(row?.telefono || row?.cellulare || '');
+    const key = email && email.includes('@') ? ('e:' + email) : (phone ? ('p:' + phone) : '');
+    if (key) byKey.set(key, row);
+  }
+  for (const item of Array.isArray(items) ? items : []) {
+    const email = String(item?.email || '').toLowerCase().trim();
+    const telefono = normalizeMobilePhone(item?.telefono || item?.cellulare || '');
+    const validEmail = !!(email && email.includes('@'));
+    if (!validEmail && !telefono) continue;
+    const incoming = {
+      nome: String(item?.nome || '').trim(),
+      cognome: String(item?.cognome || '').trim(),
+      email: validEmail ? email : '',
+      telefono,
+      cellulare: telefono
+    };
+    const key = validEmail ? ('e:' + email) : ('p:' + telefono);
+    byKey.set(key, mergeContact(byKey.get(key), incoming));
+  }
+  const contacts = [...byKey.values()];
+  const now = new Date().toISOString();
+  saveManualCache({
+    updatedAt: now,
+    filename: filename || previous?.filename || '',
+    contacts
+  });
+  return { success: true, uploadedContacts: contacts.length, updatedAt: now, filename: filename || previous?.filename || '' };
+}
+
+function importManualFile(filename, contentBase64) {
+  const name = String(filename || '').toLowerCase();
+  const buffer = Buffer.from(String(contentBase64 || ''), 'base64');
+  if (!buffer.length) throw new Error('File vuoto');
+  let rows = [];
+  if (name.endsWith('.csv') || name.endsWith('.txt')) {
+    rows = parseCsvRows(buffer.toString('utf8'));
+  } else if (name.endsWith('.xls') || name.endsWith('.xlsx')) {
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false, raw: false });
+    const sheetName = wb.SheetNames[0];
+    if (!sheetName) throw new Error('Il file Excel non contiene fogli');
+    rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: '' });
+  } else {
+    throw new Error('Formato non supportato. Usa .csv, .xls o .xlsx');
+  }
+  const contacts = extractContactsFromTable(rows);
+  if (!contacts.length) throw new Error('Nessun contatto valido nel file (serve email o cellulare)');
+  return importManualContacts(contacts, { replace: true, filename: String(filename || '') });
+}
+
+function getManualContacts(excludeListA = {}) {
+  const cached = loadManualCache();
+  const rows = Array.isArray(cached?.contacts) ? cached.contacts : [];
+  const emailsInA = excludeListA?.emailsInA instanceof Set ? excludeListA.emailsInA : new Set();
+  return rows
+    .filter((row) => {
+      const email = String(row?.email || '').toLowerCase().trim();
+      if (emailsInA.size && email && emailsInA.has(email)) return false;
+      return true;
+    })
+    .map((row) => {
+      const email = String(row?.email || '').toLowerCase().trim();
+      const telefono = normalizeMobilePhone(row?.telefono || row?.cellulare || '');
+      const nome = String(row?.nome || '').trim();
+      const cognome = String(row?.cognome || '').trim();
+      return {
+        nome,
+        first_name: nome,
+        cognome,
+        last_name: cognome,
+        email,
+        telefono,
+        phone: telefono,
+        city: '',
+        citta: '',
+        eventoPrenotato: '',
+        evento: '',
+        name: '',
+        start_date: '',
+        status: '',
+        segment: 'E',
+        resourceIds: []
+      };
+    });
 }
 
 function importNewsletterCsv(csvText) {
@@ -395,6 +540,7 @@ async function runForceRebuildNewsletterCache() {
 function getCacheStatus() {
   const mc = normalizeCacheShape(loadMailchimpCache());
   const pc = loadPlanyoCache();
+  const manual = loadManualCache();
   const campaignsCount = (() => {
     const openCount = Object.keys(mc.campaignEngagements.open || {}).length;
     const clickCount = Object.keys(mc.campaignEngagements.click || {}).length;
@@ -415,7 +561,10 @@ function getCacheStatus() {
     planyoUpdatedAt: pc?.updatedAt || null,
     mailchimpCampaigns: campaignsCount,
     mailchimpContacts: mc.contacts ? Object.keys(mc.contacts).length : 0,
-    planyoContacts: planyoUniqueEmails
+    planyoContacts: planyoUniqueEmails,
+    manualUpdatedAt: manual?.updatedAt || null,
+    manualContacts: Array.isArray(manual?.contacts) ? manual.contacts.length : 0,
+    manualFilename: manual?.filename || ''
   };
 }
 
@@ -465,6 +614,22 @@ function findContactInCaches(email, phone = '') {
     }
   } catch (_) {}
 
+  try {
+    const rows = Array.isArray(loadManualCache()?.contacts) ? loadManualCache().contacts : [];
+    for (const row of rows) {
+      const rowEmail = String(row?.email || '').toLowerCase().trim();
+      const rowPhone = normalizeMobilePhone(row?.telefono || row?.cellulare || '');
+      if (foundEmail && rowEmail === foundEmail) {
+        foundPhone = foundPhone || rowPhone;
+        break;
+      }
+      if (!foundEmail && foundPhone && phonesMatch(rowPhone, foundPhone) && rowEmail.includes('@')) {
+        foundEmail = rowEmail;
+        break;
+      }
+    }
+  } catch (_) {}
+
   return {
     email: foundEmail || '',
     phone: foundPhone || ''
@@ -477,7 +642,8 @@ function removeContactFromCaches(email, phone = '') {
   const result = {
     source: 'cache',
     mailchimp: { deleted: false, removedCampaignRefs: 0 },
-    planyo: { deleted: false, removedRows: 0 }
+    planyo: { deleted: false, removedRows: 0 },
+    manual: { deleted: false, removedRows: 0 }
   };
 
   try {
@@ -525,6 +691,26 @@ function removeContactFromCaches(email, phone = '') {
     }
   } catch (_) {}
 
+  try {
+    const mc = loadManualCache();
+    const rows = Array.isArray(mc?.contacts) ? mc.contacts : null;
+    if (rows) {
+      const before = rows.length;
+      const filtered = rows.filter((r) => {
+        const rowEmail = String(r?.email || '').toLowerCase().trim();
+        const rowPhone = normalizeMobilePhone(r?.telefono || r?.cellulare || '');
+        const matchEmail = normEmail && rowEmail === normEmail;
+        const matchPhone = normPhone && rowPhone && phonesMatch(rowPhone, normPhone);
+        return !(matchEmail || matchPhone);
+      });
+      if (filtered.length !== before) {
+        result.manual.deleted = true;
+        result.manual.removedRows = before - filtered.length;
+        saveManualCache({ ...(mc || {}), updatedAt: new Date().toISOString(), contacts: filtered });
+      }
+    }
+  } catch (_) {}
+
   return result;
 }
 
@@ -544,6 +730,10 @@ module.exports = {
   removeContactFromCaches,
   importNewsletterCsv,
   importNewsletterContacts,
+  importManualContacts,
+  importManualFile,
+  getManualContacts,
+  loadManualCache,
   UPLOADED_CAMPAIGN_ID,
   MAILCHIMP_CACHE_FILE,
   PLANYO_CACHE_FILE
