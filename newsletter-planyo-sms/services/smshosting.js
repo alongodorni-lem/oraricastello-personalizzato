@@ -407,10 +407,64 @@ if (process.env.NODE_ENV !== 'test') {
   console.log('[Smshosting] Mittente:', useAlias && from ? `alfanumerico (${from})` : 'numerico', '| USE_ALIAS=', process.env.SMSHOSTING_USE_ALIAS || '(vuoto)', '| FROM=', from ? 'impostato' : '(vuoto)');
 }
 
+function formatSmsSearchDate(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const pad = (n) => String(n).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  return (
+    d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
+    sign + pad(Math.floor(Math.abs(off) / 60)) + pad(Math.abs(off) % 60)
+  );
+}
+
+/**
+ * Elenco numeri (normalizzati) a cui e' gia partito un SMS nel periodo.
+ * Serve a riprendere un invio dopo redeploy, quando i file locali sono andati persi.
+ */
+async function listSentPhonesSince(fromDate, toDate = new Date()) {
+  const authKey = process.env.SMSHOSTING_AUTH_KEY;
+  const authSecret = process.env.SMSHOSTING_AUTH_SECRET;
+  const phones = new Set();
+  if (!authKey || !authSecret) return phones;
+
+  const from = formatSmsSearchDate(fromDate);
+  const to = formatSmsSearchDate(toDate);
+  const limit = 200;
+  let offset = 0;
+  let total = Infinity;
+
+  while (offset < total) {
+    const res = await axios.get(`${BASE_URL}/sms/search`, {
+      auth: { username: authKey, password: authSecret },
+      params: { fromDate: from, toDate: to, offset, limit },
+      timeout: 30000,
+      validateStatus: (s) => s < 500
+    });
+    if (res.status >= 400) {
+      console.warn('[Smshosting] ricerca invii HTTP', res.status);
+      break;
+    }
+    const list = Array.isArray(res.data?.smsList) ? res.data.smsList : [];
+    total = Number(res.data?.metadata?.count);
+    if (!Number.isFinite(total)) total = offset + list.length;
+    for (const sms of list) {
+      const norm = normalizePhone(sms?.to || sms?.msisdn || '');
+      if (norm) phones.add(norm);
+    }
+    if (!list.length) break;
+    offset += list.length;
+    if (offset >= 20000) break;
+  }
+  return phones;
+}
+
 module.exports = {
   sendSms,
   normalizePhone,
   phonebookMsisdnCandidates,
   findContactForPrivacy,
-  deleteContactByPhoneForPrivacy
+  deleteContactByPhoneForPrivacy,
+  listSentPhonesSince
 };

@@ -74,8 +74,27 @@ function saveSentRegistry(registry) {
 }
 
 function wasAlreadySent(campaignId, email, segment) {
-  const key = `${campaignId}_${email.toLowerCase()}_${segment}`;
+  if (!email) return false;
+  const key = `${campaignId}_${String(email).toLowerCase()}_${segment}`;
   return !!loadSentRegistry()[key];
+}
+
+function seedSentRegistryFromPhones(rows, trackId, segment, phonesSet) {
+  if (!phonesSet || !phonesSet.size || !Array.isArray(rows) || !rows.length) return 0;
+  const reg = loadSentRegistry();
+  let added = 0;
+  for (const row of rows) {
+    const email = String(row?.email || '').toLowerCase().trim();
+    const phone = smshosting.normalizePhone(row?.telefono || row?.phone || '');
+    const id = email.includes('@') ? email : (phone ? ('phone:' + phone) : '');
+    if (!id || !phone || !phonesSet.has(phone)) continue;
+    const key = `${trackId}_${id}_${segment}`;
+    if (reg[key]) continue;
+    reg[key] = new Date().toISOString();
+    added += 1;
+  }
+  if (added) saveSentRegistry(reg);
+  return added;
 }
 
 function markAsSent(campaignId, email, segment) {
@@ -128,6 +147,22 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   const engagementLabel = engagementType === 'click' ? 'click' : 'open';
   const trackId = campaignId || 'list-d-only';
   const seenPhonesInRun = new Set();
+  const lookbackHours = Math.max(1, parseInt(process.env.SMS_RESUME_LOOKBACK_HOURS || '24', 10) || 24);
+  let providerSentPhones = new Set();
+  try {
+    providerSentPhones = await smshosting.listSentPhonesSince(new Date(Date.now() - lookbackHours * 60 * 60 * 1000));
+    console.log('[Job] Numeri gia presenti su SMS Hosting (ultime', lookbackHours, 'ore):', providerSentPhones.size);
+  } catch (err) {
+    console.warn('[Job] Recupero invii SMS Hosting fallito:', err.message);
+  }
+
+  const alreadyDelivered = (email, segment, phone, text) => {
+    const id = email && String(email).includes('@') ? String(email).toLowerCase() : (phone ? ('phone:' + phone) : '');
+    if (id && wasAlreadySent(trackId, id, segment)) return true;
+    if (text && wasSameMessageSentRecently(phone, text)) return true;
+    const norm = smshosting.normalizePhone(phone);
+    return !!(norm && providerSentPhones.has(norm));
+  };
 
   console.log('[Job] Avvio newsletter-sms-job');
   console.log('[Job] Campagna:', trackId, '| Solo Lista D:', !!onlyD, '| Solo file manuale:', !!onlyE, '| Dry run:', dryRun);
@@ -149,6 +184,8 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
     const withPhone = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
+    const seeded = seedSentRegistryFromPhones(withPhone, trackId, 'D', providerSentPhones);
+    if (seeded) console.log('[Job] Registro locale ricostruito da SMS Hosting:', seeded, 'numeri Lista D');
     console.log('[Job] Lista D da CSV:', withPhone.length, 'contatti con telefono');
     const getText = () => customSmsText || (config.smsTexts?.listD || '');
     let inserted = 0;
@@ -164,10 +201,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const email = row.email;
       const phone = row.telefono;
       const textResolved = applyTemplate(textD, row);
-      if (!prepareOnly) {
-        if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
-      }
+      if (alreadyDelivered(email, 'D', phone, textResolved)) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
@@ -203,6 +237,8 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listE = dataCache.getManualContacts(excludeListA);
     const withPhone = listE.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
+    const seededE = seedSentRegistryFromPhones(withPhone, trackId, 'E', providerSentPhones);
+    if (seededE) console.log('[Job] Registro locale ricostruito da SMS Hosting:', seededE, 'numeri file manuale');
     console.log('[Job] Lista E da file manuale:', withPhone.length, 'contatti con telefono');
     const textE = customSmsText || (config.smsTexts?.listD || '');
     let inserted = 0;
@@ -218,10 +254,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const phone = row.telefono;
       const id = email && email.includes('@') ? email : ('phone:' + phone);
       const textResolved = applyTemplate(textE, row);
-      if (!prepareOnly) {
-        if (wasAlreadySent(trackId, id, 'E')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
-      }
+      if (alreadyDelivered(id, 'E', phone, textResolved)) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
@@ -345,6 +378,8 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const excludeListA = excludeTargetBooked ? { emailsInA: emailsInASet } : {};
       listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
       listD = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
+      const seeded = seedSentRegistryFromPhones(listD, trackId, 'D', providerSentPhones);
+      if (seeded) console.log('[Job] Registro locale ricostruito da SMS Hosting:', seeded, 'numeri Lista D');
       console.log('[Job] Lista D da CSV:', listD.length, 'contatti con telefono');
     } catch (err) {
       console.error('[Job] Lista D CSV:', err.message);
@@ -372,15 +407,9 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const text = getText(segment);
     if (!segmentsToProcess.includes(segment)) continue;
     for (const { email, phone } of lists[segment]) {
-      if (!prepareOnly) {
-        if (wasAlreadySent(campaignId, email, segment)) {
-          skipped++;
-          continue;
-        }
-        if (wasSameMessageSentRecently(phone, text)) {
-          skipped++;
-          continue;
-        }
+      if (alreadyDelivered(email, segment, phone, text)) {
+        skipped++;
+        continue;
       }
       if (!phone || phone.length < 10) {
         skipped++;
@@ -433,10 +462,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const email = row.email;
       const phone = row.telefono;
       const textResolved = applyTemplate(text, row);
-      if (!prepareOnly) {
-        if (wasAlreadySent(campaignId, email, 'D')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
-      }
+      if (alreadyDelivered(email, 'D', phone, textResolved)) { skipped++; continue; }
       if (!phone || phone.length < 10 || phone.includes('@')) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
@@ -466,10 +492,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const phone = row.telefono || row.phone;
       const email = String(row.email || '').toLowerCase().trim() || ('phone:' + phone);
       const textResolved = applyTemplate(text, row);
-      if (!prepareOnly) {
-        if (wasAlreadySent(campaignId, email, 'E')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
-      }
+      if (alreadyDelivered(email, 'E', phone, textResolved)) { skipped++; continue; }
       if (!phone || phone.length < 10 || String(phone).includes('@')) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }

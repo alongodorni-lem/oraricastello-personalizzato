@@ -1693,7 +1693,9 @@
         if (d.error || !d.success) throw new Error(d.error || 'Calcolo SMS fallito');
         smsSendableCount = d.result?.inserted || 0;
         smsSendableReady = smsSendableCount > 0;
-        status.textContent = 'SMS previsti: ' + smsSendableCount + ' (numeri validi, normalizzati e deduplicati).';
+        const skippedAlready = Number(d.result?.skipped || 0);
+        status.textContent = 'SMS previsti: ' + smsSendableCount + ' (numeri validi, normalizzati e deduplicati)' +
+          (skippedAlready ? ('; già inviati saltati: ' + skippedAlready) : '') + '.';
         status.style.color = smsSendableReady ? 'var(--success)' : '';
         document.getElementById('btnRun').disabled = !smsSendableReady;
         if (Array.isArray(d.logs) && d.logs.length) showOutput(out, d.logs);

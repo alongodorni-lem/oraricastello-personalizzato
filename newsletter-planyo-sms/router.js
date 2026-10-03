@@ -902,7 +902,7 @@ router.post('/api/run', async (req, res) => {
   }
 
   if (isPreview) {
-    res.setTimeout(90 * 1000);
+    res.setTimeout(180 * 1000);
     try {
       const out = await executeSmsRun(body_);
       return res.json({ ...out, aborted: false });
