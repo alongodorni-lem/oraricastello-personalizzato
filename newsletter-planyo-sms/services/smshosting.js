@@ -423,7 +423,9 @@ function formatSmsSearchDate(date) {
  * Elenco numeri (normalizzati) a cui e' gia partito un SMS nel periodo.
  * Serve a riprendere un invio dopo redeploy, quando i file locali sono andati persi.
  */
-async function listSentPhonesSince(fromDate, toDate = new Date()) {
+const sentPhonesCache = { at: 0, key: '', phones: [] };
+
+async function listSentPhonesSince(fromDate, toDate = new Date(), options = {}) {
   const authKey = process.env.SMSHOSTING_AUTH_KEY;
   const authSecret = process.env.SMSHOSTING_AUTH_SECRET;
   const phones = new Set();
@@ -431,11 +433,18 @@ async function listSentPhonesSince(fromDate, toDate = new Date()) {
 
   const from = formatSmsSearchDate(fromDate);
   const to = formatSmsSearchDate(toDate);
+  const cacheKey = from + '|' + to;
+  if (sentPhonesCache.phones.length && sentPhonesCache.key === cacheKey && Date.now() - sentPhonesCache.at < 15 * 60 * 1000) {
+    return new Set(sentPhonesCache.phones);
+  }
+
   const limit = 200;
   let offset = 0;
   let total = Infinity;
+  const abortCheck = typeof options.abortCheck === 'function' ? options.abortCheck : null;
 
   while (offset < total) {
+    if (abortCheck && abortCheck()) break;
     const res = await axios.get(`${BASE_URL}/sms/search`, {
       auth: { username: authKey, password: authSecret },
       params: { fromDate: from, toDate: to, offset, limit },
@@ -457,6 +466,9 @@ async function listSentPhonesSince(fromDate, toDate = new Date()) {
     offset += list.length;
     if (offset >= 20000) break;
   }
+  sentPhonesCache.at = Date.now();
+  sentPhonesCache.key = cacheKey;
+  sentPhonesCache.phones = [...phones];
   return phones;
 }
 

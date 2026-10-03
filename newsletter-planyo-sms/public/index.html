@@ -379,6 +379,9 @@
           <button class="btn btn-secondary" id="btnAbort" style="display:none;">
             Annulla
           </button>
+          <button class="btn btn-danger" id="btnUnlockSms" type="button">
+            Sblocca invio
+          </button>
         </div>
         <div class="output" id="testOutput"></div>
         <p class="hint" id="smsSendableStatus" style="margin-top: 0.5rem;">Calcola SMS per preparare la lista numeri prima dell'invio.</p>
@@ -955,14 +958,21 @@
       }
 
       async function waitSmsRunFinish() {
+        const startedAt = Date.now();
+        let sawRunning = false;
         for (;;) {
           await new Promise((r) => setTimeout(r, 2000));
           const state = await fetchJson(API + '/api/run/state');
           if (state.running || state.status === 'running') {
+            sawRunning = true;
             renderSmsProgress(state);
             continue;
           }
-          return state;
+          if (state.status === 'done' || state.status === 'error') return state;
+          if (sawRunning) return state;
+          if (Date.now() - startedAt > 20000) {
+            throw new Error('Il server non ha confermato l\'avvio dell\'invio reale. Nessun SMS di campagna risulta partito.');
+          }
         }
       }
 
@@ -991,6 +1001,15 @@
           } else {
             throw startErr;
           }
+        }
+        if (d && d.success === false && /già in corso/i.test(String(d.error || ''))) {
+          await fetch(API + '/api/run/abort', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: true })
+          }).catch(() => {});
+          out.innerHTML = '<div class="warn">C\'era un blocco residuo, senza invio reale in corso. L\'ho tolto. Clicca di nuovo Avvia invio.</div>';
+          return;
         }
         if (d && d.running && !d.async && d.error) {
           out.innerHTML = '<div class="warn">' + escapeHtml(d.error) + '</div>';
@@ -1044,6 +1063,21 @@
         btn.textContent = 'Avvia invio';
         btnAbort.style.display = 'none';
         btnAbort.onclick = null;
+      }
+    };
+
+    document.getElementById('btnUnlockSms').onclick = async () => {
+      const out = document.getElementById('runOutput');
+      out.innerHTML = '<div class="log">Sblocco in corso...</div>';
+      try {
+        const d = await fetchJson(API + '/api/run/abort', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: true })
+        });
+        out.innerHTML = '<div class="log result-ok">' + escapeHtml(d.message || 'Invio sbloccato. Puoi cliccare Avvia invio.') + '</div>';
+      } catch (e) {
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
       }
     };
 
@@ -1694,8 +1728,8 @@
         smsSendableCount = d.result?.inserted || 0;
         smsSendableReady = smsSendableCount > 0;
         const skippedAlready = Number(d.result?.skipped || 0);
-        status.textContent = 'SMS previsti: ' + smsSendableCount + ' (numeri validi, normalizzati e deduplicati)' +
-          (skippedAlready ? ('; già inviati saltati: ' + skippedAlready) : '') + '.';
+        status.textContent = 'Da inviare: ' + smsSendableCount + ' (non ancora partiti). Calcolo ok, questo NON invia.' +
+          (skippedAlready ? (' Già inviati saltati: ' + skippedAlready + '.') : '');
         status.style.color = smsSendableReady ? 'var(--success)' : '';
         document.getElementById('btnRun').disabled = !smsSendableReady;
         if (Array.isArray(d.logs) && d.logs.length) showOutput(out, d.logs);

@@ -150,7 +150,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   const lookbackHours = Math.max(1, parseInt(process.env.SMS_RESUME_LOOKBACK_HOURS || '24', 10) || 24);
   let providerSentPhones = new Set();
   try {
-    providerSentPhones = await smshosting.listSentPhonesSince(new Date(Date.now() - lookbackHours * 60 * 60 * 1000));
+    providerSentPhones = await smshosting.listSentPhonesSince(new Date(Date.now() - lookbackHours * 60 * 60 * 1000), new Date(), { abortCheck });
     console.log('[Job] Numeri gia presenti su SMS Hosting (ultime', lookbackHours, 'ore):', providerSentPhones.size);
   } catch (err) {
     console.warn('[Job] Recupero invii SMS Hosting fallito:', err.message);

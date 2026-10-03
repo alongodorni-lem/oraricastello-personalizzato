@@ -23,7 +23,8 @@ const adminControl = require('./services/adminControl');
 const PUBLIC_PATH = path.join(__dirname, 'public');
 const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
 const SMS_RUN_LOCK_FILE = path.join(__dirname, 'data', 'sms-run-lock.json');
-const SMS_RUN_LOCK_TTL_MS = Math.max(60 * 1000, parseInt(process.env.SMS_RUN_LOCK_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000));
+const SMS_RUN_LOCK_TTL_MS = Math.max(60 * 1000, parseInt(process.env.SMS_RUN_LOCK_TTL_MS || String(3 * 60 * 1000), 10) || (3 * 60 * 1000));
+const SMS_RUN_LOCK_STALE_MS = Math.max(60 * 1000, parseInt(process.env.SMS_RUN_LOCK_STALE_MS || String(2 * 60 * 1000), 10) || (2 * 60 * 1000));
 
 router.use(express.json({ limit: '30mb' }));
 
@@ -137,12 +138,29 @@ function getActiveSmsRunLock() {
   if (!lock) return null;
   const now = Date.now();
   const expiresAtMs = new Date(lock.expiresAt || 0).getTime();
+  const lastSeenMs = new Date(lock.lastSeenAt || lock.startedAt || 0).getTime();
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) {
+    clearSmsRunLockFile();
+    return null;
+  }
+  if (Number.isFinite(lastSeenMs) && now - lastSeenMs > SMS_RUN_LOCK_STALE_MS) {
     clearSmsRunLockFile();
     return null;
   }
   return lock;
 }
+
+function forceUnlockSmsRun(reason) {
+  runAbortRequested = true;
+  smsRunInProgress = false;
+  clearSmsRunLockFile();
+  smsRunState.status = 'idle';
+  smsRunState.aborted = true;
+  smsRunState.error = reason || 'Sbloccato';
+  smsRunState.finishedAt = new Date().toISOString();
+}
+
+clearSmsRunLockFile();
 
 function acquireSmsRunLock() {
   const active = getActiveSmsRunLock();
@@ -1008,9 +1026,11 @@ router.get('/api/run/state', (_req, res) => {
   });
 });
 
-router.post('/api/run/abort', (_req, res) => {
+router.post('/api/run/abort', (req, res) => {
+  const force = parseBoolParam(req.body?.force) || parseBoolParam(req.query?.force) || true;
   runAbortRequested = true;
-  res.json({ ok: true, message: 'Annullamento richiesto' });
+  if (force) forceUnlockSmsRun('Sbloccato da Annulla/Sblocca');
+  res.json({ ok: true, unlocked: !!force, message: 'Invio sbloccato. Puoi cliccare di nuovo Avvia invio.' });
 });
 
 router.post('/api/test', async (req, res) => {
