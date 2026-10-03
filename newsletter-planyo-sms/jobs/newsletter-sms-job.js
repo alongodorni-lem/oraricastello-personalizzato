@@ -205,7 +205,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
-      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
@@ -258,7 +258,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
-      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
@@ -427,7 +427,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       }
       seenPhonesInRun.add(normPhone);
 
-      if (typeof abortCheck === 'function' && abortCheck()) {
+      if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) {
         console.log('[Job] Annullato dall\'utente');
         break;
       }
@@ -453,7 +453,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
 
       await new Promise((r) => setTimeout(r, 500));
     }
-    if (typeof abortCheck === 'function' && abortCheck()) break;
+    if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
   }
 
   if (segmentsFilter && segmentsFilter.includes('D') && listD.length > 0) {
@@ -467,7 +467,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
-      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
@@ -497,7 +497,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
-      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {

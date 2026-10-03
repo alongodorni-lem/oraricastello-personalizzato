@@ -883,7 +883,7 @@ async function executeSmsRun(body_, extraJobOptions = {}) {
 
     const evIds = parseEventIdsParam(eventIds);
     const mode = parseEngagementType(engagementType || loadUiConfig().mailchimpEngagementType || 'open');
-    const abortCheck = () => runAbortRequested;
+    const abortCheck = extraJobOptions.ignoreAbort ? () => false : () => runAbortRequested;
     let total = { inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
     for (const id of ids) {
       if (abortCheck()) break;
@@ -922,7 +922,7 @@ router.post('/api/run', async (req, res) => {
   if (isPreview) {
     res.setTimeout(180 * 1000);
     try {
-      const out = await executeSmsRun(body_);
+      const out = await executeSmsRun(body_, { ignoreAbort: true });
       return res.json({ ...out, aborted: false });
     } catch (err) {
       return res.status(400).json({ success: false, error: err.message });
