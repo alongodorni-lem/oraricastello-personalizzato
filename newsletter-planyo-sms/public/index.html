@@ -932,63 +932,112 @@
       btnAbort.disabled = false;
       out.innerHTML = '<div class="log">Avvio in corso...</div>';
 
-      const controller = new AbortController();
       let keepLockedAsRunning = false;
+      let abortClicked = false;
       btnAbort.onclick = () => {
+        abortClicked = true;
         btnAbort.disabled = true;
         fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
-        controller.abort();
       };
 
-      try {
-        const r = await fetch(API + '/api/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            campaignId: NEWSLETTER_SOURCE_ID,
-            segments: segs.length ? segs : ['A', 'B', 'C'],
-            excludeTargetBooked: audience.excludeTargetBooked,
-            engagementType: getEngagementType(),
-            targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
-            smsText,
-            ...getListDFilters(true)
-          }),
-          signal: controller.signal
-        });
-        const d = await r.json();
-        showOutput(out, d.logs);
-        if (d.result) {
-          const { inserted, notInserted, duplicates } = d.result;
-          const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
-          out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Non inseriti ${notInserted}${dup}</div>`;
-          if (d.aborted) out.innerHTML += '<div class="log warn">Operazione annullata dall\'utente.</div>';
+      function renderSmsProgress(state) {
+        const p = state.progress || state.result || {};
+        const inserted = Number(p.inserted || 0);
+        const skipped = Number(p.skipped || 0);
+        const notInserted = Number(p.notInserted || 0);
+        const duplicates = Number(p.duplicates || 0);
+        const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
+        const lines = [
+          '<div class="log">Invio in corso sul server. Non chiudere il browser e non rilanciare: i già inviati vengono saltati.</div>',
+          '<div class="log">Inseriti ' + inserted + ' | Saltati ' + skipped + ' | Non inseriti ' + notInserted + dup + '</div>'
+        ];
+        out.innerHTML = lines.join('');
+      }
+
+      async function waitSmsRunFinish() {
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const state = await fetchJson(API + '/api/run/state');
+          if (state.running || state.status === 'running') {
+            renderSmsProgress(state);
+            continue;
+          }
+          return state;
         }
+      }
+
+      try {
+        const payload = {
+          campaignId: NEWSLETTER_SOURCE_ID,
+          segments: segs.length ? segs : ['A', 'B', 'C'],
+          excludeTargetBooked: audience.excludeTargetBooked,
+          engagementType: getEngagementType(),
+          targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
+          smsText,
+          ...getListDFilters(true)
+        };
+        let d;
+        try {
+          d = await fetchJson(API + '/api/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        } catch (startErr) {
+          const state = await fetchJson(API + '/api/run/state').catch(() => null);
+          if (state && (state.running || state.status === 'running')) {
+            d = { async: true, running: true };
+            out.innerHTML = '<div class="warn">La pagina di avvio è scaduta, ma l\'invio continua sul server. Resto in ascolto...</div>';
+          } else {
+            throw startErr;
+          }
+        }
+        if (d && d.running && !d.async && d.error) {
+          out.innerHTML = '<div class="warn">' + escapeHtml(d.error) + '</div>';
+          d = { async: true, running: true };
+        }
+        if (d && (d.async || d.started || d.running)) {
+          renderSmsProgress(d);
+          d = await waitSmsRunFinish();
+        }
+        showOutput(out, d.logs);
+        const result = d.result || d.progress;
+        if (result) {
+          const inserted = Number(result.inserted || 0);
+          const notInserted = Number(result.notInserted || 0);
+          const duplicates = Number(result.duplicates || 0);
+          const skipped = Number(result.skipped || 0);
+          const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
+          out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Saltati ${skipped} | Non inseriti ${notInserted}${dup}</div>`;
+        }
+        if (d.aborted || abortClicked) out.innerHTML += '<div class="log warn">Operazione annullata. Gli SMS già partiti restano registrati: al prossimo avvio non verranno ripetuti.</div>';
         if (d.error) out.innerHTML += `<div class="error">Errore: ${escapeHtml(d.error)}</div>`;
       } catch (e) {
-        if (e.name === 'AbortError') {
-          out.innerHTML += '<div class="log warn">Operazione annullata. Gli SMS inviati fino a questo momento sono stati registrati.</div>';
-        } else {
-          let msg = `Errore: ${escapeHtml(e.message)}`;
-          if (/failed to fetch/i.test(String(e.message || ''))) {
-            try {
-              const stateRes = await fetch(API + '/api/run/state');
-              const state = await stateRes.json();
-              if (state && state.running) {
-                keepLockedAsRunning = true;
-                msg = 'Connessione interrotta durante l\'invio, ma il job sembra ancora in corso sul server. Non riavviare l\'invio: attendi e usa ANNULLA se necessario.';
-                btn.textContent = 'Invio in corso...';
-                btn.disabled = true;
-                btnAbort.style.display = 'inline-flex';
-                btnAbort.disabled = false;
-                btnAbort.onclick = () => {
-                  btnAbort.disabled = true;
-                  fetch(API + '/api/run/abort', { method: 'POST' }).catch(() => {});
-                };
+        let msg = `Errore: ${escapeHtml(e.message)}`;
+        try {
+          const state = await fetchJson(API + '/api/run/state');
+          if (state && (state.running || state.status === 'running')) {
+            keepLockedAsRunning = true;
+            renderSmsProgress(state);
+            msg = 'Connessione interrotta, ma l\'invio continua sul server. Non rilanciare. Usa Annulla solo se vuoi fermarlo.';
+            btn.textContent = 'Invio in corso...';
+            btn.disabled = true;
+            btnAbort.style.display = 'inline-flex';
+            btnAbort.disabled = false;
+            waitSmsRunFinish().then((finalState) => {
+              showOutput(out, finalState.logs);
+              const result = finalState.result || finalState.progress;
+              if (result) {
+                out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${Number(result.inserted || 0)} | Saltati ${Number(result.skipped || 0)} | Non inseriti ${Number(result.notInserted || 0)}</div>`;
               }
-            } catch (_) {}
+              btn.disabled = false;
+              btn.textContent = 'Avvia invio';
+              btnAbort.style.display = 'none';
+              btnAbort.onclick = null;
+            }).catch(() => {});
           }
-          out.innerHTML += `<div class="error">${escapeHtml(msg)}</div>`;
-        }
+        } catch (_) {}
+        out.innerHTML += `<div class="error">${escapeHtml(msg)}</div>`;
       }
       if (!keepLockedAsRunning) {
         btn.disabled = false;

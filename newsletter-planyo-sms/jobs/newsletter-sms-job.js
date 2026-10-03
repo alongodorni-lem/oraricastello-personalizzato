@@ -111,7 +111,14 @@ function rememberAdminPhone(seenPhonesInRun) {
  * @param {{ dryRun?: boolean }} options
  */
 async function runNewsletterSmsJob(campaignId, options = {}) {
-  const { dryRun = false, prepareOnly = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck, engagementType = 'open', excludeTargetBooked = false } = options;
+  const { dryRun = false, prepareOnly = false, segments: segmentsFilter = null, targetResourceId: overrideTargetId, eventIds, listDFilters, smsText: customSmsText, abortCheck, engagementType = 'open', excludeTargetBooked = false, progress } = options;
+  const touchProgress = (vals) => {
+    if (!progress || typeof progress !== 'object') return;
+    if (vals.inserted != null) progress.inserted = vals.inserted;
+    if (vals.notInserted != null) progress.notInserted = vals.notInserted;
+    if (vals.skipped != null) progress.skipped = vals.skipped;
+    if (vals.duplicates != null) progress.duplicates = vals.duplicates;
+  };
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
   const targetResourceId = overrideTargetId != null ? overrideTargetId : configTargetId;
 
@@ -175,6 +182,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
+      touchProgress({ inserted, notInserted, skipped, duplicates });
       await new Promise((r) => setTimeout(r, 500));
     }
     if (!dryRun && adminPhone) {
@@ -182,6 +190,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         await smshosting.sendSms(adminPhone, `Newsletter SMS Lista D: ${inserted} inseriti | ${notInserted} non inseriti`);
       } catch (_) {}
     }
+    touchProgress({ inserted, notInserted, skipped, duplicates });
     return { processed: withPhone.length, inserted, notInserted, duplicates, skipped };
   }
 
@@ -227,6 +236,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
+      touchProgress({ inserted, notInserted, skipped, duplicates });
       await new Promise((r) => setTimeout(r, 500));
     }
     if (!dryRun && adminPhone) {
@@ -234,6 +244,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         await smshosting.sendSms(adminPhone, `Newsletter SMS file manuale: ${inserted} inseriti | ${notInserted} non inseriti`);
       } catch (_) {}
     }
+    touchProgress({ inserted, notInserted, skipped, duplicates });
     return { processed: withPhone.length, inserted, notInserted, duplicates, skipped };
   }
 
@@ -409,6 +420,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
+      touchProgress({ inserted, notInserted, skipped, duplicates });
 
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -440,6 +452,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
+      touchProgress({ inserted, notInserted, skipped, duplicates });
       await new Promise((r) => setTimeout(r, 500));
     }
   }
@@ -472,6 +485,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
+      touchProgress({ inserted, notInserted, skipped, duplicates });
       await new Promise((r) => setTimeout(r, 500));
     }
   }
