@@ -9,6 +9,7 @@ const planyo = require('../services/planyo');
 const planyoReportCsv = require('../services/planyoReportCsv');
 const dataCache = require('../services/dataCache');
 const smshosting = require('../services/smshosting');
+const { applyTemplate } = require('../services/emailService');
 const config = require('../config/segments');
 
 const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-sms-sent.json');
@@ -152,20 +153,23 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       await sendAdminControlSms([textD]);
       rememberAdminPhone(seenPhonesInRun);
     }
-    for (const { email, telefono: phone } of withPhone) {
+    for (const row of withPhone) {
+      const email = row.email;
+      const phone = row.telefono;
+      const textResolved = applyTemplate(textD, row);
       if (!prepareOnly) {
         if (wasAlreadySent(trackId, email, 'D')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, textD)) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
       }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
-      const result = await smshosting.sendSms(normPhone, textD);
+      const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
         markAsSent(trackId, email, 'D');
-        markMessageSentForSpamGuard(phone, textD);
+        markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
         notInserted++;
@@ -200,21 +204,24 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       await sendAdminControlSms([textE]);
       rememberAdminPhone(seenPhonesInRun);
     }
-    for (const { email, telefono: phone } of withPhone) {
+    for (const row of withPhone) {
+      const email = row.email;
+      const phone = row.telefono;
       const id = email && email.includes('@') ? email : ('phone:' + phone);
+      const textResolved = applyTemplate(textE, row);
       if (!prepareOnly) {
         if (wasAlreadySent(trackId, id, 'E')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, textE)) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
       }
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
-      const result = await smshosting.sendSms(normPhone, textE);
+      const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
         markAsSent(trackId, id, 'E');
-        markMessageSentForSpamGuard(phone, textE);
+        markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
         notInserted++;
@@ -410,10 +417,13 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
 
   if (segmentsFilter && segmentsFilter.includes('D') && listD.length > 0) {
     const text = getText('D');
-    for (const { email, telefono: phone } of listD) {
+    for (const row of listD) {
+      const email = row.email;
+      const phone = row.telefono;
+      const textResolved = applyTemplate(text, row);
       if (!prepareOnly) {
         if (wasAlreadySent(campaignId, email, 'D')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, text)) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
       }
       if (!phone || phone.length < 10 || phone.includes('@')) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
@@ -421,10 +431,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       seenPhonesInRun.add(normPhone);
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
-      const result = await smshosting.sendSms(normPhone, text);
+      const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
         markAsSent(campaignId, email, 'D');
-        markMessageSentForSpamGuard(phone, text);
+        markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
         notInserted++;
@@ -442,9 +452,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     for (const row of listE) {
       const phone = row.telefono || row.phone;
       const email = String(row.email || '').toLowerCase().trim() || ('phone:' + phone);
+      const textResolved = applyTemplate(text, row);
       if (!prepareOnly) {
         if (wasAlreadySent(campaignId, email, 'E')) { skipped++; continue; }
-        if (wasSameMessageSentRecently(phone, text)) { skipped++; continue; }
+        if (wasSameMessageSentRecently(phone, textResolved)) { skipped++; continue; }
       }
       if (!phone || phone.length < 10 || String(phone).includes('@')) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
@@ -452,10 +463,10 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       seenPhonesInRun.add(normPhone);
       if (typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
-      const result = await smshosting.sendSms(normPhone, text);
+      const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
         markAsSent(campaignId, email, 'E');
-        markMessageSentForSpamGuard(phone, text);
+        markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
         notInserted++;

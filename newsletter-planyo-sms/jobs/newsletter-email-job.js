@@ -214,6 +214,21 @@ function filterBySegment(data, segments) {
  * @param {{ eventNameContains?: string, eventIds?: number[], statuses?: string[] }} listDFilters
  * @param {{ emailsInA?: Set<string> }} excludeListA
  */
+function attachVoucherFrom(sourceRows, targetRows) {
+  const byEmail = new Map();
+  for (const row of targetRows || []) {
+    const email = String(row?.email || '').toLowerCase().trim();
+    if (email) byEmail.set(email, row);
+  }
+  for (const src of sourceRows || []) {
+    const email = String(src?.email || '').toLowerCase().trim();
+    const voucher = String(src?.voucher || '').trim();
+    if (!email || !voucher) continue;
+    const dest = byEmail.get(email);
+    if (dest && !String(dest.voucher || '').trim()) dest.voucher = voucher;
+  }
+}
+
 async function mergeListDFromCsv(apiData, segments, listDFilters = {}, excludeListA = {}) {
   if (!segments || !segments.map((s) => String(s).toUpperCase()).includes('D')) return apiData;
   if (!process.env.PLANYO_LISTD_CSV_URL) return apiData;
@@ -223,6 +238,7 @@ async function mergeListDFromCsv(apiData, segments, listDFilters = {}, excludeLi
   const baseData = onlyD ? [] : apiData.filter((r) => segSet.has((r.segment || '').toUpperCase()));
 
   const listD = await planyoReportCsv.loadListDFromCsv(listDFilters, excludeListA);
+  attachVoucherFrom(listD, baseData);
   const existingEmails = new Set(baseData.map((r) => r.email.toLowerCase()));
   const fromD = listD.filter((r) => !existingEmails.has(r.email.toLowerCase()));
   return [...baseData, ...fromD];
@@ -231,6 +247,7 @@ async function mergeListDFromCsv(apiData, segments, listDFilters = {}, excludeLi
 function mergeListEFromManual(apiData, segments, excludeListA = {}) {
   if (!segments || !segments.map((s) => String(s).toUpperCase()).includes('E')) return apiData;
   const rows = dataCache.getManualContacts(excludeListA).filter((r) => r.email && r.email.includes('@'));
+  attachVoucherFrom(rows, apiData || []);
   const existingEmails = new Set((apiData || []).map((r) => String(r.email || '').toLowerCase()).filter(Boolean));
   const fromE = rows.filter((r) => !existingEmails.has(r.email.toLowerCase()));
   return [...(apiData || []), ...fromE];

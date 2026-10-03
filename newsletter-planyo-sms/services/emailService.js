@@ -1,6 +1,6 @@
 /**
  * Servizio invio email Newsletter via Resend API
- * Placeholder contatto: {{nome}}/$(first_name), {{cognome}}, {{email}}, {{phone}}/$(phone), {{city}}/$(city)
+ * Placeholder contatto: {{nome}}/$(first_name), {{cognome}}, {{email}}, {{phone}}/$(phone), {{city}}/$(city), {{voucher}}
  * Placeholder evento (liste A/B/D): {{evento}}/$(name), {{start_date}}, {{status}}
  * Batch: traccia email già inviate per soggetto+filtri
  */
@@ -165,6 +165,7 @@ function buildTemplateData(data = {}) {
   const city = pickFirstNonEmpty(data.city, data.citta);
   const status = pickFirstNonEmpty(data.status, data.stato);
   const startDate = pickFirstNonEmpty(data.start_date, data.startDate);
+  const voucher = pickFirstNonEmpty(data.voucher, data.codice_voucher, data.voucher_code);
 
   return {
     ...data,
@@ -180,6 +181,8 @@ function buildTemplateData(data = {}) {
     evento: eventName,
     eventoPrenotato: eventName,
     name: eventName,
+    voucher,
+    codice_voucher: voucher,
     start_date: startDate,
     status,
     stato: status
@@ -609,6 +612,7 @@ async function sendTestEmail({ to, subject, body, html }) {
     citta: 'Milano',
     eventoPrenotato: 'Castello delle Sorprese',
     name: 'Castello delle Sorprese',
+    voucher: 'GROTTA-TEST-123',
     start_date: '2026-10-15',
     status: 'confermato',
     stato: 'confermato',

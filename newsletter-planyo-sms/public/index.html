@@ -301,7 +301,7 @@
       <div class="form-group" style="margin-top: 1rem;">
         <label for="manualListFile">File extra (CSV / Excel)</label>
         <input type="file" id="manualListFile" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-        <p class="hint">Terza base dati, indipendente da newsletter Mailchimp e report Planyo. Colonne riconosciute: email, nome, cognome, telefono. Basta email o cellulare.</p>
+        <p class="hint">Terza base dati, indipendente da newsletter Mailchimp e report Planyo. Colonne riconosciute: email, nome, cognome, telefono, voucher. Basta email o cellulare.</p>
         <button type="button" class="btn btn-secondary" id="btnUploadManualList">CARICA FILE CSV/XLS MANUALE</button>
         <p class="hint" id="manualListStatus" style="margin-top: 0.5rem;">File extra da caricare</p>
       </div>
@@ -362,7 +362,7 @@
         <div class="form-group">
           <label>Testo SMS <span id="smsCharCount" class="char-count">0/160</span></label>
           <textarea id="smsText" rows="3" maxlength="160" placeholder="Scrivi qui il messaggio SMS da inviare"></textarea>
-          <p class="hint">Massimo 160 caratteri.</p>
+          <p class="hint">Massimo 160 caratteri. Placeholder: {{nome}}, {{cognome}}, {{evento}}, {{voucher}}.</p>
         </div>
         <div class="form-group">
           <label>Invio prova</label>
@@ -419,8 +419,8 @@
           <div class="form-group">
             <label for="emailBody">Messaggio email</label>
             <textarea id="emailBody" rows="6" placeholder="Ciao {{nome}},\n\n..."></textarea>
-            <p class="hint">Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city).</p>
-            <p class="hint">Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
+            <p class="hint">Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city), {{voucher}}.</p>
+            <p class="hint">Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}. Voucher: dal report Planyo o dal file XLS/CSV manuale.</p>
           </div>
         </div>
         <div id="composePanelEditor" class="compose-panel">
@@ -437,14 +437,14 @@
               </div>
               <div id="emailWysiwyg" class="email-wysiwyg" contenteditable="true" role="textbox" aria-multiline="true"></div>
             </div>
-            <p class="hint">Toolbar base per comunicazioni veloci. Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city). Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
+            <p class="hint">Toolbar base per comunicazioni veloci. Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city), {{voucher}}. Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
           </div>
         </div>
         <div id="composePanelHtml" class="compose-panel">
           <div class="form-group">
             <label for="emailHtml">Codice HTML da incollare</label>
             <textarea id="emailHtml" rows="10" placeholder="<table>...newsletter html...</table>"></textarea>
-            <p class="hint">Incolla HTML completo. Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city). Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
+            <p class="hint">Incolla HTML completo. Contatto: {{nome}} / $(first_name), {{cognome}}, {{email}}, {{phone}} / $(phone), {{city}} / $(city), {{voucher}}. Evento (liste A/B/D): {{evento}} / $(name), {{start_date}}, {{status}}.</p>
           </div>
         </div>
         <div class="form-group">

@@ -179,7 +179,8 @@ function mergeContact(current, incoming) {
     cognome: current.cognome || incoming.cognome || '',
     email: current.email || incoming.email || '',
     telefono: current.telefono || incoming.telefono || '',
-    cellulare: current.cellulare || incoming.cellulare || ''
+    cellulare: current.cellulare || incoming.cellulare || '',
+    voucher: current.voucher || incoming.voucher || ''
   };
 }
 
@@ -191,6 +192,7 @@ function extractContactsFromTable(rows) {
   const idxCognome = findColumn(headers, ['cognome', 'last name', 'lastname', 'surname', 'lname']);
   const idxTelefono = findColumn(headers, ['telefono', 'phone', 'mobile', 'cellulare', 'tel']);
   const idxAltTelefono = findColumn(headers, ['altro tel', 'altro telefono', 'telefono 2', 'phone 2', 'mobile 2']);
+  const idxVoucher = findColumn(headers, ['voucher', 'codice voucher', 'voucher code', 'codice_voucher']);
   if (idxEmail < 0 && idxTelefono < 0 && idxAltTelefono < 0) {
     throw new Error('Nel file serve almeno una colonna email oppure telefono');
   }
@@ -214,7 +216,8 @@ function extractContactsFromTable(rows) {
       cognome: get(idxCognome),
       email: validEmail ? email : '',
       telefono,
-      cellulare: telefono
+      cellulare: telefono,
+      voucher: get(idxVoucher)
     });
   }
   return out;
@@ -241,7 +244,8 @@ function importManualContacts(items, options = {}) {
       cognome: String(item?.cognome || '').trim(),
       email: validEmail ? email : '',
       telefono,
-      cellulare: telefono
+      cellulare: telefono,
+      voucher: String(item?.voucher || '').trim()
     };
     const key = validEmail ? ('e:' + email) : ('p:' + telefono);
     byKey.set(key, mergeContact(byKey.get(key), incoming));
@@ -292,6 +296,7 @@ function getManualContacts(excludeListA = {}) {
       const telefono = normalizeMobilePhone(row?.telefono || row?.cellulare || '');
       const nome = String(row?.nome || '').trim();
       const cognome = String(row?.cognome || '').trim();
+      const voucher = String(row?.voucher || '').trim();
       return {
         nome,
         first_name: nome,
@@ -305,6 +310,7 @@ function getManualContacts(excludeListA = {}) {
         eventoPrenotato: '',
         evento: '',
         name: '',
+        voucher,
         start_date: '',
         status: '',
         segment: 'E',

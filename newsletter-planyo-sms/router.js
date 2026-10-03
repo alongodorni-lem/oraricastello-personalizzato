@@ -922,8 +922,19 @@ router.post('/api/test', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
   }
   try {
+    const preview = emailService.applyTemplate(smsText, {
+      nome: 'Mario',
+      first_name: 'Mario',
+      cognome: 'Rossi',
+      email: 'prova@example.com',
+      phone: phone,
+      telefono: phone,
+      evento: 'Castello delle Sorprese',
+      eventoPrenotato: 'Castello delle Sorprese',
+      voucher: 'GROTTA-TEST-123'
+    });
     const suffix = ' [' + Date.now().toString(36).slice(-6) + ']';
-    const text = smsText.length + suffix.length <= 160 ? smsText + suffix : smsText.slice(0, 160 - suffix.length) + suffix;
+    const text = preview.length + suffix.length <= 160 ? preview + suffix : preview.slice(0, 160 - suffix.length) + suffix;
     const result = await smshosting.sendSms(phone, text);
     res.json({
       success: result.success,
@@ -1431,11 +1442,11 @@ router.get('/api/email/export', async (req, res) => {
       csv = '\uFEFF' + header + '\n' + rows.join('\n');
       filename = 'newsletter-contatti.csv';
     } else {
-      const header = basicFields ? 'nome,cognome,email,telefono' : 'nome,cognome,email,telefono,evento,segment';
+      const header = basicFields ? 'nome,cognome,email,telefono' : 'nome,cognome,email,telefono,evento,voucher,segment';
       const rows = data.map((r) => {
         const base = [escapeCsv(r.nome), escapeCsv(r.cognome), escapeCsv(r.email), escapeCsv(r.telefono)];
         if (basicFields) return base.join(',');
-        return [...base, escapeCsv(r.eventoPrenotato), escapeCsv(r.segment)].join(',');
+        return [...base, escapeCsv(r.eventoPrenotato), escapeCsv(r.voucher), escapeCsv(r.segment)].join(',');
       });
       csv = '\uFEFF' + header + '\n' + rows.join('\n');
       filename = 'newsletter-email-export.csv';

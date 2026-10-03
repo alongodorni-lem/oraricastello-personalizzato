@@ -63,6 +63,7 @@ const COL_ALIASES = {
   email: ['email', 'e-mail', 'mail', 'e-mail address', 'email address', 'client email', 'user email', 'contact email', 'posta', 'correo'],
   telefono: ['phone', 'phone number', 'mobile', 'mobile number', 'cell', 'cell phone', 'cellphone', 'telefono', 'telefono cellulare', 'telefono mobile', 'tel', 'whatsapp'],
   evento: ['risorsa', 'resource name', 'nome risorsa', 'evento', 'nome evento'],
+  voucher: ['voucher', 'codice voucher', 'voucher code', 'codice_voucher'],
   idRisorsa: ['idrisorsa', 'id risorsa', 'resource id', 'resource_id', 'id_risorsa'],
   stato: ['status', 'stato', 'state', 'reservation status', 'stato prenotazione'],
   creazione: ['creazione', 'creation', 'created', 'data creazione', 'creation date', 'insert date', 'insert_date'],
@@ -207,6 +208,7 @@ async function fetchAndParseCsv(csvUrl) {
     .map((x) => x.i);
 
   const idxEvento = findColumnIndex(headers, COL_ALIASES.evento);
+  const idxVoucher = findColumnIndex(headers, COL_ALIASES.voucher);
   const idxIdRisorsa = findColumnIndex(headers, COL_ALIASES.idRisorsa);
   const idxStato = findColumnIndex(headers, COL_ALIASES.stato);
   const idxCreazione = findColumnIndex(headers, COL_ALIASES.creazione);
@@ -248,6 +250,7 @@ async function fetchAndParseCsv(csvUrl) {
       citta: get(idxCity),
       eventoPrenotato: get(idxEvento),
       name: get(idxEvento),
+      voucher: get(idxVoucher),
       idRisorsa: get(idxIdRisorsa),
       stato: get(idxStato),
       status: normalizeStatusToFilter(get(idxStato)) || get(idxStato),
@@ -371,6 +374,7 @@ async function loadListDFromCsv(filters = {}, excludeListA = {}) {
     eventoPrenotato: r.eventoPrenotato || '',
     evento: r.eventoPrenotato || '',
     name: r.name || r.eventoPrenotato || '',
+    voucher: r.voucher || '',
     start_date: r.start_date || '',
     status: r.status || normalizeStatusToFilter(r.stato) || '',
     segment: 'D'

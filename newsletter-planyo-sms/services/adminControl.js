@@ -33,6 +33,7 @@ function buildAdminEmailRow() {
     eventoPrenotato: '',
     evento: '',
     name: '',
+    voucher: '',
     start_date: '',
     status: '',
     segment: 'ADMIN',
