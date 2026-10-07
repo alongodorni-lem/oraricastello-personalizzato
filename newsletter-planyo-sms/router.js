@@ -19,6 +19,7 @@ const planyoReportCsv = require('./services/planyoReportCsv');
 const dataCache = require('./services/dataCache');
 const config = require('./config/segments');
 const adminControl = require('./services/adminControl');
+const smsQueue = require('./services/smsQueue');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
 const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
@@ -911,44 +912,23 @@ async function executeSmsRun(body_, extraJobOptions = {}) {
   return cap.run();
 }
 
-router.post('/api/run', async (req, res) => {
-  const body_ = req.body || {};
-  const isPreview = parseBoolParam(body_.dryRun) || parseBoolParam(body_.prepareOnly);
-  const customSmsText = (typeof body_.smsText === 'string' && body_.smsText.trim()) ? body_.smsText.trim().slice(0, 160) : null;
-  if (!customSmsText) {
-    return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
-  }
-
-  if (isPreview) {
-    res.setTimeout(180 * 1000);
-    try {
-      const out = await executeSmsRun(body_, { ignoreAbort: true });
-      return res.json({ ...out, aborted: false });
-    } catch (err) {
-      return res.status(400).json({ success: false, error: err.message });
-    }
-  }
-
+async function beginRealSmsRun(body_, hooks = {}) {
   if (smsRunInProgress) {
-    return res.status(409).json({
-      success: false,
-      running: true,
-      error: 'Invio SMS già in corso. Attendi il completamento prima di avviarne un altro.',
-      progress: smsRunState.progress,
-      runningSince: smsRunState.startedAt
-    });
+    return {
+      ok: false,
+      status: 409,
+      error: 'Invio SMS già in corso. Attendi il completamento prima di avviarne un altro.'
+    };
   }
-
   const lockAcq = acquireSmsRunLock();
   if (!lockAcq.ok) {
-    return res.status(409).json({
-      success: false,
-      running: true,
+    return {
+      ok: false,
+      status: 409,
       error: 'Invio SMS già in corso (lock server attivo). Attendi il completamento prima di avviarne un altro.',
       runningSince: lockAcq.lock?.startedAt || null
-    });
+    };
   }
-
   const lockToken = lockAcq.lock.token;
   const listDFilters = parseListDFilters(body_);
   const forceReportOnly = !!(listDFilters && listDFilters.eventNameContains);
@@ -958,7 +938,7 @@ router.post('/api/run', async (req, res) => {
     await validateExcludeTargetSetup(excludeTarget, targetId);
   } catch (err) {
     releaseSmsRunLock(lockToken);
-    return res.status(400).json({ success: false, error: err.message });
+    return { ok: false, status: 400, error: err.message };
   }
 
   resetSmsRunState({
@@ -998,15 +978,49 @@ router.post('/api/run', async (req, res) => {
       clearInterval(heartbeat);
       releaseSmsRunLock(lockToken);
       smsRunInProgress = false;
+      if (typeof hooks.onDone === 'function') {
+        try { hooks.onDone({ ...smsRunState, progress: { ...smsRunState.progress } }); } catch (_) {}
+      }
     }
   });
 
+  return { ok: true, startedAt: smsRunState.startedAt };
+}
+
+router.post('/api/run', async (req, res) => {
+  const body_ = req.body || {};
+  const isPreview = parseBoolParam(body_.dryRun) || parseBoolParam(body_.prepareOnly);
+  const customSmsText = (typeof body_.smsText === 'string' && body_.smsText.trim()) ? body_.smsText.trim().slice(0, 160) : null;
+  if (!customSmsText) {
+    return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
+  }
+
+  if (isPreview) {
+    res.setTimeout(180 * 1000);
+    try {
+      const out = await executeSmsRun(body_, { ignoreAbort: true });
+      return res.json({ ...out, aborted: false });
+    } catch (err) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+  }
+
+  const started = await beginRealSmsRun(body_);
+  if (!started.ok) {
+    return res.status(started.status || 400).json({
+      success: false,
+      running: started.status === 409,
+      error: started.error,
+      runningSince: started.runningSince || null,
+      progress: smsRunState.progress
+    });
+  }
   res.json({
     success: true,
     started: true,
     async: true,
     running: true,
-    runningSince: smsRunState.startedAt
+    runningSince: started.startedAt
   });
 });
 
@@ -1985,5 +1999,81 @@ router.post('/api/email/abort', (_req, res) => {
   emailAbortRequested = true;
   res.json({ ok: true, message: 'Annullamento richiesto' });
 });
+
+router.get('/api/sms/queue', (_req, res) => {
+  res.json({ success: true, items: smsQueue.listQueue(), maxDelayHours: smsQueue.MAX_DELAY_HOURS });
+});
+
+router.post('/api/sms/queue', (req, res) => {
+  try {
+    const body_ = req.body || {};
+    const smsText = String(body_.smsText || '').trim().slice(0, 160);
+    if (!smsText) return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
+    const segments = Array.isArray(body_.segments) ? body_.segments : [];
+    if (!segments.length) return res.status(400).json({ success: false, error: 'Seleziona un pubblico prima di mettere in coda.' });
+    const item = smsQueue.addQueuedSend({
+      delayHours: body_.delayHours,
+      plannedCount: body_.plannedCount,
+      skippedCount: body_.skippedCount,
+      audienceLabel: body_.audienceLabel,
+      payload: {
+        campaignId: body_.campaignId || dataCache.UPLOADED_CAMPAIGN_ID,
+        segments,
+        excludeTargetBooked: body_.excludeTargetBooked,
+        engagementType: body_.engagementType,
+        targetResourceId: body_.targetResourceId,
+        smsText,
+        listDEventNameContains: body_.listDEventNameContains,
+        listDStatuses: body_.listDStatuses
+      }
+    });
+    res.json({ success: true, item });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/api/sms/queue/:id/cancel', (req, res) => {
+  const out = smsQueue.cancelItem(req.params.id);
+  if (!out.ok) return res.status(400).json({ success: false, error: out.error });
+  res.json({ success: true, item: out.item });
+});
+
+let queueTickBusy = false;
+async function tickSmsQueue() {
+  if (queueTickBusy || smsRunInProgress) return;
+  const due = smsQueue.nextDue();
+  if (!due) return;
+  queueTickBusy = true;
+  smsQueue.updateItem(due.id, { status: 'running', startedAt: new Date().toISOString(), error: null });
+  const started = await beginRealSmsRun(due.payload || {}, {
+    onDone: (state) => {
+      const failed = state.status === 'error' || state.aborted;
+      smsQueue.updateItem(due.id, {
+        status: failed ? 'error' : 'sent',
+        result: state.result || state.progress || null,
+        error: state.error || (state.aborted ? 'Annullato' : null),
+        finishedAt: new Date().toISOString()
+      });
+      queueTickBusy = false;
+    }
+  });
+  if (!started.ok) {
+    smsQueue.updateItem(due.id, {
+      status: started.status === 409 ? 'queued' : 'error',
+      error: started.error || 'Avvio non riuscito',
+      startedAt: null
+    });
+    queueTickBusy = false;
+  }
+}
+
+const queueTimer = setInterval(() => {
+  tickSmsQueue().catch((err) => {
+    queueTickBusy = false;
+    console.error('[SMS queue]', err.message);
+  });
+}, 20000);
+if (typeof queueTimer.unref === 'function') queueTimer.unref();
 
 module.exports = router;

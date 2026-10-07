@@ -374,7 +374,7 @@
           <button class="btn btn-secondary" id="btnTest">Invia SMS di prova</button>
           <button class="btn btn-secondary" id="btnCalcSms">CALCOLA SMS</button>
           <button class="btn btn-primary" id="btnRun" disabled>
-            Avvia invio
+            INVIA SUBITO
           </button>
           <button class="btn btn-secondary" id="btnAbort" style="display:none;">
             Annulla
@@ -383,9 +383,26 @@
             Sblocca invio
           </button>
         </div>
+        <div class="form-group" style="margin-top: 1rem;">
+          <label for="smsQueueDelay">Salva in coda e invia tra ore</label>
+          <div class="row" style="align-items: flex-end;">
+            <div class="form-group" style="max-width: 140px; margin-bottom: 0;">
+              <input type="number" id="smsQueueDelay" min="1" max="24" step="1" value="1">
+            </div>
+            <div>
+              <button class="btn btn-secondary" id="btnQueueSms" type="button" disabled>SALVA IN CODA</button>
+            </div>
+          </div>
+          <p class="hint">Da 1 a 24 ore. Il pubblico e il testo di questo calcolo restano salvati: puoi cambiare lista e preparare l'invio successivo. Parte da solo, uno alla volta.</p>
+        </div>
         <div class="output" id="testOutput"></div>
         <p class="hint" id="smsSendableStatus" style="margin-top: 0.5rem;">Calcola SMS per preparare la lista numeri prima dell'invio.</p>
         <div class="output" id="runOutput"></div>
+      </div>
+      <div class="card">
+        <h2>Invii in coda</h2>
+        <p class="hint" style="margin-bottom: 0.75rem;">Ogni riga è un pubblico e un testo già impostati. Non fare un nuovo deploy prima che siano partiti: la coda sta sul server.</p>
+        <div id="smsQueueList"><p class="hint">Nessun invio in coda.</p></div>
       </div>
     </div>
     <!-- Tab EMAIL -->
@@ -512,6 +529,7 @@
     let excludeTargetBookedActive = false;
     let smsSendableCount = 0;
     let smsSendableReady = false;
+    let smsAlreadySkippedCount = 0;
     let emailSendableCount = 0;
     let emailSendableReady = false;
     let emailTotalAudienceCount = 0;
@@ -549,6 +567,7 @@
     function resetSmsSendable(forceMessage) {
       smsSendableCount = 0;
       smsSendableReady = false;
+      smsAlreadySkippedCount = 0;
       const status = document.getElementById('smsSendableStatus');
       const btnRun = document.getElementById('btnRun');
       if (status) {
@@ -556,6 +575,8 @@
         status.style.color = '';
       }
       if (btnRun) btnRun.disabled = true;
+      const btnQueue = document.getElementById('btnQueueSms');
+      if (btnQueue) btnQueue.disabled = true;
     }
     function resetEmailSendable(forceMessage) {
       emailTotalAudienceCount = 0;
@@ -1050,7 +1071,7 @@
                 out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${Number(result.inserted || 0)} | Saltati ${Number(result.skipped || 0)} | Non inseriti ${Number(result.notInserted || 0)}</div>`;
               }
               btn.disabled = false;
-              btn.textContent = 'Avvia invio';
+              btn.textContent = 'INVIA SUBITO';
               btnAbort.style.display = 'none';
               btnAbort.onclick = null;
             }).catch(() => {});
@@ -1060,9 +1081,114 @@
       }
       if (!keepLockedAsRunning) {
         btn.disabled = false;
-        btn.textContent = 'Avvia invio';
+        btn.textContent = 'INVIA SUBITO';
         btnAbort.style.display = 'none';
         btnAbort.onclick = null;
+      }
+    };
+
+    function buildSmsSendPayload() {
+      const audience = getSmsAudienceSelection();
+      return {
+        campaignId: NEWSLETTER_SOURCE_ID,
+        segments: audience.segments,
+        excludeTargetBooked: audience.excludeTargetBooked,
+        engagementType: getEngagementType(),
+        targetResourceId: document.getElementById('smsEventIds').value.trim() || undefined,
+        smsText: document.getElementById('smsText').value.trim(),
+        audienceLabel: 'Liste ' + (audience.segments.join(', ') || '-') +
+          (document.getElementById('smsEventIds').value.trim() ? (' | evento ' + document.getElementById('smsEventIds').value.trim()) : '') +
+          (audience.excludeTargetBooked ? ' | esclusi prenotati target' : ''),
+        ...getListDFilters(true)
+      };
+    }
+
+    function formatQueueWhen(iso) {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+
+    async function refreshSmsQueue() {
+      const box = document.getElementById('smsQueueList');
+      if (!box) return;
+      try {
+        const d = await fetchJson(API + '/api/sms/queue');
+        const items = (Array.isArray(d.items) ? d.items : []).filter((item) => item.status !== 'cancelled');
+        const visible = items.slice().reverse().slice(0, 12);
+        if (!visible.length) {
+          box.innerHTML = '<p class="hint">Nessun invio in coda.</p>';
+          return;
+        }
+        const labels = { queued: 'In coda', running: 'In invio', sent: 'Inviato', error: 'Errore' };
+        box.innerHTML = visible.map((item) => {
+          const result = item.result || {};
+          const extra = item.status === 'sent'
+            ? (' Inseriti ' + Number(result.inserted || 0) + ', saltati ' + Number(result.skipped || 0) + '.')
+            : (item.status === 'queued' ? (' Previsti ' + Number(item.plannedCount || 0) + (Number(item.skippedCount) ? (', già inviati saltati ' + Number(item.skippedCount)) : '') + '.') : '');
+          const cancel = item.status === 'queued'
+            ? '<div style="margin-top:0.35rem;"><button type="button" class="btn btn-danger" data-cancel-queue="' + item.id + '">Annulla</button></div>'
+            : '';
+          return '<div style="border-top:1px solid var(--border);padding:0.65rem 0;">' +
+            '<strong>' + escapeHtml(labels[item.status] || item.status) + '</strong> · parte ' + escapeHtml(formatQueueWhen(item.sendAt)) +
+            '<div class="hint">' + escapeHtml(item.audienceLabel || '') + extra + '</div>' +
+            '<div>' + escapeHtml(String(item.smsText || '').slice(0, 160)) + '</div>' +
+            (item.error ? '<div class="error">' + escapeHtml(item.error) + '</div>' : '') +
+            cancel + '</div>';
+        }).join('');
+        box.querySelectorAll('[data-cancel-queue]').forEach((button) => {
+          button.onclick = async () => {
+            button.disabled = true;
+            await fetchJson(API + '/api/sms/queue/' + encodeURIComponent(button.getAttribute('data-cancel-queue')) + '/cancel', { method: 'POST' });
+            refreshSmsQueue();
+          };
+        });
+      } catch (e) {
+        box.innerHTML = '<p class="hint">Coda non disponibile: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    document.getElementById('btnQueueSms').onclick = async () => {
+      const out = document.getElementById('runOutput');
+      const payload = buildSmsSendPayload();
+      const delayHours = Number(document.getElementById('smsQueueDelay').value);
+      if (!payload.segments.length) {
+        out.innerHTML = '<div class="error">Seleziona almeno una sorgente in "Da inserire in lista".</div>';
+        return;
+      }
+      if (!payload.smsText) {
+        out.innerHTML = '<div class="error">Scrivi prima il testo SMS.</div>';
+        return;
+      }
+      if (!smsSendableReady || smsSendableCount <= 0) {
+        out.innerHTML = '<div class="error">Prima devi cliccare CALCOLA SMS.</div>';
+        return;
+      }
+      if (!Number.isInteger(delayHours) || delayHours < 1 || delayHours > 24) {
+        out.innerHTML = '<div class="error">Il ritardo deve essere tra 1 e 24 ore.</div>';
+        return;
+      }
+      if (!confirm('Salvo questo pubblico e questo testo. Partirà da solo tra ' + delayHours + ' ore. Poi puoi preparare un altro invio.')) return;
+      const btn = document.getElementById('btnQueueSms');
+      btn.disabled = true;
+      try {
+        const d = await fetchJson(API + '/api/sms/queue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...payload,
+            delayHours,
+            plannedCount: smsSendableCount,
+            skippedCount: smsAlreadySkippedCount
+          })
+        });
+        const when = formatQueueWhen(d.item && d.item.sendAt);
+        out.innerHTML = '<div class="log result-ok">In coda. Parte il ' + escapeHtml(when) + '. Ora puoi cambiare pubblico e testo per il prossimo elenco.</div>';
+        refreshSmsQueue();
+      } catch (e) {
+        out.innerHTML = '<div class="error">' + escapeHtml(e.message) + '</div>';
+      } finally {
+        btn.disabled = !smsSendableReady;
       }
     };
 
@@ -1728,8 +1854,11 @@
         smsSendableCount = d.result?.inserted || 0;
         smsSendableReady = smsSendableCount > 0;
         const skippedAlready = Number(d.result?.skipped || 0);
+        smsAlreadySkippedCount = skippedAlready;
         status.textContent = 'Da inviare: ' + smsSendableCount + ' (non ancora partiti). Calcolo ok, questo NON invia.' +
           (skippedAlready ? (' Già inviati saltati: ' + skippedAlready + '.') : '');
+        const btnQueue = document.getElementById('btnQueueSms');
+        if (btnQueue) btnQueue.disabled = !smsSendableReady;
         status.style.color = smsSendableReady ? 'var(--success)' : '';
         document.getElementById('btnRun').disabled = !smsSendableReady;
         if (Array.isArray(d.logs) && d.logs.length) showOutput(out, d.logs);
@@ -1739,6 +1868,8 @@
         status.textContent = 'Errore: ' + e.message;
         status.style.color = 'var(--danger)';
         document.getElementById('btnRun').disabled = true;
+        const btnQueue = document.getElementById('btnQueueSms');
+        if (btnQueue) btnQueue.disabled = true;
       } finally {
         btnCalc.disabled = false;
       }
@@ -2145,6 +2276,8 @@
     loadEmailLimits();
     loadConfig();
     loadPlanyoResourcesHint();
+    refreshSmsQueue();
+    setInterval(refreshSmsQueue, 20000);
     fetch(API + '/api/preload-planyo').catch(() => {}); // Preload Lista A in background (API Planyo)
   </script>
 </body>
