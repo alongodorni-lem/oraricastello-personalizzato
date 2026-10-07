@@ -1125,7 +1125,7 @@
           const result = item.result || {};
           const extra = item.status === 'sent'
             ? (' Inseriti ' + Number(result.inserted || 0) + ', saltati ' + Number(result.skipped || 0) + '.')
-            : (item.status === 'queued' ? (' Previsti ' + Number(item.plannedCount || 0) + (Number(item.skippedCount) ? (', già inviati saltati ' + Number(item.skippedCount)) : '') + '.') : '');
+            : (item.status === 'queued' ? (' Destinatari salvati ' + Number(item.recipientCount || item.plannedCount || 0) + '.') : '');
           const cancel = item.status === 'queued'
             ? '<div style="margin-top:0.35rem;"><button type="button" class="btn btn-danger" data-cancel-queue="' + item.id + '">Annulla</button></div>'
             : '';

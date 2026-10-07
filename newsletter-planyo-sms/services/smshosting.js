@@ -423,19 +423,24 @@ function formatSmsSearchDate(date) {
  * Elenco numeri (normalizzati) a cui e' gia partito un SMS nel periodo.
  * Serve a riprendere un invio dopo redeploy, quando i file locali sono andati persi.
  */
-const sentPhonesCache = { at: 0, key: '', phones: [] };
+function smsTextKey(text) {
+  return normalizeSmsText(text).replace(/\s+/g, ' ').trim().slice(0, 160);
+}
 
-async function listSentPhonesSince(fromDate, toDate = new Date(), options = {}) {
+const sentTextsCache = { at: 0, key: '', entries: [] };
+
+async function listSentTextsByPhone(fromDate, toDate = new Date(), options = {}) {
   const authKey = process.env.SMSHOSTING_AUTH_KEY;
   const authSecret = process.env.SMSHOSTING_AUTH_SECRET;
-  const phones = new Set();
-  if (!authKey || !authSecret) return phones;
+  const byPhone = new Map();
+  if (!authKey || !authSecret) return byPhone;
 
   const from = formatSmsSearchDate(fromDate);
   const to = formatSmsSearchDate(toDate);
   const cacheKey = from + '|' + to;
-  if (sentPhonesCache.phones.length && sentPhonesCache.key === cacheKey && Date.now() - sentPhonesCache.at < 15 * 60 * 1000) {
-    return new Set(sentPhonesCache.phones);
+  if (sentTextsCache.entries.length && sentTextsCache.key === cacheKey && Date.now() - sentTextsCache.at < 15 * 60 * 1000) {
+    for (const [phone, texts] of sentTextsCache.entries) byPhone.set(phone, new Set(texts));
+    return byPhone;
   }
 
   const limit = 200;
@@ -460,16 +465,27 @@ async function listSentPhonesSince(fromDate, toDate = new Date(), options = {}) 
     if (!Number.isFinite(total)) total = offset + list.length;
     for (const sms of list) {
       const norm = normalizePhone(sms?.to || sms?.msisdn || '');
-      if (norm) phones.add(norm);
+      const key = smsTextKey(sms?.text || '');
+      if (!norm || !key) continue;
+      if (!byPhone.has(norm)) byPhone.set(norm, new Set());
+      byPhone.get(norm).add(key);
     }
     if (!list.length) break;
     offset += list.length;
     if (offset >= 20000) break;
   }
-  sentPhonesCache.at = Date.now();
-  sentPhonesCache.key = cacheKey;
-  sentPhonesCache.phones = [...phones];
-  return phones;
+  sentTextsCache.at = Date.now();
+  sentTextsCache.key = cacheKey;
+  sentTextsCache.entries = [...byPhone.entries()].map(([phone, texts]) => [phone, [...texts]]);
+  return byPhone;
+}
+
+function receivedText(byPhone, phone, text) {
+  const norm = normalizePhone(phone);
+  const key = smsTextKey(text);
+  if (!norm || !key || !byPhone) return false;
+  const texts = byPhone.get(norm);
+  return !!(texts && texts.has(key));
 }
 
 module.exports = {
@@ -478,5 +494,7 @@ module.exports = {
   phonebookMsisdnCandidates,
   findContactForPrivacy,
   deleteContactByPhoneForPrivacy,
-  listSentPhonesSince
+  listSentTextsByPhone,
+  receivedText,
+  smsTextKey
 };

@@ -35,13 +35,18 @@ function recoverInterrupted(items) {
   return changed;
 }
 
+let startupRecovered = false;
+
 function listQueue() {
   const items = loadQueue();
-  if (recoverInterrupted(items)) saveQueue(items);
+  if (!startupRecovered) {
+    startupRecovered = true;
+    if (recoverInterrupted(items)) saveQueue(items);
+  }
   return items.slice().sort((a, b) => String(a.sendAt || '').localeCompare(String(b.sendAt || '')));
 }
 
-function addQueuedSend({ delayHours, plannedCount, skippedCount, audienceLabel, payload }) {
+function addQueuedSend({ delayHours, plannedCount, skippedCount, audienceLabel, payload, recipients }) {
   const hours = Number(delayHours);
   if (!Number.isInteger(hours) || hours < 1 || hours > MAX_DELAY_HOURS) {
     throw new Error('Il ritardo deve essere un numero intero di ore da 1 a 24.');
@@ -60,6 +65,7 @@ function addQueuedSend({ delayHours, plannedCount, skippedCount, audienceLabel, 
     skippedCount: Number(skippedCount) || 0,
     audienceLabel: String(audienceLabel || '').slice(0, 240),
     payload: { ...payload, smsText },
+    recipients: Array.isArray(recipients) ? recipients : [],
     result: null,
     error: null,
     startedAt: null,
@@ -94,13 +100,10 @@ function cancelItem(id) {
 
 function nextDue() {
   const items = loadQueue();
-  const changed = recoverInterrupted(items);
   const now = Date.now();
-  const due = items
+  return items
     .filter((item) => item.status === 'queued' && new Date(item.sendAt || 0).getTime() <= now)
     .sort((a, b) => String(a.sendAt).localeCompare(String(b.sendAt)))[0] || null;
-  if (changed) saveQueue(items);
-  return due;
 }
 
 module.exports = {

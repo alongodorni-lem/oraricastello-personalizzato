@@ -73,9 +73,9 @@ function saveSentRegistry(registry) {
   fs.writeFileSync(SENT_FILE, JSON.stringify(registry, null, 2), 'utf8');
 }
 
-function wasAlreadySent(campaignId, email, segment) {
+function wasAlreadySent(campaignId, email, segment, text) {
   if (!email) return false;
-  const key = `${campaignId}_${String(email).toLowerCase()}_${segment}`;
+  const key = `${campaignId}_${String(email).toLowerCase()}_${segment}_${msgHash(text || '')}`;
   return !!loadSentRegistry()[key];
 }
 
@@ -97,9 +97,9 @@ function seedSentRegistryFromPhones(rows, trackId, segment, phonesSet) {
   return added;
 }
 
-function markAsSent(campaignId, email, segment) {
+function markAsSent(campaignId, email, segment, text) {
   const reg = loadSentRegistry();
-  reg[`${campaignId}_${email.toLowerCase()}_${segment}`] = new Date().toISOString();
+  reg[`${campaignId}_${String(email).toLowerCase()}_${segment}_${msgHash(text || '')}`] = new Date().toISOString();
   saveSentRegistry(reg);
 }
 
@@ -148,21 +148,34 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   const trackId = campaignId || 'list-d-only';
   const seenPhonesInRun = new Set();
   const lookbackHours = Math.max(1, parseInt(process.env.SMS_RESUME_LOOKBACK_HOURS || '24', 10) || 24);
-  let providerSentPhones = new Set();
+  let sentTextsByPhone = new Map();
   try {
-    providerSentPhones = await smshosting.listSentPhonesSince(new Date(Date.now() - lookbackHours * 60 * 60 * 1000), new Date(), { abortCheck });
-    console.log('[Job] Numeri gia presenti su SMS Hosting (ultime', lookbackHours, 'ore):', providerSentPhones.size);
+    sentTextsByPhone = await smshosting.listSentTextsByPhone(new Date(Date.now() - lookbackHours * 60 * 60 * 1000), new Date(), { abortCheck });
+    console.log('[Job] Numeri con SMS gia partito (ultime', lookbackHours, 'ore):', sentTextsByPhone.size);
   } catch (err) {
     console.warn('[Job] Recupero invii SMS Hosting fallito:', err.message);
   }
 
   const alreadyDelivered = (email, segment, phone, text) => {
     const id = email && String(email).includes('@') ? String(email).toLowerCase() : (phone ? ('phone:' + phone) : '');
-    if (id && wasAlreadySent(trackId, id, segment)) return true;
+    if (id && text && wasAlreadySent(trackId, id, segment, text)) return true;
     if (text && wasSameMessageSentRecently(phone, text)) return true;
-    const norm = smshosting.normalizePhone(phone);
-    return !!(norm && providerSentPhones.has(norm));
+    return !!(text && smshosting.receivedText(sentTextsByPhone, phone, text));
   };
+  const captureOnly = !!options.captureOnly;
+  const captureRows = Array.isArray(options.captureRows) ? options.captureRows : null;
+  function captureRecipient(row, email, phone, segment) {
+    if (!captureRows) return;
+    captureRows.push({
+      nome: row?.nome || row?.first_name || '',
+      cognome: row?.cognome || row?.last_name || '',
+      email: email || '',
+      telefono: phone || '',
+      voucher: row?.voucher || '',
+      evento: row?.evento || row?.eventoPrenotato || row?.name || '',
+      segment: segment || ''
+    });
+  }
 
   console.log('[Job] Avvio newsletter-sms-job');
   console.log('[Job] Campagna:', trackId, '| Solo Lista D:', !!onlyD, '| Solo file manuale:', !!onlyE, '| Dry run:', dryRun);
@@ -184,8 +197,6 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
     const withPhone = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
-    const seeded = seedSentRegistryFromPhones(withPhone, trackId, 'D', providerSentPhones);
-    if (seeded) console.log('[Job] Registro locale ricostruito da SMS Hosting:', seeded, 'numeri Lista D');
     console.log('[Job] Lista D da CSV:', withPhone.length, 'contatti con telefono');
     const getText = () => customSmsText || (config.smsTexts?.listD || '');
     let inserted = 0;
@@ -205,11 +216,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
+      if (captureOnly) { captureRecipient(row, email, phone, 'D'); inserted++; continue; }
       if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
-        markAsSent(trackId, email, 'D');
+        markAsSent(trackId, email, 'D', textResolved);
         markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
@@ -237,8 +249,6 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listE = dataCache.getManualContacts(excludeListA);
     const withPhone = listE.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
-    const seededE = seedSentRegistryFromPhones(withPhone, trackId, 'E', providerSentPhones);
-    if (seededE) console.log('[Job] Registro locale ricostruito da SMS Hosting:', seededE, 'numeri file manuale');
     console.log('[Job] Lista E da file manuale:', withPhone.length, 'contatti con telefono');
     const textE = customSmsText || (config.smsTexts?.listD || '');
     let inserted = 0;
@@ -258,11 +268,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
+      if (captureOnly) { captureRecipient(row, id, phone, 'E'); inserted++; continue; }
       if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
-        markAsSent(trackId, id, 'E');
+        markAsSent(trackId, id, 'E', textResolved);
         markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
@@ -378,8 +389,6 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const excludeListA = excludeTargetBooked ? { emailsInA: emailsInASet } : {};
       listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
       listD = listD.filter((x) => x.telefono && x.telefono.length >= 10 && !x.telefono.includes('@'));
-      const seeded = seedSentRegistryFromPhones(listD, trackId, 'D', providerSentPhones);
-      if (seeded) console.log('[Job] Registro locale ricostruito da SMS Hosting:', seeded, 'numeri Lista D');
       console.log('[Job] Lista D da CSV:', listD.length, 'contatti con telefono');
     } catch (err) {
       console.error('[Job] Lista D CSV:', err.message);
@@ -426,6 +435,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         continue;
       }
       seenPhonesInRun.add(normPhone);
+      if (captureOnly) { captureRecipient({ email, phone }, email, phone, segment); inserted++; continue; }
 
       if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) {
         console.log('[Job] Annullato dall\'utente');
@@ -439,7 +449,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
 
       const result = await smshosting.sendSms(normPhone, text);
       if (result.success) {
-        markAsSent(campaignId, email, segment);
+        markAsSent(campaignId, email, segment, text);
         markMessageSentForSpamGuard(phone, text);
         inserted++;
         if (inserted % 250 === 0) {
@@ -467,11 +477,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
+      if (captureOnly) { captureRecipient(row, email, phone, 'D'); inserted++; continue; }
       if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
-        markAsSent(campaignId, email, 'D');
+        markAsSent(campaignId, email, 'D', textResolved);
         markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
@@ -497,11 +508,12 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
       const normPhone = smshosting.normalizePhone(phone);
       if (!normPhone || seenPhonesInRun.has(normPhone)) { skipped++; continue; }
       seenPhonesInRun.add(normPhone);
+      if (captureOnly) { captureRecipient(row, email, phone, 'E'); inserted++; continue; }
       if (!prepareOnly && !dryRun && typeof abortCheck === 'function' && abortCheck()) break;
       if (dryRun) { inserted++; continue; }
       const result = await smshosting.sendSms(normPhone, textResolved);
       if (result.success) {
-        markAsSent(campaignId, email, 'E');
+        markAsSent(campaignId, email, 'E', textResolved);
         markMessageSentForSpamGuard(phone, textResolved);
         inserted++;
       } else {
@@ -699,4 +711,71 @@ async function getSmsPreview(campaignId, options = {}) {
   };
 }
 
-module.exports = { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview };
+async function sendStoredSmsList(recipients, smsText, options = {}) {
+  const { abortCheck, progress } = options;
+  const rows = Array.isArray(recipients) ? recipients : [];
+  const template = String(smsText || '').trim().slice(0, 160);
+  let inserted = 0;
+  let notInserted = 0;
+  let duplicates = 0;
+  let skipped = 0;
+  const seen = new Set();
+  const touch = () => {
+    if (!progress) return;
+    progress.inserted = inserted;
+    progress.notInserted = notInserted;
+    progress.skipped = skipped;
+    progress.duplicates = duplicates;
+  };
+  let sentTextsByPhone = new Map();
+  try {
+    sentTextsByPhone = await smshosting.listSentTextsByPhone(new Date(Date.now() - 24 * 60 * 60 * 1000), new Date());
+  } catch (err) {
+    console.warn('[Job] Recupero testi gia inviati fallito:', err.message);
+  }
+  if (template) {
+    await sendAdminControlSms([template]);
+  }
+  for (const row of rows) {
+    const phone = row.telefono || row.phone;
+    const email = String(row.email || '').toLowerCase().trim() || ('phone:' + phone);
+    const textResolved = applyTemplate(template, {
+      ...row,
+      nome: row.nome || '',
+      first_name: row.nome || '',
+      cognome: row.cognome || '',
+      evento: row.evento || '',
+      eventoPrenotato: row.evento || '',
+      name: row.evento || '',
+      voucher: row.voucher || ''
+    });
+    const normPhone = smshosting.normalizePhone(phone);
+    if (!normPhone || seen.has(normPhone)) { skipped++; continue; }
+    if (wasSameMessageSentRecently(normPhone, textResolved)) { skipped++; continue; }
+    if (smshosting.receivedText(sentTextsByPhone, normPhone, textResolved)) { skipped++; continue; }
+    if (wasAlreadySent('queued-sms', email, row.segment || 'Q', textResolved)) { skipped++; continue; }
+    seen.add(normPhone);
+    if (typeof abortCheck === 'function' && abortCheck()) break;
+    const result = await smshosting.sendSms(normPhone, textResolved);
+    if (result.success) {
+      markAsSent('queued-sms', email, row.segment || 'Q', textResolved);
+      markMessageSentForSpamGuard(normPhone, textResolved);
+      inserted++;
+    } else {
+      notInserted++;
+      if (result.isDuplicate) duplicates++;
+    }
+    touch();
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  touch();
+  const adminPhone = config.adminPhone;
+  if (adminPhone) {
+    try {
+      await smshosting.sendSms(adminPhone, `Coda SMS: ${inserted} inseriti | ${skipped} saltati | ${notInserted} non inseriti`);
+    } catch (_) {}
+  }
+  return { inserted, notInserted, duplicates, skipped, processed: rows.length };
+}
+
+module.exports = { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview, sendStoredSmsList };

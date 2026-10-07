@@ -13,7 +13,7 @@ const mailchimp = require('./services/mailchimp');
 const smshosting = require('./services/smshosting');
 const resendPrivacy = require('./services/resend');
 const emailService = require('./services/emailService');
-const { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview } = require('./jobs/newsletter-sms-job');
+const { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview, sendStoredSmsList } = require('./jobs/newsletter-sms-job');
 const { buildEmailListData, filterByEventIds, filterBySegment, filterByEvent, takeBlock, mergeListDFromCsv, mergeListEFromManual } = require('./jobs/newsletter-email-job');
 const planyoReportCsv = require('./services/planyoReportCsv');
 const dataCache = require('./services/dataCache');
@@ -955,7 +955,16 @@ async function beginRealSmsRun(body_, hooks = {}) {
 
   setImmediate(async () => {
     try {
-      const out = await executeSmsRun(body_, { progress: smsRunState.progress });
+      const out = Array.isArray(hooks.recipients) && hooks.recipients.length
+        ? {
+          success: true,
+          logs: [],
+          result: await sendStoredSmsList(hooks.recipients, body_.smsText, {
+            abortCheck: () => runAbortRequested,
+            progress: smsRunState.progress
+          })
+        }
+        : await executeSmsRun(body_, { progress: smsRunState.progress });
       smsRunState.status = out.success === false ? 'error' : 'done';
       smsRunState.result = out.result || null;
       smsRunState.error = out.error || null;
@@ -2000,22 +2009,53 @@ router.post('/api/email/abort', (_req, res) => {
   res.json({ ok: true, message: 'Annullamento richiesto' });
 });
 
+function queueItemPublic(item) {
+  if (!item) return item;
+  const { recipients, ...rest } = item;
+  return { ...rest, recipientCount: Array.isArray(recipients) ? recipients.length : 0 };
+}
+
 router.get('/api/sms/queue', (_req, res) => {
-  res.json({ success: true, items: smsQueue.listQueue(), maxDelayHours: smsQueue.MAX_DELAY_HOURS });
+  res.json({
+    success: true,
+    items: smsQueue.listQueue().map(queueItemPublic),
+    maxDelayHours: smsQueue.MAX_DELAY_HOURS
+  });
 });
 
-router.post('/api/sms/queue', (req, res) => {
+router.post('/api/sms/queue', async (req, res) => {
+  res.setTimeout(180 * 1000);
   try {
     const body_ = req.body || {};
     const smsText = String(body_.smsText || '').trim().slice(0, 160);
     if (!smsText) return res.status(400).json({ success: false, error: 'Testo SMS obbligatorio' });
     const segments = Array.isArray(body_.segments) ? body_.segments : [];
     if (!segments.length) return res.status(400).json({ success: false, error: 'Seleziona un pubblico prima di mettere in coda.' });
+    const listDFilters = parseListDFilters(body_);
+    const forceReportOnly = !!(listDFilters && listDFilters.eventNameContains);
+    const captured = [];
+    await runNewsletterSmsJob(body_.campaignId || dataCache.UPLOADED_CAMPAIGN_ID, {
+      dryRun: true,
+      prepareOnly: true,
+      captureOnly: true,
+      captureRows: captured,
+      segments: forceReportOnly ? ['D'] : segments,
+      targetResourceId: body_.targetResourceId != null ? body_.targetResourceId : getConfiguredTargetResourceId(),
+      eventIds: forceReportOnly ? null : parseEventIdsParam(body_.eventIds),
+      listDFilters,
+      smsText,
+      engagementType: parseEngagementType(body_.engagementType || 'open'),
+      excludeTargetBooked: forceReportOnly ? false : parseBoolParam(body_.excludeTargetBooked)
+    });
+    if (!captured.length) {
+      return res.status(400).json({ success: false, error: 'Nessun destinatario da mettere in coda con questo pubblico e questo testo.' });
+    }
     const item = smsQueue.addQueuedSend({
       delayHours: body_.delayHours,
-      plannedCount: body_.plannedCount,
+      plannedCount: captured.length,
       skippedCount: body_.skippedCount,
       audienceLabel: body_.audienceLabel,
+      recipients: captured,
       payload: {
         campaignId: body_.campaignId || dataCache.UPLOADED_CAMPAIGN_ID,
         segments,
@@ -2027,7 +2067,7 @@ router.post('/api/sms/queue', (req, res) => {
         listDStatuses: body_.listDStatuses
       }
     });
-    res.json({ success: true, item });
+    res.json({ success: true, item: queueItemPublic(item) });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
   }
@@ -2047,6 +2087,7 @@ async function tickSmsQueue() {
   queueTickBusy = true;
   smsQueue.updateItem(due.id, { status: 'running', startedAt: new Date().toISOString(), error: null });
   const started = await beginRealSmsRun(due.payload || {}, {
+    recipients: due.recipients,
     onDone: (state) => {
       const failed = state.status === 'error' || state.aborted;
       smsQueue.updateItem(due.id, {
