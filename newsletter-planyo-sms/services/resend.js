@@ -26,28 +26,42 @@ function getAuthHeaders(apiKey) {
   };
 }
 
-async function listAudiences(apiKey) {
-  const res = await axios.get(`${BASE_URL}/audiences`, {
-    headers: getAuthHeaders(apiKey),
-    timeout: 30000
-  });
-  const rows = Array.isArray(res?.data?.data)
-    ? res.data.data
-    : (Array.isArray(res?.data?.audiences) ? res.data.audiences : []);
-  return rows
-    .map((row) => String(row?.id || '').trim())
-    .filter(Boolean);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function rateLimitReason() {
+  return 'Resend ha limitato le richieste (massimo 10 al secondo). Riprova tra qualche secondo.';
+}
+
+async function resendRequest(method, url, apiKey) {
+  let last = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await axios({
+      method,
+      url,
+      headers: getAuthHeaders(apiKey),
+      timeout: 30000,
+      validateStatus: (status) => status < 500
+    });
+    if (res.status !== 429) return res;
+    last = res;
+    const retryAfter = Number(res.headers?.['retry-after']);
+    const wait = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, 5000)
+      : 1000 * (attempt + 1);
+    await sleep(wait);
+  }
+  return last;
 }
 
 async function getGlobalContactByEmail(apiKey, email) {
-  const res = await axios.get(`${BASE_URL}/contacts/${encodeURIComponent(email)}`, {
-    headers: getAuthHeaders(apiKey),
-    timeout: 30000,
-    validateStatus: (s) => s < 500
-  });
+  const res = await resendRequest('get', `${BASE_URL}/contacts/${encodeURIComponent(email)}`, apiKey);
+  if (!res) return { status: 'error', reason: rateLimitReason() };
   if (res.status === 404) return { status: 'not_found', contacts: [] };
+  if (res.status === 429) return { status: 'error', reason: rateLimitReason() };
   if (res.status >= 400) {
-    return { status: 'error', reason: `Resend rubrica globale: HTTP ${res.status}` };
+    return { status: 'error', reason: `Resend rubrica: HTTP ${res.status}` };
   }
   const row = res.data && typeof res.data === 'object' ? (res.data.data || res.data) : null;
   const id = String(row?.id || '').trim();
@@ -64,11 +78,8 @@ async function getGlobalContactByEmail(apiKey, email) {
 }
 
 async function listAudienceContactsByEmail(apiKey, audienceId, email) {
-  const direct = await axios.get(`${BASE_URL}/audiences/${encodeURIComponent(audienceId)}/contacts/${encodeURIComponent(email)}`, {
-    headers: getAuthHeaders(apiKey),
-    timeout: 30000,
-    validateStatus: (s) => s < 500
-  });
+  const direct = await resendRequest('get', `${BASE_URL}/audiences/${encodeURIComponent(audienceId)}/contacts/${encodeURIComponent(email)}`, apiKey);
+  if (!direct) return { status: 'error', reason: rateLimitReason() };
   if (direct.status === 200) {
     const row = direct.data && typeof direct.data === 'object' ? (direct.data.data || direct.data) : null;
     const id = String(row?.id || '').trim();
@@ -80,18 +91,16 @@ async function listAudienceContactsByEmail(apiKey, audienceId, email) {
       };
     }
   }
+  if (direct.status === 429) return { status: 'error', reason: rateLimitReason() };
   if (direct.status && direct.status !== 404 && direct.status < 500) {
     return { status: 'error', reason: `Resend lookup audience ${audienceId}: HTTP ${direct.status}` };
   }
 
-  const res = await axios.get(`${BASE_URL}/audiences/${encodeURIComponent(audienceId)}/contacts`, {
-    headers: getAuthHeaders(apiKey),
-    params: { email },
-    timeout: 30000,
-    validateStatus: (s) => s < 500
-  });
+  const res = await resendRequest('get', `${BASE_URL}/audiences/${encodeURIComponent(audienceId)}/contacts?email=${encodeURIComponent(email)}`, apiKey);
+  if (!res) return { status: 'error', reason: rateLimitReason() };
 
   if (res.status === 404) return { status: 'not_found', contacts: [] };
+  if (res.status === 429) return { status: 'error', reason: rateLimitReason() };
   if (res.status >= 400) {
     return { status: 'error', reason: `Resend lookup audience ${audienceId}: HTTP ${res.status}` };
   }
@@ -109,12 +118,6 @@ async function listAudienceContactsByEmail(apiKey, audienceId, email) {
     .filter((row) => row.id && row.email === email);
 
   return { status: normalized.length ? 'found' : 'not_found', contacts: normalized };
-}
-
-async function getAudienceIdsForPrivacy(apiKey) {
-  const configured = getConfiguredAudienceIds();
-  if (configured.length) return configured;
-  return listAudiences(apiKey);
 }
 
 async function findContactByEmailForPrivacy(email) {
@@ -135,18 +138,27 @@ async function findContactByEmailForPrivacy(email) {
   try {
     const globalFound = await getGlobalContactByEmail(apiKey, normalized);
     if (globalFound.status === 'error') {
-      errors.push(globalFound.reason || 'Errore rubrica globale Resend');
-    } else if (Array.isArray(globalFound.contacts) && globalFound.contacts.length) {
-      matches.push(...globalFound.contacts);
+      return {
+        source: 'resend',
+        status: 'error',
+        found: false,
+        reason: globalFound.reason || 'Errore rubrica Resend'
+      };
+    }
+    if (Array.isArray(globalFound.contacts) && globalFound.contacts.length) {
+      return {
+        source: 'resend',
+        status: 'found',
+        found: true,
+        contacts: globalFound.contacts,
+        reason: 'Trovato in rubrica Resend'
+      };
     }
   } catch (err) {
-    errors.push(err.message);
+    return { source: 'resend', status: 'error', found: false, reason: err.message };
   }
 
-  const audienceIds = await getAudienceIdsForPrivacy(apiKey).catch((err) => {
-    errors.push(`Resend audiences: ${err.message}`);
-    return [];
-  });
+  const audienceIds = getConfiguredAudienceIds();
   if (audienceIds.length) searchedIn.push('audience (' + audienceIds.length + ')');
 
   for (const audienceId of audienceIds) {
@@ -208,11 +220,12 @@ async function deleteContactByEmailForPrivacy(email) {
       const url = c.audienceId
         ? `${BASE_URL}/audiences/${encodeURIComponent(c.audienceId)}/contacts/${encodeURIComponent(c.id || email)}`
         : `${BASE_URL}/contacts/${encodeURIComponent(c.id || email)}`;
-      const res = await axios.delete(url, {
-        headers: getAuthHeaders(apiKey),
-        timeout: 30000,
-        validateStatus: (s) => s < 500
-      });
+      const res = await resendRequest('delete', url, apiKey);
+      if (!res || res.status === 429) {
+        failedCount++;
+        failReasons.push(rateLimitReason());
+        continue;
+      }
       if (res.status === 200 || res.status === 204) {
         deletedCount++;
       } else if (res.status === 404) {
