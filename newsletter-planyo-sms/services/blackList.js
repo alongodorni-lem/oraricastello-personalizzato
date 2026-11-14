@@ -114,7 +114,7 @@ function uniqueSources(values) {
  * Aggiunge (o aggiorna) un contatto dopo una cancellazione privacy.
  * Unisce record se email o telefono coincidono gia' in lista.
  */
-function addFromPrivacy({ email, phone, sources } = {}) {
+function addFromPrivacy({ email, phone, sources, via } = {}) {
   const em = normalizeEmail(email);
   const ph = phoneKey(phone);
   const rawPhone = String(phone || '').replace(/\D/g, '');
@@ -137,19 +137,47 @@ function addFromPrivacy({ email, phone, sources } = {}) {
       email: em,
       phone: rawPhone || ph,
       deletedAt: now,
-      sources: src,
-      via: 'privacy'
+      sources: src.length ? src : ['manual'],
+      via: via || 'privacy'
     };
     store.contacts.push(existing);
   } else {
     if (em && !normalizeEmail(existing.email)) existing.email = em;
     if ((rawPhone || ph) && !phoneKey(existing.phone)) existing.phone = rawPhone || ph;
     existing.sources = uniqueSources([...(existing.sources || []), ...src]);
+    existing.via = existing.via || via || 'privacy';
     existing.updatedAt = now;
   }
 
   saveStore(store);
   return { added: true, contact: existing, total: store.contacts.length };
+}
+
+const SEEDED_CONTACTS = [
+  { phone: '+393929832919', sources: ['manual'], via: 'manual' },
+  { email: 'eannalisa.saetta@email.it', sources: ['manual'], via: 'manual' },
+  { email: 'etendeka@gmail.com', sources: ['manual'], via: 'manual' },
+  { email: 'marko.mz@libero.it', sources: ['manual'], via: 'manual' },
+  { email: 'claudiu76@gmail.com', sources: ['manual'], via: 'manual' },
+  { email: 'lindabellunato@yahoo.it', sources: ['manual'], via: 'manual' },
+  { email: 'kia.rampin@gmail.com', sources: ['manual'], via: 'manual' },
+  { email: 'l.rubi@tiscali.it', sources: ['manual'], via: 'manual' },
+  { email: 'teomocchi@gmail.com', sources: ['manual'], via: 'manual' },
+  { email: 's1976@libero.it', sources: ['manual'], via: 'manual' },
+  { email: 'manuel.marcato@gmail.com', sources: ['manual'], via: 'manual' },
+  { email: 'ilariaferraris75@gmail.com', sources: ['manual'], via: 'manual' },
+  { email: 'karenmicra@live.it', sources: ['manual'], via: 'manual' },
+  { email: 'm.colombi@tiscali.it', sources: ['manual'], via: 'manual' }
+];
+
+function ensureSeeded() {
+  const added = [];
+  for (const item of SEEDED_CONTACTS) {
+    if (isListed(item.email, item.phone)) continue;
+    const out = addFromPrivacy(item);
+    if (out.added) added.push(out.contact);
+  }
+  return added;
 }
 
 function listContacts() {
@@ -161,6 +189,7 @@ module.exports = {
   isListed,
   splitRows,
   addFromPrivacy,
+  ensureSeeded,
   listContacts,
   normalizeEmail,
   phoneKey

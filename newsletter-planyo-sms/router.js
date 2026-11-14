@@ -21,6 +21,7 @@ const config = require('./config/segments');
 const adminControl = require('./services/adminControl');
 const smsQueue = require('./services/smsQueue');
 const blackList = require('./services/blackList');
+blackList.ensureSeeded();
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
 const { dataFile } = require('./services/dataDir');
@@ -640,6 +641,37 @@ router.post('/api/privacy/delete', async (req, res) => {
         saved: !!blackListResult.added,
         total: blackListResult.total || 0
       }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/api/privacy/blacklist', (req, res) => {
+  try {
+    const email = normalizePrivacyEmail(req.body?.email);
+    const phone = String(req.body?.phone || '').trim();
+    if ((!email || !email.includes('@')) && !smshosting.normalizePhone(phone) && !blackList.phoneKey(phone)) {
+      return res.status(400).json({ success: false, error: 'Inserisci una email valida oppure un cellulare.' });
+    }
+    const result = blackList.addFromPrivacy({
+      email,
+      phone,
+      sources: ['manual'],
+      via: 'manual'
+    });
+    if (result.skippedAdmin) {
+      return res.status(400).json({ success: false, error: 'Il contatto admin non puo entrare in black list.' });
+    }
+    if (!result.added) {
+      return res.status(400).json({ success: false, error: 'Nessun dato valido da inserire in black list.' });
+    }
+    return res.json({
+      success: true,
+      message: 'Contatto aggiunto in black list. Non ricevera SMS ne email dagli invii di questa interfaccia.',
+      email: result.contact?.email || '',
+      phone: result.contact?.phone || '',
+      blackList: { saved: true, total: result.total || 0 }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

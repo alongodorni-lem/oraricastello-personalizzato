@@ -509,7 +509,9 @@
         </div>
         <div class="actions">
           <button type="button" class="btn btn-secondary" id="btnPrivacySearch">CERCA</button>
+          <button type="button" class="btn" id="btnPrivacyBlacklist">AGGIUNGI IN BLACK LIST</button>
         </div>
+        <p class="hint">"Aggiungi in black list" blocca SMS ed email da questa interfaccia, senza cancellare il contatto da Planyo / SMS Hosting / Resend.</p>
         <div class="output" id="privacyOutput"></div>
       </div>
     </div>
@@ -2095,6 +2097,35 @@
         btnSearch.disabled = false;
       }
     }
+
+    document.getElementById('btnPrivacyBlacklist').onclick = async () => {
+      const out = document.getElementById('privacyOutput');
+      const btn = document.getElementById('btnPrivacyBlacklist');
+      const { email, phone } = getPrivacySearchInput();
+      if ((!email || !email.includes('@')) && !phone) {
+        out.innerHTML = '<div class="error">Inserisci una email oppure un cellulare da mettere in black list.</div>';
+        return;
+      }
+      btn.disabled = true;
+      out.innerHTML = '<div class="log">Inserimento in black list...</div>';
+      try {
+        const d = await fetchJson(API + '/api/privacy/blacklist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email || undefined, phone: phone || undefined })
+        });
+        out.innerHTML = '<div class="log result-ok">' + escapeHtml(d.message || 'Contatto aggiunto in black list.') + '</div>';
+        if (d.phone) out.innerHTML += '<div class="log">Numero: ' + escapeHtml(d.phone) + '</div>';
+        if (d.email) out.innerHTML += '<div class="log">Email: ' + escapeHtml(d.email) + '</div>';
+        if (d.blackList) {
+          out.innerHTML += '<div class="log">Totale in black list: ' + Number(d.blackList.total || 0) + '</div>';
+        }
+      } catch (e) {
+        out.innerHTML = '<div class="error">Errore: ' + escapeHtml(e.message) + '</div>';
+      } finally {
+        btn.disabled = false;
+      }
+    };
 
     document.getElementById('btnPrivacySearch').onclick = async () => {
       const out = document.getElementById('privacyOutput');
