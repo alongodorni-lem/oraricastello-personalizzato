@@ -88,5 +88,9 @@ Se l'SMS arriva con mittente numerico: verifica che le variabili siano impostate
 ## Note
 
 - **Timeout**: gli invii lunghi (1700+ SMS) possono richiedere 15+ minuti. Il piano Starter supporta richieste lunghe.
-- **File di configurazione**: `data/ui-config.json` e `data/newsletter-sms-sent.json` vengono creati automaticamente. Su Render il filesystem è effimero: i dati si perdono al redeploy. Per persistenza usa un database o servizi esterni (opzionale).
+- **File di configurazione**: `data/ui-config.json`, `data/black_list.json` e i registri di invio vengono creati automaticamente.
+- **Persistenza su Render**: il disco del container si azzera a ogni deploy. Per non perdere black list, coda SMS e registri:
+  1. Nel servizio Render → **Disks** → Add disk, mount path `/var/data`, 1 GB.
+  2. Environment: `NEWSLETTER_DATA_DIR=/var/data`
+  3. Deploy. Da quel momento i file restano dopo i redeploy.
 - **Sicurezza**: imposta `NEWSLETTER_SMS_USER` e `NEWSLETTER_SMS_PASSWORD` per proteggere l'interfaccia con Basic Auth.

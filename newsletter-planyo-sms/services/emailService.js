@@ -10,12 +10,15 @@ const fs = require('fs');
 const crypto = require('crypto');
 const adminControl = require('./adminControl');
 
-const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-sent.json');
-const BATCH_FILE = path.join(__dirname, '..', 'data', 'newsletter-email-batches.json');
+const { dataFile } = require('./dataDir');
+const SENT_FILE = dataFile('newsletter-email-sent.json');
+const BATCH_FILE = dataFile('newsletter-email-batches.json');
 const DAILY_LIMIT = Math.max(0, parseInt(process.env.EMAIL_MAX_PER_DAY || '0', 10) || 0);
 const EMAIL_RETRY_MAX = Math.max(0, parseInt(process.env.EMAIL_RETRY_MAX || '2', 10) || 2);
-const EMAIL_RATE_LIMIT_RETRY_MAX = Math.max(40, EMAIL_RETRY_MAX, parseInt(process.env.EMAIL_RATE_LIMIT_RETRY_MAX || '40', 10) || 40);
+const EMAIL_RATE_LIMIT_RETRY_MAX = Math.max(80, EMAIL_RETRY_MAX, parseInt(process.env.EMAIL_RATE_LIMIT_RETRY_MAX || '80', 10) || 80);
 const EMAIL_RETRY_BASE_DELAY_MS = Math.max(0, parseInt(process.env.EMAIL_RETRY_BASE_DELAY_MS || '2500', 10) || 2500);
+const RATE_LIMIT_MIN_WAIT_MS = Math.max(10000, parseInt(process.env.RESEND_RATE_LIMIT_MIN_WAIT_MS || '10000', 10) || 10000);
+const RATE_LIMIT_MAX_WAIT_MS = Math.max(RATE_LIMIT_MIN_WAIT_MS, parseInt(process.env.RESEND_RATE_LIMIT_MAX_WAIT_MS || '60000', 10) || 60000);
 const RESEND_API_URL = 'https://api.resend.com/emails';
 const RESEND_BATCH_API_URL = 'https://api.resend.com/emails/batch';
 const RESEND_LIST_LOOKBACK_HOURS = Math.max(6, parseInt(process.env.RESEND_SENT_LOOKBACK_HOURS || '72', 10) || 72);
@@ -89,11 +92,29 @@ function parseRetryAfterMs(err) {
 
 function getRetryDelayMs(err, attempt) {
   const retryAfterMs = parseRetryAfterMs(err);
-  const jitter = Math.floor(Math.random() * 400);
-  const exponential = isRateLimitError(err)
-    ? Math.min(60000, 2000 * Math.pow(2, Math.max(0, attempt)))
-    : EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, Math.max(0, attempt));
-  return Math.max(retryAfterMs, exponential, isRateLimitError(err) ? 2000 : 0) + jitter;
+  const jitter = Math.floor(Math.random() * 1500);
+  if (isRateLimitError(err)) {
+    // Resend often sends Retry-After: 1, which is too short for batch bursts.
+    const exp = Math.min(
+      RATE_LIMIT_MAX_WAIT_MS,
+      RATE_LIMIT_MIN_WAIT_MS * Math.pow(2, Math.min(Math.max(0, attempt), 3))
+    );
+    return Math.max(retryAfterMs, exp, RATE_LIMIT_MIN_WAIT_MS) + jitter;
+  }
+  return EMAIL_RETRY_BASE_DELAY_MS * Math.pow(2, Math.max(0, attempt)) + jitter;
+}
+
+let resendGate = Promise.resolve();
+async function withResendGate(fn) {
+  let release;
+  const prev = resendGate;
+  resendGate = new Promise((resolve) => { release = resolve; });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
 }
 
 function loadSentRegistry() {
@@ -252,13 +273,13 @@ async function sendPersonalizedEmail({ to, subject, body, html, data }) {
   let messageId = null;
   for (let attempt = 0; ; attempt++) {
     try {
-      const response = await axios.post(RESEND_API_URL, mail, {
+      const response = await withResendGate(() => axios.post(RESEND_API_URL, mail, {
         headers: {
           Authorization: `Bearer ${cfg.apiKey}`,
           'Content-Type': 'application/json'
         },
         timeout: 30000
-      });
+      }));
       messageId = response?.data?.id || null;
       lastErr = null;
       break;
@@ -335,14 +356,14 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
   let response = null;
   for (let attempt = 0; ; attempt++) {
     try {
-      response = await axios.post(RESEND_BATCH_API_URL, payload, {
+      response = await withResendGate(() => axios.post(RESEND_BATCH_API_URL, payload, {
         headers: {
           Authorization: `Bearer ${cfg.apiKey}`,
           'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey
         },
         timeout: 30000
-      });
+      }));
       lastErr = null;
       break;
     } catch (err) {
@@ -351,13 +372,21 @@ async function sendPersonalizedBatch({ rows, subject, body, html, abortCheck }) 
         const quotaMsg = getResendErrorPayload(err) || err.message;
         throw new Error('Quota Resend raggiunta: ' + quotaMsg);
       }
+      const rateLimited = isRateLimitError(err);
       const maxRetries = getMaxRetries(err);
-      if (attempt >= maxRetries || !isRetryableEmailError(err)) break;
-      const waitMs = getRetryDelayMs(err, attempt);
-      const kind = isRateLimitError(err) ? 'Rate limit 429' : 'Retry';
-      console.warn('[Email] ' + kind + ' Resend, attesa ' + waitMs + 'ms (tentativo ' + (attempt + 1) + '/' + maxRetries + ')');
+      if (!isRetryableEmailError(err)) break;
+      if (!rateLimited && attempt >= maxRetries) break;
+      if (rateLimited && attempt >= maxRetries) {
+        console.warn('[Email] Rate limit 429 ancora attivo dopo ' + maxRetries + ' tentativi: resto in attesa e riprovo lo stesso batch');
+      }
+      const waitMs = getRetryDelayMs(err, rateLimited ? Math.min(attempt, 3) : attempt);
+      const kind = rateLimited ? 'Rate limit 429' : 'Retry';
+      const shownMax = rateLimited ? 'fino a successo' : String(maxRetries);
+      console.warn('[Email] ' + kind + ' Resend, attesa ' + waitMs + 'ms (tentativo ' + (attempt + 1) + '/' + shownMax + ')');
       await sleep(waitMs);
-      if (typeof abortCheck === 'function' && abortCheck()) break;
+      if (typeof abortCheck === 'function' && abortCheck()) {
+        return { sentEmails: [], failed };
+      }
     }
   }
   if (lastErr) throw lastErr;
@@ -660,5 +689,7 @@ module.exports = {
   getSentMapForBatch,
   addSentToBatch,
   collectAlreadySentEmails,
+  isRateLimitError,
+  isQuotaError,
   DAILY_LIMIT
 };

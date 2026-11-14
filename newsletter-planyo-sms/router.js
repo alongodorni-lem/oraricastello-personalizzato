@@ -20,10 +20,12 @@ const dataCache = require('./services/dataCache');
 const config = require('./config/segments');
 const adminControl = require('./services/adminControl');
 const smsQueue = require('./services/smsQueue');
+const blackList = require('./services/blackList');
 
 const PUBLIC_PATH = path.join(__dirname, 'public');
-const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
-const SMS_RUN_LOCK_FILE = path.join(__dirname, 'data', 'sms-run-lock.json');
+const { dataFile } = require('./services/dataDir');
+const UI_CONFIG_FILE = dataFile('ui-config.json');
+const SMS_RUN_LOCK_FILE = dataFile('sms-run-lock.json');
 const SMS_RUN_LOCK_TTL_MS = Math.max(60 * 1000, parseInt(process.env.SMS_RUN_LOCK_TTL_MS || String(3 * 60 * 1000), 10) || (3 * 60 * 1000));
 const SMS_RUN_LOCK_STALE_MS = Math.max(60 * 1000, parseInt(process.env.SMS_RUN_LOCK_STALE_MS || String(2 * 60 * 1000), 10) || (2 * 60 * 1000));
 
@@ -62,7 +64,7 @@ const smsRunState = {
   error: null,
   logs: [],
   aborted: false,
-  progress: { inserted: 0, notInserted: 0, skipped: 0, duplicates: 0 }
+  progress: { inserted: 0, notInserted: 0, skipped: 0, duplicates: 0, blacklisted: 0 }
 };
 
 function resetSmsRunState(partial = {}) {
@@ -78,12 +80,13 @@ function resetSmsRunState(partial = {}) {
     notInserted: 0,
     skipped: 0,
     duplicates: 0,
+    blacklisted: 0,
     ...(partial.progress || {})
   };
 }
 const RESEND_BATCH_SIZE = Math.min(100, Math.max(1, parseInt(process.env.RESEND_BATCH_SIZE || '100', 10) || 100));
 const RESEND_BATCH_CONCURRENCY = 1;
-const RESEND_BATCH_PAUSE_MS = Math.max(1500, parseInt(process.env.RESEND_BATCH_PAUSE_MS || '1500', 10) || 1500);
+const RESEND_BATCH_PAUSE_MS = Math.max(2500, parseInt(process.env.RESEND_BATCH_PAUSE_MS || '2500', 10) || 2500);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -95,6 +98,43 @@ function chunkArray(items, size) {
     out.push(items.slice(i, i + size));
   }
   return out;
+}
+
+async function sendChunkHoldingOnRateLimit({ chunk, subject, body, html, abortCheck }) {
+  for (let round = 0; ; round++) {
+    if (typeof abortCheck === 'function' && abortCheck()) {
+      return { sentEmails: [], failed: [] };
+    }
+    try {
+      return await emailService.sendPersonalizedBatch({
+        rows: chunk,
+        subject,
+        body,
+        html,
+        abortCheck
+      });
+    } catch (err) {
+      if (typeof abortCheck === 'function' && abortCheck()) {
+        return { sentEmails: [], failed: [] };
+      }
+      const quota = emailService.isQuotaError(err) || /quota resend/i.test(String(err?.message || ''));
+      if (quota) throw err;
+      const rateLimited = emailService.isRateLimitError(err) || /status code 429|too many requests|rate limit/i.test(String(err?.message || ''));
+      if (rateLimited) {
+        const waitMs = 15000;
+        console.warn('[Email] Batch ancora 429 dopo i retry interni, attesa extra ' + waitMs + 'ms (round ' + (round + 1) + ')');
+        await sleep(waitMs);
+        continue;
+      }
+      return {
+        sentEmails: [],
+        failed: chunk.map((r) => ({
+          email: String(r.email || '').toLowerCase(),
+          error: err.message || 'Errore invio batch'
+        }))
+      };
+    }
+  }
 }
 
 function loadUiConfig() {
@@ -578,6 +618,14 @@ router.post('/api/privacy/delete', async (req, res) => {
       smshosting: smsResult,
       resend: resendResult
     };
+    const deletedSources = Object.entries(results)
+      .filter(([, item]) => item?.status === 'deleted')
+      .map(([key]) => key);
+    const blackListResult = blackList.addFromPrivacy({
+      email,
+      phone: smsPhoneCandidate || phoneRaw,
+      sources: deletedSources.length ? deletedSources : ['privacy']
+    });
     const message = buildPrivacyMessage(results);
     const hasError = Object.values(results).some((r) => r?.status === 'error');
 
@@ -587,7 +635,11 @@ router.post('/api/privacy/delete', async (req, res) => {
       phone: smshosting.normalizePhone(smsPhoneCandidate || ''),
       message,
       results,
-      cache: cacheResult
+      cache: cacheResult,
+      blackList: {
+        saved: !!blackListResult.added,
+        total: blackListResult.total || 0
+      }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -1288,6 +1340,19 @@ async function resolveAlreadySentForAudience({ subject, campaignId, segments, en
   return { batchId, sentSet };
 }
 
+function splitAudienceByBlackList(data) {
+  const kept = [];
+  let blacklisted = 0;
+  for (const row of data || []) {
+    if (blackList.isListed(row?.email, row?.telefono || row?.phone || row?.cellulare)) {
+      blacklisted += 1;
+    } else {
+      kept.push(row);
+    }
+  }
+  return { data: kept, blacklisted };
+}
+
 function splitAudienceBySent(data, sentSet) {
   const pending = [];
   let alreadySent = 0;
@@ -1490,6 +1555,9 @@ router.post('/api/email/preview/start', (req, res) => {
         data = filterByEvent(data, eventFilter);
         data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
         data = mergeListEFromManual(data, segments || [], excludeListA);
+        const audienceTotal = data.length;
+        const blackListSplit = splitAudienceByBlackList(data);
+        data = blackListSplit.data;
         const { sentSet } = await resolveAlreadySentForAudience({
           subject,
           campaignId: cid,
@@ -1498,7 +1566,7 @@ router.post('/api/email/preview/start', (req, res) => {
           listDFilters
         });
         const { pending, alreadySent } = splitAudienceBySent(data, sentSet);
-        const total = data.length;
+        const total = audienceTotal;
         const block = takeBlock(pending, limit);
         const preview = block.slice(0, 10);
         const limitInfo = emailService.checkDailyLimit();
@@ -1508,6 +1576,7 @@ router.post('/api/email/preview/start', (req, res) => {
           job.result = {
             total,
             alreadySent,
+            blacklisted: blackListSplit.blacklisted,
             pending: pending.length,
             limit: block.length,
             preview,
@@ -1573,6 +1642,7 @@ router.get('/api/email/export', async (req, res) => {
     data = filterByEvent(data, eventFilter);
     data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
     data = mergeListEFromManual(data, segments || [], excludeListA);
+    data = splitAudienceByBlackList(data).data;
 
     let csv;
     let filename;
@@ -1631,6 +1701,9 @@ router.get('/api/email/preview', async (req, res) => {
     data = filterByEvent(data, eventFilter);
     data = await mergeListDFromCsv(data, segments || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
     data = mergeListEFromManual(data, segments || [], excludeListA);
+    const audienceTotal = data.length;
+    const blackListSplit = splitAudienceByBlackList(data);
+    data = blackListSplit.data;
     const { sentSet } = await resolveAlreadySentForAudience({
       subject,
       campaignId: cid,
@@ -1639,7 +1712,7 @@ router.get('/api/email/preview', async (req, res) => {
       listDFilters
     });
     const { pending, alreadySent } = splitAudienceBySent(data, sentSet);
-    const total = data.length;
+    const total = audienceTotal;
     const block = takeBlock(pending, limit);
     const preview = block.slice(0, 10);
 
@@ -1649,6 +1722,7 @@ router.get('/api/email/preview', async (req, res) => {
       success: true,
       total,
       alreadySent,
+      blacklisted: blackListSplit.blacklisted,
       pending: pending.length,
       limit: block.length,
       preview,
@@ -1743,7 +1817,7 @@ router.post('/api/email/test', async (req, res) => {
 let emailAbortRequested = false;
 
 router.post('/api/email/send', async (req, res) => {
-  res.setTimeout(60 * 60 * 1000);
+  res.setTimeout(3 * 60 * 60 * 1000);
   const body_ = req.body || {};
   const { campaignId, targetResourceId, eventFilter, eventIds, segments, limit = 100, subject, body: emailBody, html: emailHtml, engagementType, excludeTargetBooked } = body_;
   const emailBodyText = String(emailBody || '').trim();
@@ -1789,10 +1863,13 @@ router.post('/api/email/send', async (req, res) => {
     data = filterByEvent(data, (eventFilter || '').trim());
     data = await mergeListDFromCsv(data, segFilter || ['A', 'B', 'C', 'D'], listDFilters, excludeListA);
     data = mergeListEFromManual(data, segFilter || [], excludeListA);
+    const audienceTotal = data.length;
+    const blackListSplit = splitAudienceByBlackList(data);
+    data = blackListSplit.data;
     const registryRows = buildRegistryRowsFromData(data, subject, emailBodyText, sentSet, sentMap);
     const pendingData = data.filter((r) => !sentSet.has((r.email || '').toLowerCase()) && !adminControl.isAdminEmail(r.email));
     const toSend = maxToSend > 0 ? takeBlock(pendingData, maxToSend) : [];
-    console.log('[Email] Destinatari da inviare: ' + toSend.length + ' + copia controllo admin (saltati gia ricevuti: ' + Math.max(0, data.length - pendingData.length) + ')');
+    console.log('[Email] Destinatari da inviare: ' + toSend.length + ' + copia controllo admin (saltati gia ricevuti: ' + Math.max(0, data.length - pendingData.length) + ', black list: ' + blackListSplit.blacklisted + ')');
 
     emailAbortRequested = false;
     let sent = 0;
@@ -1819,21 +1896,13 @@ router.post('/api/email/send', async (req, res) => {
       if (emailAbortRequested) break;
       const chunk = chunks[i];
       apiBatchCalls += 1;
-      let result;
-      try {
-        result = await emailService.sendPersonalizedBatch({
-          rows: chunk,
-          subject,
-          body: emailBodyText || undefined,
-          html: emailHtmlText || undefined,
-          abortCheck: () => emailAbortRequested
-        });
-      } catch (err) {
-        result = {
-          sentEmails: [],
-          failed: chunk.map((r) => ({ email: String(r.email || '').toLowerCase(), error: err.message || 'Errore invio batch' }))
-        };
-      }
+      const result = await sendChunkHoldingOnRateLimit({
+        chunk,
+        subject,
+        body: emailBodyText || undefined,
+        html: emailHtmlText || undefined,
+        abortCheck: () => emailAbortRequested
+      });
 
       const batchSentNow = [];
       for (const email of result.sentEmails || []) {
@@ -1879,6 +1948,8 @@ router.post('/api/email/send', async (req, res) => {
         acceptedByResend: sent,
         failedByResend: failed,
         skippedAlreadySentInBatch: Math.max(0, data.length - pendingData.length),
+        blacklisted: blackListSplit.blacklisted,
+        audienceTotal,
         pendingAfterRun: Math.max(0, pendingData.length - successfullySent.length),
         batchApiCalls: apiBatchCalls,
         batchCountPlanned: chunks.length,
@@ -1900,7 +1971,7 @@ router.post('/api/email/send', async (req, res) => {
 });
 
 router.post('/api/email/send-from-registry', async (req, res) => {
-  res.setTimeout(60 * 60 * 1000);
+  res.setTimeout(3 * 60 * 60 * 1000);
   try {
     const body = req.body || {};
     const subject = String(body.subject || '').trim();
@@ -1920,7 +1991,8 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     const limitInfo = emailService.checkDailyLimit();
     const maxToSend = limitInfo.enabled ? Math.max(0, Math.min(limit, limitInfo.remaining)) : limit;
     const pending = rows.filter((r) => {
-      return !adminControl.isAdminEmail(r.email) && !String(r.data_invio_email || '').trim();
+      if (adminControl.isAdminEmail(r.email) || String(r.data_invio_email || '').trim()) return false;
+      return !blackList.isListed(r.email, r.telefono || r.phone || r.cellulare);
     }).slice(0, maxToSend);
 
     emailAbortRequested = false;
@@ -1941,20 +2013,12 @@ router.post('/api/email/send-from-registry', async (req, res) => {
     for (let i = 0; i < chunks.length; i++) {
       if (emailAbortRequested) break;
       const chunk = chunks[i];
-      let result;
-      try {
-        result = await emailService.sendPersonalizedBatch({
-          rows: chunk,
-          subject,
-          body: emailText,
-          abortCheck: () => emailAbortRequested
-        });
-      } catch (err) {
-        result = {
-          sentEmails: [],
-          failed: chunk.map((r) => ({ email: String(r.email || '').toLowerCase(), error: err.message || 'Errore invio batch' }))
-        };
-      }
+      const result = await sendChunkHoldingOnRateLimit({
+        chunk,
+        subject,
+        body: emailText,
+        abortCheck: () => emailAbortRequested
+      });
       for (const email of result.sentEmails || []) {
         sent++;
         const key = String(email || '').toLowerCase();

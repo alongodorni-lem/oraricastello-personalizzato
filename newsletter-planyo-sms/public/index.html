@@ -558,6 +558,7 @@
         '<div class="log"><strong>Report invio automatico</strong></div>',
         '<div class="log">Richieste API batch: ' + Number(report.batchApiCalls || 0) + ' (pianificate: ' + Number(report.batchCountPlanned || 0) + ', batch size: ' + Number(report.resendBatchSize || 0) + ', concorrenza: ' + Number(report.resendBatchConcurrency || 0) + ')</div>',
         '<div class="log">Destinatari richiesti: ' + Number(report.requestedRecipients || 0) + ' | Accettati da Resend: ' + Number(report.acceptedByResend || 0) + ' | Falliti: ' + Number(report.failedByResend || 0) + '</div>',
+        '<div class="log">Contatti ' + Number(report.audienceTotal != null ? report.audienceTotal : report.requestedRecipients || 0) + ' - ' + blackListPhrase(report.blacklisted) + '</div>',
         '<div class="log">Gia ricevuta questa email (saltati): ' + Number(report.skippedAlreadySentInBatch || 0) + ' | Rimanenti dopo invio: ' + Number(report.pendingAfterRun || 0) + '</div>',
         '<div class="log">Limite giornaliero: ' + dailyText + (report.dailyLimitEnabled ? (' | inviati oggi: ' + Number(report.dailySentAfterRun || 0) + ' | residuo: ' + Number(report.dailyRemainingAfterRun || 0)) : '') + '</div>',
         report.aborted ? '<div class="warn">Invio interrotto manualmente prima del completamento.</div>' : ''
@@ -598,6 +599,9 @@
       const d = document.createElement('div');
       d.textContent = s;
       return d.innerHTML;
+    }
+    function blackListPhrase(count) {
+      return 'di cui ' + Number(count || 0) + ' non inseriti in quanto in black list';
     }
     function sourceLabel(key) {
       if (key === 'mailchimp') return 'Mailchimp';
@@ -654,6 +658,10 @@
           + (mc.removedCampaignRefs ? (' (riferimenti campagne rimossi: ' + mc.removedCampaignRefs + ')') : '')
           + ' | Planyo ' + (pc.deleted ? ('aggiornata (righe rimosse: ' + (pc.removedRows || 0) + ')') : 'nessuna modifica')
           + '</div>';
+      }
+      if (response?.blackList) {
+        html += '<div class="log">Black list: ' + (response.blackList.saved ? 'contatto salvato' : 'non salvato')
+          + ' (totale in lista: ' + Number(response.blackList.total || 0) + ')</div>';
       }
       outputEl.innerHTML = html;
     }
@@ -973,7 +981,8 @@
         const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
         const lines = [
           '<div class="log">Invio in corso sul server. Non chiudere il browser e non rilanciare: i già inviati vengono saltati.</div>',
-          '<div class="log">Inseriti ' + inserted + ' | Saltati ' + skipped + ' | Non inseriti ' + notInserted + dup + '</div>'
+          '<div class="log">Inseriti ' + inserted + ' | Saltati ' + skipped + ' | Non inseriti ' + notInserted + dup + '</div>',
+          '<div class="log">Contatti ' + (inserted + Number(p.blacklisted || 0)) + ' - ' + blackListPhrase(p.blacklisted) + '</div>'
         ];
         out.innerHTML = lines.join('');
       }
@@ -1049,6 +1058,7 @@
           const skipped = Number(result.skipped || 0);
           const dup = duplicates > 0 ? ` (${duplicates} duplicati)` : '';
           out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${inserted} | Saltati ${skipped} | Non inseriti ${notInserted}${dup}</div>`;
+          out.innerHTML += '<div class="log">Contatti ' + (inserted + Number(result.blacklisted || 0)) + ' - ' + blackListPhrase(result.blacklisted) + '</div>';
         }
         if (d.aborted || abortClicked) out.innerHTML += '<div class="log warn">Operazione annullata. Gli SMS già partiti restano registrati: al prossimo avvio non verranno ripetuti.</div>';
         if (d.error) out.innerHTML += `<div class="error">Errore: ${escapeHtml(d.error)}</div>`;
@@ -1069,6 +1079,7 @@
               const result = finalState.result || finalState.progress;
               if (result) {
                 out.innerHTML += `<div class="log result-ok">Risultato: Inseriti ${Number(result.inserted || 0)} | Saltati ${Number(result.skipped || 0)} | Non inseriti ${Number(result.notInserted || 0)}</div>`;
+                out.innerHTML += '<div class="log">Contatti ' + (Number(result.inserted || 0) + Number(result.blacklisted || 0)) + ' - ' + blackListPhrase(result.blacklisted) + '</div>';
               }
               btn.disabled = false;
               btn.textContent = 'INVIA SUBITO';
@@ -1855,8 +1866,11 @@
         smsSendableReady = smsSendableCount > 0;
         const skippedAlready = Number(d.result?.skipped || 0);
         smsAlreadySkippedCount = skippedAlready;
-        status.textContent = 'Da inviare: ' + smsSendableCount + ' (non ancora partiti). Calcolo ok, questo NON invia.' +
-          (skippedAlready ? (' Già inviati saltati: ' + skippedAlready + '.') : '');
+        const blacklisted = Number(d.result?.blacklisted || 0);
+        const contactsCount = smsSendableCount + blacklisted;
+        status.textContent = 'Contatti ' + contactsCount + ' - ' + blackListPhrase(blacklisted)
+          + '. Da inviare: ' + smsSendableCount + ' (non ancora partiti). Calcolo ok, questo NON invia.'
+          + (skippedAlready ? (' Già inviati saltati: ' + skippedAlready + '.') : '');
         const btnQueue = document.getElementById('btnQueueSms');
         if (btnQueue) btnQueue.disabled = !smsSendableReady;
         status.style.color = smsSendableReady ? 'var(--success)' : '';
@@ -1942,12 +1956,13 @@
         const dailyRemaining = hasDailyLimit ? Number(d.dailyLimit?.remaining ?? 0) : Number.POSITIVE_INFINITY;
         emailSendableCount = Math.max(0, Math.min(pending, limitCap, dailyRemaining));
         emailSendableReady = emailSendableCount > 0;
+        const blacklisted = Number(d.blacklisted || 0);
         const skipText = ' | Gia ricevuta questa email: ' + emailAlreadySentCount;
         if (hasDailyLimit) {
           const dailyMax = Number(d.dailyLimit.max);
-          status.textContent = 'Email totali: ' + total + skipText + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
+          status.textContent = 'Contatti ' + total + ' - ' + blackListPhrase(blacklisted) + skipText + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', residuo giornaliero ' + dailyRemaining + ' su ' + dailyMax + ').';
         } else {
-          status.textContent = 'Email totali: ' + total + skipText + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', nessun limite giornaliero impostato).';
+          status.textContent = 'Contatti ' + total + ' - ' + blackListPhrase(blacklisted) + skipText + ' | Invio attuale previsto: ' + emailSendableCount + ' (blocco ' + limitCap + ', nessun limite giornaliero impostato).';
         }
         if (emailAlreadySentCount === 0) {
           out.innerHTML = '<div class="warn">Nessun invio precedente trovato per questo oggetto. Se hai gia inviato, verifica che l\'oggetto sia identico a quello usato prima.</div>';

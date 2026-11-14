@@ -1,11 +1,12 @@
 /**
  * Coda invii SMS: persiste su file cosi' sopravvive al riavvio del processo.
- * Un redeploy Render cancella il disco: non deployare finche' la coda non e' partita.
+ * Su Render sopravvive al redeploy solo se NEWSLETTER_DATA_DIR punta a un disco persistente.
  */
 const fs = require('fs');
 const path = require('path');
 
-const QUEUE_FILE = path.join(__dirname, '..', 'data', 'sms-send-queue.json');
+const { dataFile } = require('./dataDir');
+const QUEUE_FILE = dataFile('sms-send-queue.json');
 const MAX_DELAY_HOURS = 24;
 
 function loadQueue() {

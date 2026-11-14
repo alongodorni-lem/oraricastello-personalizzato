@@ -8,7 +8,8 @@ const mailchimp = require('./mailchimp');
 const planyoReportCsv = require('./planyoReportCsv');
 const planyo = require('./planyo');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const { getDataDir } = require('./dataDir');
+const DATA_DIR = getDataDir();
 const MAILCHIMP_CACHE_FILE = path.join(DATA_DIR, 'mailchimp-cache.json');
 const PLANYO_CACHE_FILE = path.join(DATA_DIR, 'planyo-cache.json');
 const MANUAL_CACHE_FILE = path.join(DATA_DIR, 'manual-contacts-cache.json');

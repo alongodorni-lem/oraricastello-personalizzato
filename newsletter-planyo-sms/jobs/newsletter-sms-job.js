@@ -9,11 +9,13 @@ const planyo = require('../services/planyo');
 const planyoReportCsv = require('../services/planyoReportCsv');
 const dataCache = require('../services/dataCache');
 const smshosting = require('../services/smshosting');
+const blackList = require('../services/blackList');
 const { applyTemplate } = require('../services/emailService');
 const config = require('../config/segments');
 
-const SENT_FILE = path.join(__dirname, '..', 'data', 'newsletter-sms-sent.json');
-const SPAM_GUARD_FILE = path.join(__dirname, '..', 'data', 'newsletter-sms-spam-guard.json');
+const { dataFile } = require('../services/dataDir');
+const SENT_FILE = dataFile('newsletter-sms-sent.json');
+const SPAM_GUARD_FILE = dataFile('newsletter-sms-spam-guard.json');
 const SPAM_GUARD_HOURS = 24;
 
 function msgHash(text) {
@@ -137,6 +139,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     if (vals.notInserted != null) progress.notInserted = vals.notInserted;
     if (vals.skipped != null) progress.skipped = vals.skipped;
     if (vals.duplicates != null) progress.duplicates = vals.duplicates;
+    if (vals.blacklisted != null) progress.blacklisted = vals.blacklisted;
   };
   const { targetResourceId: configTargetId, monthsLookback, smsTexts, adminPhone } = config;
   const targetResourceId = overrideTargetId != null ? overrideTargetId : configTargetId;
@@ -147,6 +150,14 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   const engagementLabel = engagementType === 'click' ? 'click' : 'open';
   const trackId = campaignId || 'list-d-only';
   const seenPhonesInRun = new Set();
+  let blacklisted = 0;
+  const skipIfBlacklisted = (email, phone) => {
+    if (blackList.isListed(email, phone)) {
+      blacklisted += 1;
+      return true;
+    }
+    return false;
+  };
   const lookbackHours = Math.max(1, parseInt(process.env.SMS_RESUME_LOOKBACK_HOURS || '24', 10) || 24);
   let sentTextsByPhone = new Map();
   try {
@@ -211,6 +222,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     for (const row of withPhone) {
       const email = row.email;
       const phone = row.telefono;
+      if (skipIfBlacklisted(email, phone)) continue;
       const textResolved = applyTemplate(textD, row);
       if (alreadyDelivered(email, 'D', phone, textResolved)) { skipped++; continue; }
       const normPhone = smshosting.normalizePhone(phone);
@@ -228,7 +240,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
-      touchProgress({ inserted, notInserted, skipped, duplicates });
+      touchProgress({ inserted, notInserted, skipped, duplicates, blacklisted });
       await new Promise((r) => setTimeout(r, 500));
     }
     if (!dryRun && adminPhone) {
@@ -236,13 +248,13 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         await smshosting.sendSms(adminPhone, `Newsletter SMS Lista D: ${inserted} inseriti | ${notInserted} non inseriti`);
       } catch (_) {}
     }
-    touchProgress({ inserted, notInserted, skipped, duplicates });
-    return { processed: withPhone.length, inserted, notInserted, duplicates, skipped };
+    touchProgress({ inserted, notInserted, skipped, duplicates, blacklisted });
+    return { processed: withPhone.length, inserted, notInserted, duplicates, skipped, blacklisted };
   }
 
   if (onlyD) {
     console.log('[Job] Solo Lista D richiesta ma PLANYO_LISTD_CSV_URL non impostato. Fine.');
-    return { processed: 0, inserted: 0, notInserted: 0, duplicates: 0, skipped: 0 };
+    return { processed: 0, inserted: 0, notInserted: 0, duplicates: 0, skipped: 0, blacklisted: 0 };
   }
 
   if (onlyE) {
@@ -262,6 +274,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     for (const row of withPhone) {
       const email = row.email;
       const phone = row.telefono;
+      if (skipIfBlacklisted(email, phone)) continue;
       const id = email && email.includes('@') ? email : ('phone:' + phone);
       const textResolved = applyTemplate(textE, row);
       if (alreadyDelivered(id, 'E', phone, textResolved)) { skipped++; continue; }
@@ -280,7 +293,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
-      touchProgress({ inserted, notInserted, skipped, duplicates });
+      touchProgress({ inserted, notInserted, skipped, duplicates, blacklisted });
       await new Promise((r) => setTimeout(r, 500));
     }
     if (!dryRun && adminPhone) {
@@ -288,8 +301,8 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         await smshosting.sendSms(adminPhone, `Newsletter SMS file manuale: ${inserted} inseriti | ${notInserted} non inseriti`);
       } catch (_) {}
     }
-    touchProgress({ inserted, notInserted, skipped, duplicates });
-    return { processed: withPhone.length, inserted, notInserted, duplicates, skipped };
+    touchProgress({ inserted, notInserted, skipped, duplicates, blacklisted });
+    return { processed: withPhone.length, inserted, notInserted, duplicates, skipped, blacklisted };
   }
 
   const evIds = options.eventIds && Array.isArray(options.eventIds) ? options.eventIds.map(Number).filter((n) => !isNaN(n)) : null;
@@ -416,6 +429,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     const text = getText(segment);
     if (!segmentsToProcess.includes(segment)) continue;
     for (const { email, phone } of lists[segment]) {
+      if (skipIfBlacklisted(email, phone)) continue;
       if (alreadyDelivered(email, segment, phone, text)) {
         skipped++;
         continue;
@@ -459,7 +473,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
-      touchProgress({ inserted, notInserted, skipped, duplicates });
+      touchProgress({ inserted, notInserted, skipped, duplicates, blacklisted });
 
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -471,6 +485,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     for (const row of listD) {
       const email = row.email;
       const phone = row.telefono;
+      if (skipIfBlacklisted(email, phone)) continue;
       const textResolved = applyTemplate(text, row);
       if (alreadyDelivered(email, 'D', phone, textResolved)) { skipped++; continue; }
       if (!phone || phone.length < 10 || phone.includes('@')) { skipped++; continue; }
@@ -489,7 +504,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
-      touchProgress({ inserted, notInserted, skipped, duplicates });
+      touchProgress({ inserted, notInserted, skipped, duplicates, blacklisted });
       await new Promise((r) => setTimeout(r, 500));
     }
   }
@@ -502,6 +517,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
     for (const row of listE) {
       const phone = row.telefono || row.phone;
       const email = String(row.email || '').toLowerCase().trim() || ('phone:' + phone);
+      if (skipIfBlacklisted(email, phone)) continue;
       const textResolved = applyTemplate(text, row);
       if (alreadyDelivered(email, 'E', phone, textResolved)) { skipped++; continue; }
       if (!phone || phone.length < 10 || String(phone).includes('@')) { skipped++; continue; }
@@ -520,7 +536,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
         notInserted++;
         if (result.isDuplicate) duplicates++;
       }
-      touchProgress({ inserted, notInserted, skipped, duplicates });
+      touchProgress({ inserted, notInserted, skipped, duplicates, blacklisted });
       await new Promise((r) => setTimeout(r, 500));
     }
   }
@@ -544,7 +560,7 @@ async function runNewsletterSmsJob(campaignId, options = {}) {
   }
 
   const totalProcessed = lists.A.length + lists.B.length + lists.C.length + listD.length;
-  return { processed: totalProcessed, inserted, notInserted, duplicates, skipped };
+  return { processed: totalProcessed, inserted, notInserted, duplicates, skipped, blacklisted };
 }
 
 /**
@@ -613,8 +629,8 @@ async function getSmsPreview(campaignId, options = {}) {
     }
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
     const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
-    const count = listD.length;
-    return { total: count, bySegment: { A: 0, B: 0, C: 0, D: count, E: 0 } };
+    const split = blackList.splitRows(listD);
+    return { total: listD.length, blacklisted: split.blockedCount, bySegment: { A: 0, B: 0, C: 0, D: split.kept.length, E: 0 } };
   }
 
   const onlyE = segmentsFilter && segmentsFilter.length === 1 && String(segmentsFilter[0]).toUpperCase() === 'E';
@@ -626,8 +642,9 @@ async function getSmsPreview(campaignId, options = {}) {
         emailsInA = segmented.emailsInA;
       } catch (_) {}
     }
-    const count = dataCache.getManualContacts(excludeTargetBooked ? { emailsInA } : {}).length;
-    return { total: count, bySegment: { A: 0, B: 0, C: 0, D: 0, E: count } };
+    const listE = dataCache.getManualContacts(excludeTargetBooked ? { emailsInA } : {});
+    const split = blackList.splitRows(listE);
+    return { total: listE.length, blacklisted: split.blockedCount, bySegment: { A: 0, B: 0, C: 0, D: 0, E: split.kept.length } };
   }
 
   const eventIdsNum = eventIds && Array.isArray(eventIds) ? eventIds.map(Number).filter((n) => !isNaN(n)) : null;
@@ -683,6 +700,16 @@ async function getSmsPreview(campaignId, options = {}) {
     }
   }
 
+  let blacklisted = 0;
+  for (const seg of ['A', 'B', 'C']) {
+    const kept = [];
+    for (const row of lists[seg] || []) {
+      if (blackList.isListed(row.email, row.phone || row.telefono)) blacklisted += 1;
+      else kept.push(row);
+    }
+    lists[seg] = kept;
+  }
+
   let total = 0;
   for (const seg of segFilter) {
     total += lists[seg]?.length || 0;
@@ -693,7 +720,12 @@ async function getSmsPreview(campaignId, options = {}) {
     try {
       const excludeListA = excludeTargetBooked ? { emailsInA } : {};
       const listD = await planyoReportCsv.loadListDFromCsv(listDFilters || {}, excludeListA);
-      listDCount = listD.length;
+      const keptD = [];
+      for (const row of listD) {
+        if (blackList.isListed(row.email, row.telefono)) blacklisted += 1;
+        else keptD.push(row);
+      }
+      listDCount = keptD.length;
       total += listDCount;
     } catch (_) {}
   }
@@ -701,12 +733,19 @@ async function getSmsPreview(campaignId, options = {}) {
   let listECount = 0;
   if (segmentsFilter && segmentsFilter.map((s) => String(s).toUpperCase()).includes('E')) {
     const excludeListA = excludeTargetBooked ? { emailsInA } : {};
-    listECount = dataCache.getManualContacts(excludeListA).length;
+    const listE = dataCache.getManualContacts(excludeListA);
+    const keptE = [];
+    for (const row of listE) {
+      if (blackList.isListed(row.email, row.telefono || row.phone)) blacklisted += 1;
+      else keptE.push(row);
+    }
+    listECount = keptE.length;
     total += listECount;
   }
 
   return {
-    total,
+    total: total + blacklisted,
+    blacklisted,
     bySegment: { A: lists.A.length, B: lists.B.length, C: lists.C.length, D: listDCount, E: listECount }
   };
 }
@@ -719,6 +758,7 @@ async function sendStoredSmsList(recipients, smsText, options = {}) {
   let notInserted = 0;
   let duplicates = 0;
   let skipped = 0;
+  let blacklisted = 0;
   const seen = new Set();
   const touch = () => {
     if (!progress) return;
@@ -726,6 +766,7 @@ async function sendStoredSmsList(recipients, smsText, options = {}) {
     progress.notInserted = notInserted;
     progress.skipped = skipped;
     progress.duplicates = duplicates;
+    progress.blacklisted = blacklisted;
   };
   let sentTextsByPhone = new Map();
   try {
@@ -749,6 +790,7 @@ async function sendStoredSmsList(recipients, smsText, options = {}) {
       name: row.evento || '',
       voucher: row.voucher || ''
     });
+    if (blackList.isListed(email, phone)) { blacklisted++; continue; }
     const normPhone = smshosting.normalizePhone(phone);
     if (!normPhone || seen.has(normPhone)) { skipped++; continue; }
     if (wasSameMessageSentRecently(normPhone, textResolved)) { skipped++; continue; }
@@ -775,7 +817,7 @@ async function sendStoredSmsList(recipients, smsText, options = {}) {
       await smshosting.sendSms(adminPhone, `Coda SMS: ${inserted} inseriti | ${skipped} saltati | ${notInserted} non inseriti`);
     } catch (_) {}
   }
-  return { inserted, notInserted, duplicates, skipped, processed: rows.length };
+  return { inserted, notInserted, duplicates, skipped, blacklisted, processed: rows.length };
 }
 
 module.exports = { runNewsletterSmsJob, checkPhoneInLists, getSmsPreview, sendStoredSmsList };
