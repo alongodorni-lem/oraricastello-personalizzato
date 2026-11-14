@@ -167,7 +167,8 @@ const SEEDED_CONTACTS = [
   { email: 'manuel.marcato@gmail.com', sources: ['manual'], via: 'manual' },
   { email: 'ilariaferraris75@gmail.com', sources: ['manual'], via: 'manual' },
   { email: 'karenmicra@live.it', sources: ['manual'], via: 'manual' },
-  { email: 'm.colombi@tiscali.it', sources: ['manual'], via: 'manual' }
+  { email: 'm.colombi@tiscali.it', sources: ['manual'], via: 'manual' },
+  { email: 'cristiana.morosini@uninsubria.it', sources: ['manual'], via: 'manual' }
 ];
 
 function ensureSeeded() {
